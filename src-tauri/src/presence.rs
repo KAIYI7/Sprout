@@ -18,8 +18,14 @@
 //!
 //! WHY the single-flight guard: setup runs once per process, but a second
 //! `start` must never spawn a second loop fighting over the same IPC pipe.
+//!
+//! WHY a mailbox between reporters and the worker: the pipe calls below block
+//! with no timeout on the far end, so no caller — startup, section report, or
+//! exit — may run them inline. Reporters only store text and enqueue a wakeup;
+//! the worker alone owns IPC (ADR-0033).
 
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -141,23 +147,70 @@ fn store_status(details: &str, state: &str) -> Result<(String, String), String> 
     Ok((details, state))
 }
 
-/// Reports a section change: stores validated text for the loop's next set and
-/// pushes one immediate set so the message follows promptly instead of waiting
-/// out the heartbeat. WHY `Ok` past validation: Discord absent is a silent
-/// no-op — presence never surfaces errors (ADR-0033).
+/// Wakeups for the worker. WHY payload-free: the worker snapshots the current
+/// text itself on every set, so a queued signal can never ship stale words —
+/// rapid section changes collapse into one fresh set (ADR-0033).
+enum Job {
+    Refresh,
+    Stop,
+}
+
+/// What one worker wait resolved to: its patience ran out, a section changed,
+/// or shutdown asked it to clear and leave.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Wake {
+    Timeout,
+    Refresh,
+    Stop,
+}
+
+/// The worker's mailbox, installed by `start`. WHY a static beside STARTED:
+/// section reports arrive from any Tauri command thread with no handle to
+/// thread through, exactly like start and stop themselves.
+static MAILBOX: OnceLock<Sender<Job>> = OnceLock::new();
+
+/// Reports a section change: stores validated text and wakes the worker so the
+/// message follows promptly instead of waiting out the heartbeat. Never touches
+/// IPC itself — the pipe calls below block with no timeout on a wedged
+/// Discord, so running them here would stall the caller's invoke round-trip
+/// whenever Discord's pipe accepts but never answers. WHY `Ok` past
+/// validation: Discord absent is a silent no-op — presence never surfaces
+/// errors (ADR-0033).
 pub fn set_status(details: &str, state: &str) -> Result<(), String> {
-    let (details, state) = store_status(details, state)?;
-    let start_ms = session_started_at_ms();
-    let mut ipc = RealIpc::new();
-    match ipc.connect() {
-        Ok(()) => {
-            if let Err(e) = ipc.set_current(&details, &state, start_ms) {
-                eprintln!("{e} — continuing without presence");
-            }
-        }
-        Err(e) => eprintln!("{e} — continuing without presence"),
+    set_status_with(details, state, disabled(), notify_worker)
+}
+
+/// The testable core of a report: validation plus storage plus one wake
+/// signal, still with no IPC on this thread — a wedged pipe stays
+/// unobservable to the caller by construction.
+fn set_status_with(
+    details: &str,
+    state: &str,
+    switched_off: bool,
+    notify: impl FnOnce(),
+) -> Result<(), String> {
+    store_status(details, state)?;
+    if switched_off {
+        return Ok(());
     }
+    notify();
     Ok(())
+}
+
+/// Diagnostic-only escape hatch: `SPROUT_NO_PRESENCE` set to anything but
+/// empty or `0` disables presence for the process. WHY an env var rather than
+/// the deferred Settings switch: triage needs no new UI surface, and the
+/// accepted no-toggle decision stands unchanged (ADR-0033).
+fn disabled() -> bool {
+    std::env::var("SPROUT_NO_PRESENCE").is_ok_and(|v| !v.is_empty() && v != "0")
+}
+
+/// One wake signal to the worker. WHY fire-and-forget: the send never blocks,
+/// so even a worker parked inside a Discord read cannot stall this caller.
+fn notify_worker() {
+    if let Some(tx) = MAILBOX.get() {
+        let _ = tx.send(Job::Refresh);
+    }
 }
 
 /// The module's internal seam: everything presence can do to the outside
@@ -233,23 +286,28 @@ fn connect_and_set(
     ipc.set_current(&details, &state, start_ms)
 }
 
-/// Starts the presence loop on a background thread: connect→set, then
-/// heartbeat re-asserts until shutdown. The session start is captured here —
-/// at launch — so the elapsed clock measures the whole run even when Discord
-/// connects later. Never blocks the caller; a second call is a no-op so
-/// overlapping starts never duplicate the loop.
+/// Starts the presence worker: one background thread owning the only IPC
+/// client, woken by section changes and the heartbeat. The session start is
+/// captured here — at launch — so the elapsed clock measures the whole run
+/// even when Discord connects later. Never blocks the caller; a second call
+/// is a no-op so overlapping starts never duplicate the worker.
 pub fn start() {
+    if disabled() {
+        return;
+    }
     if STARTED.swap(true, Ordering::SeqCst) {
         return;
     }
     STOP.store(false, Ordering::SeqCst);
     let start_ms = session_started_at_ms();
+    let (tx, rx) = mpsc::channel();
+    let _ = MAILBOX.set(tx);
     std::thread::spawn(move || {
         let mut ipc = RealIpc::new();
-        serve_with(
+        serve_worker(
             &mut ipc,
             HEARTBEAT,
-            std::thread::sleep,
+            |pause| channel_wait(&rx, pause),
             &STOP,
             start_ms,
             current_text,
@@ -257,19 +315,50 @@ pub fn start() {
     });
 }
 
-/// Stops the loop and clears the activity. WHY a synchronous clear beside the
-/// flag: the process may exit before the background thread wakes, so actual
-/// exit clears through its own one-shot client while the flag stops the loop
-/// from reconnecting behind it. Main-window close-to-tray never calls this —
-/// only real exit does.
+/// Stops the worker and clears the activity. WHY message-only: every pipe call
+/// can block without timeout, and this runs on the app's event thread at exit
+/// — blocking here stalls quit itself whenever Discord's pipe accepts but
+/// never answers. The `Stop` message wakes the worker at once, and it clears
+/// on its own thread instead. Main-window close-to-tray never calls this —
+/// only real exit does (ADR-0033).
 pub fn shutdown() {
     STOP.store(true, Ordering::SeqCst);
-    RealIpc::new().clear_and_close();
+    if let Some(tx) = MAILBOX.get() {
+        let _ = tx.send(Job::Stop);
+    }
 }
 
-/// The loop body with its sleeps injected: connect→set with backoff, then a
-/// heartbeat that returns to retry when the pipe drops. WHY the heartbeat
-/// re-sets instead of idling: idling would never notice a Discord restart.
+/// One worker wait over the mailbox: up to `pause` for a signal, coalescing a
+/// burst of refreshes into one. WHY the drain: a wedged pipe parks the worker
+/// inside one attempt while section reports pile up — replaying each would
+/// re-handshake per step of navigation after recovery. A `Stop` anywhere in
+/// the burst still wins.
+fn channel_wait(rx: &Receiver<Job>, pause: Duration) -> Wake {
+    let mut woke = match rx.recv_timeout(pause) {
+        Ok(Job::Stop) => return Wake::Stop,
+        Ok(Job::Refresh) => Wake::Refresh,
+        // The senders live in a static once installed, so a disconnect only
+        // means a test's local channel went away — idle on; the stop flag
+        // owns exit.
+        Err(_) => Wake::Timeout,
+    };
+    if matches!(woke, Wake::Refresh) {
+        while let Ok(job) = rx.try_recv() {
+            if matches!(job, Job::Stop) {
+                woke = Wake::Stop;
+                break;
+            }
+        }
+    }
+    woke
+}
+
+/// The worker body with its waits injected: every wake attempts one
+/// connect→set with backoff, then idles until the heartbeat, a section
+/// refresh, or shutdown. WHY every wake reconnects instead of holding one
+/// pipe: a held pipe goes stale silently across Discord restarts, while a
+/// fresh handshake per set re-asserts against whatever is listening now — and
+/// a miss costs only a fast local open while Discord is away.
 /// WHY `start_ms` is a parameter rather than the `SESSION_START_MS` static:
 /// deterministic tests pin the clock instead of racing wall time, and parallel
 /// tests never share it. WHY `stop` is a parameter rather than the `STOP`
@@ -277,10 +366,10 @@ pub fn shutdown() {
 /// instead of process-global state parallel tests would flake on.
 /// WHY the text is a provider rather than a value: each set snapshots the
 /// latest section, so message changes ride the same unbroken clock.
-fn serve_with(
+fn serve_worker(
     ipc: &mut impl Ipc,
     heartbeat: Duration,
-    sleep: impl Fn(Duration),
+    wait: impl Fn(Duration) -> Wake,
     stop: &AtomicBool,
     start_ms: i64,
     current: impl Fn() -> (String, String),
@@ -292,26 +381,22 @@ fn serve_with(
             return;
         }
         match connect_and_set(ipc, start_ms, &current) {
-            Ok(()) => {
-                failures = 0;
-                loop {
-                    sleep(heartbeat);
-                    if stop.load(Ordering::SeqCst) {
-                        ipc.clear_and_close();
-                        return;
-                    }
-                    let (details, state) = current();
-                    if let Err(e) = ipc.set_current(&details, &state, start_ms) {
-                        eprintln!("Discord presence lost ({e}) — retrying quietly");
-                        break;
-                    }
-                }
-            }
+            Ok(()) => failures = 0,
             Err(e) => {
                 eprintln!("{e} — continuing without presence");
-                sleep(backoff_for_attempt(failures));
                 failures = failures.saturating_add(1);
             }
+        }
+        // A clean set idles on the heartbeat; a miss backs off first, so a
+        // missing Discord never spins the worker.
+        let pause = if failures == 0 {
+            heartbeat
+        } else {
+            backoff_for_attempt(failures - 1)
+        };
+        if matches!(wait(pause), Wake::Stop) {
+            ipc.clear_and_close();
+            return;
         }
     }
 }
@@ -339,6 +424,11 @@ mod tests {
     /// compares sets against this constant, so runs are deterministic.
     const PINNED_START: i64 = 1_786_000_000_000;
 
+    /// WHY a serial lock: `CURRENT` is process-global, so the tests that store
+    /// through it hold this while they assert — parallel runners would
+    /// otherwise interleave stores and flake on exact text.
+    static SERIAL: Mutex<()> = Mutex::new(());
+
     fn fixed_text() -> (String, String) {
         (DETAILS.to_string(), STATE.to_string())
     }
@@ -347,7 +437,7 @@ mod tests {
     /// a full call log. The payload it records can only be text plus a start —
     /// the seam gives it no other shape to carry. It trips the shared stop
     /// flag itself after a scripted number of connects or sets, so each test
-    /// runs the real `serve_with` loop to a deterministic halt.
+    /// runs the real `serve_worker` loop to a deterministic halt.
     struct FakeIpc {
         calls: Vec<Call>,
         stop: Arc<AtomicBool>,
@@ -434,27 +524,32 @@ mod tests {
         }
     }
 
-    /// Runs the real `serve_with` loop against a fake: sleeps are recorded
-    /// for backoff assertions and never taken, the clock is pinned, and the
-    /// fake halts the loop itself — deterministic, no threads, no timing flakes.
+    /// Runs the real `serve_worker` loop against a fake: scripted wakes drive
+    /// cadence assertions while recorded waits pin the backoff/heartbeat shape,
+    /// the clock is pinned, and the fake halts the loop itself — deterministic,
+    /// no threads, no timing flakes.
     fn drive(
         mut ipc: FakeIpc,
         stop: &AtomicBool,
         heartbeat: Duration,
+        wakes: &[Wake],
         start_ms: i64,
         current: impl Fn() -> (String, String),
     ) -> (Vec<Call>, Vec<Duration>) {
-        let sleeps: Vec<Duration> = Vec::new();
-        let sleeps_cell = Mutex::new(sleeps);
-        serve_with(
+        let script = Mutex::new(wakes.to_vec());
+        let waits_cell = Mutex::new(Vec::new());
+        serve_worker(
             &mut ipc,
             heartbeat,
-            |d| sleeps_cell.lock().unwrap().push(d),
+            |d| {
+                waits_cell.lock().unwrap().push(d);
+                script.lock().unwrap().remove(0)
+            },
             stop,
             start_ms,
             current,
         );
-        (ipc.calls, sleeps_cell.into_inner().unwrap())
+        (ipc.calls, waits_cell.into_inner().unwrap())
     }
 
     fn sets_in(calls: &[Call]) -> Vec<(String, String, i64)> {
@@ -523,6 +618,7 @@ mod tests {
 
     #[test]
     fn status_storage_validates_and_stores_without_touching_ipc() {
+        let _serial = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
         assert!(store_status("", STATE).is_err());
         assert!(store_status("   ", STATE).is_err());
         assert!(store_status(DETAILS, "").is_err());
@@ -572,10 +668,17 @@ mod tests {
     fn discord_running_sets_the_static_pair_then_clears_on_stop() {
         let stop = Arc::new(AtomicBool::new(false));
         let ipc = FakeIpc::new(&stop).stop_after_sets(1);
-        // One live set parks the loop on its heartbeat; the stop tripped by
+        // One live set parks the worker on its heartbeat; the stop tripped by
         // that set then clears on the way out.
-        let heartbeat = Duration::from_millis(1);
-        let (calls, sleeps) = drive(ipc, &stop, heartbeat, PINNED_START, fixed_text);
+        let heartbeat = Duration::from_secs(30);
+        let (calls, waits) = drive(
+            ipc,
+            &stop,
+            heartbeat,
+            &[Wake::Timeout],
+            PINNED_START,
+            fixed_text,
+        );
         assert!(calls.contains(&Call::Connect));
         assert!(sets_in(&calls).contains(&(
             DETAILS.to_string(),
@@ -583,7 +686,7 @@ mod tests {
             PINNED_START
         )));
         assert_eq!(calls.last(), Some(&Call::ClearClose));
-        assert_eq!(sleeps, vec![heartbeat]);
+        assert_eq!(waits, vec![heartbeat]);
     }
 
     #[test]
@@ -594,14 +697,21 @@ mod tests {
             .stop_after_connects(3);
         // Silent failure keeps retrying — never sets, never panics — with the
         // capped backoff between attempts, then clears on the way out.
-        let (calls, sleeps) = drive(ipc, &stop, Duration::from_millis(1), PINNED_START, fixed_text);
+        let (calls, waits) = drive(
+            ipc,
+            &stop,
+            Duration::from_secs(30),
+            &[Wake::Timeout, Wake::Timeout, Wake::Timeout],
+            PINNED_START,
+            fixed_text,
+        );
         assert!(sets_in(&calls).is_empty());
         assert_eq!(
             calls,
             vec![Call::Connect, Call::Connect, Call::Connect, Call::ClearClose]
         );
         assert_eq!(
-            sleeps,
+            waits,
             vec![
                 Duration::from_secs(1),
                 Duration::from_secs(2),
@@ -614,8 +724,15 @@ mod tests {
     fn reconnect_after_startup_flaps_sets_eventually() {
         let stop = Arc::new(AtomicBool::new(false));
         let ipc = FakeIpc::new(&stop).failing_connects(2).stop_after_sets(1);
-        let heartbeat = Duration::from_millis(1);
-        let (calls, sleeps) = drive(ipc, &stop, heartbeat, PINNED_START, fixed_text);
+        let heartbeat = Duration::from_secs(30);
+        let (calls, waits) = drive(
+            ipc,
+            &stop,
+            heartbeat,
+            &[Wake::Timeout, Wake::Timeout, Wake::Timeout],
+            PINNED_START,
+            fixed_text,
+        );
         assert_eq!(
             calls,
             vec![
@@ -631,7 +748,7 @@ mod tests {
             ]
         );
         assert_eq!(
-            sleeps,
+            waits,
             vec![
                 Duration::from_secs(1),
                 Duration::from_secs(2),
@@ -654,9 +771,14 @@ mod tests {
             ),
             (DETAILS.to_string(), "Reading logs".to_string()),
         ]);
-        let (calls, _) = drive(ipc, &stop, Duration::from_millis(1), PINNED_START, || {
-            texts.lock().unwrap().pop().unwrap_or_else(fixed_text)
-        });
+        let (calls, _) = drive(
+            ipc,
+            &stop,
+            Duration::from_millis(1),
+            &[Wake::Timeout, Wake::Timeout, Wake::Timeout],
+            PINNED_START,
+            || texts.lock().unwrap().pop().unwrap_or_else(fixed_text),
+        );
         let sets = sets_in(&calls);
         assert_eq!(sets.len(), 3);
         // WHY the clock assertion first: it is the whole point — three
@@ -730,5 +852,103 @@ mod tests {
             }
         }
         assert!(!sets_in(&ipc.calls).is_empty());
+    }
+
+    #[test]
+    fn refresh_wakes_the_worker_without_shortening_its_cadence() {
+        let stop = Arc::new(AtomicBool::new(false));
+        let ipc = FakeIpc::new(&stop).stop_after_sets(2);
+        // A section refresh wakes the wait early and is set at once; the next
+        // idle still spans the full heartbeat — refreshes never quicken the
+        // worker into a spin.
+        let heartbeat = Duration::from_secs(3600);
+        let (calls, waits) = drive(
+            ipc,
+            &stop,
+            heartbeat,
+            &[Wake::Refresh, Wake::Timeout],
+            PINNED_START,
+            fixed_text,
+        );
+        assert_eq!(sets_in(&calls).len(), 2);
+        assert_eq!(waits, vec![heartbeat, heartbeat]);
+        assert_eq!(calls.last(), Some(&Call::ClearClose));
+    }
+
+    #[test]
+    fn stop_message_clears_and_exits_while_the_flag_stays_down() {
+        let stop = Arc::new(AtomicBool::new(false));
+        let ipc = FakeIpc::new(&stop);
+        // The flag never trips: the `Stop` message alone — what `shutdown`
+        // sends — must clear and leave.
+        let (calls, _) = drive(
+            ipc,
+            &stop,
+            Duration::from_secs(30),
+            &[Wake::Stop],
+            PINNED_START,
+            fixed_text,
+        );
+        assert!(!stop.load(Ordering::SeqCst));
+        assert_eq!(
+            calls,
+            vec![
+                Call::Connect,
+                Call::Set {
+                    details: DETAILS.to_string(),
+                    state: STATE.to_string(),
+                    start_ms: PINNED_START,
+                },
+                Call::ClearClose,
+            ]
+        );
+    }
+
+    #[test]
+    fn section_reports_never_touch_ipc_even_when_the_pipe_is_wedged() {
+        let _serial = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
+        // WHY a parked receiver instead of a fake pipe: the contract is about
+        // this thread, not the worker — an unwatched mailbox still accepts the
+        // signal instantly, which a wedged pipe never could.
+        let (tx, rx) = mpsc::channel::<Job>();
+        let _parked = std::thread::spawn(move || {
+            let _held = rx;
+            std::thread::sleep(Duration::from_secs(30));
+        });
+        let started = std::time::Instant::now();
+        assert!(set_status_with(DETAILS, "Reading logs", false, || {
+            tx.send(Job::Refresh)
+                .expect("mailbox accepts while the worker is wedged");
+        })
+        .is_ok());
+        assert!(started.elapsed() < Duration::from_secs(1));
+        assert_eq!(
+            current_text(),
+            ("Using Sprout".to_string(), "Reading logs".to_string())
+        );
+        assert!(store_status(DETAILS, STATE).is_ok());
+    }
+
+    #[test]
+    fn switched_off_reports_store_silently_without_signalling() {
+        let _serial = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
+        assert!(set_status_with(DETAILS, STATE, true, || {
+            panic!("a disabled presence must not wake any worker")
+        })
+        .is_ok());
+    }
+
+    #[test]
+    fn escape_hatch_disables_presence_for_triage() {
+        let previous = std::env::var_os("SPROUT_NO_PRESENCE");
+        std::env::set_var("SPROUT_NO_PRESENCE", "1");
+        assert!(disabled());
+        std::env::set_var("SPROUT_NO_PRESENCE", "0");
+        assert!(!disabled());
+        std::env::remove_var("SPROUT_NO_PRESENCE");
+        assert!(!disabled());
+        if let Some(value) = previous {
+            std::env::set_var("SPROUT_NO_PRESENCE", value);
+        }
     }
 }
