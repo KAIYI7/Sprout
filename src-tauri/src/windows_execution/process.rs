@@ -36,6 +36,10 @@ impl OwnedProcess {
             .map_err(|error| format!("could not inspect the owned process: {error}"))
     }
 
+    pub(crate) fn id(&self) -> u32 {
+        self.child.id()
+    }
+
     pub(crate) fn stop(&mut self) {
         kill_tree(self.child.id());
         let _ = self.child.wait();
@@ -87,6 +91,33 @@ pub(crate) fn system_memory_mb() -> Result<u64, String> {
     .trim()
     .parse::<u64>()
     .map_err(|_| "Windows did not report physical memory as a megabyte count".into())
+}
+
+/// Tooltip-grade usage for one owned runtime process (ticket 190): working-set
+/// bytes plus total CPU seconds, read through the single PowerShell owner
+/// (ADR-0029 — no new native invocation site this round). The caller derives
+/// a live CPU % from successive totals; a missing CPU total reads as zero so
+/// a just-started server still reports its working set.
+pub(crate) fn owned_process_usage(pid: u32) -> Result<(u64, u64), String> {
+    let script = format!(
+        "$p=Get-Process -Id {pid} -ErrorAction Stop; $cpu=if($null -eq $p.CPU){{0}}else{{$p.CPU}}; \"$($p.WorkingSet64) $cpu\""
+    );
+    let output = powershell_output(&script, Duration::from_secs(5))?;
+    let mut parts = output.split_whitespace();
+    let working_set = parts
+        .next()
+        .and_then(|value| value.parse::<u64>().ok())
+        .ok_or_else(|| "Windows did not report the owned process working set".to_string())?;
+    let cpu_secs = parts
+        .next()
+        .and_then(|value| value.parse::<f64>().ok())
+        .unwrap_or(0.0);
+    let cpu_ms = if cpu_secs.is_finite() && cpu_secs >= 0.0 {
+        (cpu_secs * 1000.0).round() as u64
+    } else {
+        0
+    };
+    Ok((working_set, cpu_ms))
 }
 
 enum LogAttachment { Required, BestEffort }

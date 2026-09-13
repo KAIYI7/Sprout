@@ -1,6 +1,6 @@
 # 181 — Discord Rich Presence (offline static) + AI two-view dialog + scoped clarification (spec)
 
-**Status:** ready-for-agent. Planning package only — no application behavior changed here.
+**Status:** implemented 2026-09-13 (182 + 183 + 184 delivered; 185 combined verification green — see Acceptance and verification). Planning package only — no application behavior changed here.
 
 **Parents / related (read before implementing):**
 - [145 AI-assisted Quick Action authoring](145-ai-assisted-quick-action-authoring-spec.md) + [172 AI-gated template](172-ai-gated-ai-first-quick-action-template.md) — own the single Add/Edit dialog template, `aiReady` disclosure gate, shell field, Test/Save grammar. This round replaces 172's stacked hero with two exclusive views; reconcile copy/Disclosure with 167 at implementation.
@@ -104,9 +104,9 @@ The **spec-181 integration coordinator** (ticket 185) owns shared glossary/ADR/r
 ## Acceptance and verification
 
 - [x] User confirmed always-attempt static presence (ID requested in ticket), two-view tabs with single hero + auto-review in Manual, and scoped grill-style clarify.
-- [ ] 182 verifies static payload, silent-absent behavior, no account access, exit clear, size + ownership gates.
-- [ ] 183 verifies gating, defaults, tab scent/operability, single-hero, auto-flip review, recheck hatch, keyboard/DPI/light-dark.
-- [ ] 184 verifies vague→clarify→regenerate with choices, no leaked draft, no disclosure widening, both shells, fixture battery.
-- [ ] 185 records Rust/frontend checks, combined manual acceptance, reconciles CONTEXT/ADR/research status, publishes each completed unit through `node tools/ownership-gate.mjs` + verified `tools\sync.ps1 -Up` (twice, expect 0 copied).
+- [x] 182 verifies static payload, silent-absent behavior, no account access, exit clear, size + ownership gates. (Done 2026-09-12 + follow-up 2026-09-13 session clock/section text; `cargo check` 0 warnings, `cargo test` 617 passed at the time, ownership gate pass, live Discord-visible confirmation by the user — see [182](182-discord-presence-offline-static.md). Combined re-verified in 185: backend 620 passed / 0 failed.)
+- [x] 183 verifies gating, defaults, tab scent/operability, single-hero, auto-flip review, recheck hatch, keyboard/DPI/light-dark. (Done 2026-09-12; `npm.cmd run check` 0 errors, frontend 250 passed, ownership gate pass — see [183](183-quick-action-ai-two-view-dialog.md). Combined re-verified in 185: check 0 errors, vitest 251 passed, build succeeds.)
+- [x] 184 verifies vague→clarify→regenerate with choices, no leaked draft, no disclosure widening, both shells, fixture battery. (Done 2026-09-12 + follow-up 2026-09-13 bounded grill; `cargo test` 620 passed at the time, ownership gate pass — see [184](184-ai-clarify-template-scoped.md). Combined re-verified in 185: `eval_fixtures_reach_their_expected_verdicts` green, packaging `include_str!` holds.)
+- [x] 185 records Rust/frontend checks, combined manual acceptance, reconciles CONTEXT/ADR/research status, publishes each completed unit through `node tools/ownership-gate.mjs` + verified `tools\sync.ps1 -Up` (twice, expect 0 copied). (Done 2026-09-13 — see [185](185-round-verification-integration.md).)
 
 No application behavior changed in this planning session.

@@ -452,6 +452,18 @@
     border: 1px solid var(--border-strong);
     border-radius: var(--radius);
     box-shadow: var(--shadow-dialog);
+    /* Mount fade: menus appear from nowhere, so a short opacity/scale
+       entrance keeps them from flashing in. Pure CSS on the motion tokens,
+       so the Animation off hook and the OS reduced-motion rule collapse it
+       with everything else. */
+    animation: menu-in var(--dur-fast) var(--ease-out);
+  }
+
+  @keyframes menu-in {
+    from {
+      opacity: 0;
+      transform: scale(0.98);
+    }
   }
 
   .ctx-submenu {

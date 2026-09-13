@@ -8,7 +8,7 @@ const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
 function killStraySprout() {
   try {
-    spawnSync("taskkill", ["/IM", "sprout.exe", "/F"], { stdio: "ignore" });
+    spawnSync("taskkill", ["/IM", "sprout-windows-desktop.exe", "/F"], { stdio: "ignore" });
   } catch {}
 }
 

@@ -9,18 +9,20 @@
     AiFindOutcome,
   } from "$lib/types";
   import { quickActionShellLabel } from "$lib/types";
-  import type { AiDraftOutcome } from "$lib/types";
+  import type { AiDiagnoseOutcome, AiDraftOutcome } from "$lib/types";
   import {
     aiApproveDisclosure,
     aiApproveRoot,
     aiBindTarget,
     aiCancelDraft,
     aiCheckCandidate,
+    aiDiagnoseDraft,
     aiFindTargets,
     aiGenerateDraft,
     aiListApprovedRoots,
     aiReadTargetFile,
     aiRevokeRoot,
+    aiVerifyRevision,
     assignToGroup,
     attachQuickActionFile,
     createGroup,
@@ -56,8 +58,11 @@
     groups = [],
     groupsEnabled = false,
     aiReady = false,
+    aiSetupKind = "generic",
+    aiRuntimeStopped = false,
     onsave,
     oncancel,
+    onsetupai,
   }: {
     open: boolean;
     /** The action being edited; null = adding a new action. */
@@ -77,8 +82,20 @@
      *  chrome instead of a disabled teaser. The backend remains the
      *  generation gate; this is disclosure only. */
     aiReady?: boolean;
+    /** Which unready pointer to show (ticket 192): `managed` names the
+     *  stopped managed route, anything else offers generic setup. Rendered
+     *  only while unready — at most one plain-text line, never tabs or hero. */
+    aiSetupKind?: "managed" | "generic";
+    /** Stopped-with-config (ticket 192): ready but the owned runtime is down.
+     *  The AI tab still shows with a plain restart hint — never the enable
+     *  line, which is unready-only. */
+    aiRuntimeStopped?: boolean;
     onsave: (message: string) => void | Promise<void>;
     oncancel: () => void;
+    /** Ticket 192: routes the unready pointer to Settings (expand the AI
+     *  group, focus the provider control). The page owns navigation; the
+     *  dialog only calls back. */
+    onsetupai?: () => void | Promise<void>;
   } = $props();
 
   let name = $state("");
@@ -108,28 +125,42 @@
   let error = $state("");
   let testing = $state(false);
   // AI drafting (ADR-0030): an explicit-shell request becomes a reviewable
-  // candidate the user applies into the fields above and saves normally.
-  // Generation never runs, tests, or stops anything — this section never
-  // calls the run/test controls. `aiSeq` drops late completions so a slow
-  // answer can never replace a newer draft or claim a cancelled success. It
-  // is deliberately NOT reactive state: nothing renders it, and a
+  // candidate the user applies into Manual and saves normally. Generation
+  // never runs, tests, or stops anything — this section never calls the
+  // run/test controls. `aiSeq` drops late completions so a slow answer can
+  // never replace a newer draft or claim a cancelled success. It is
+  // deliberately NOT reactive state: nothing renders it, and a
   // read-modify-write inside the reset effect below would retrigger that
   // effect forever.
-  let aiOpen = $state(false);
+  let aiView = $state<"ai" | "manual">(aiReady && action === null ? "ai" : "manual");
   let aiRequest = $state("");
-  let aiContext = $state("");
   let aiPending = $state(false);
   let aiSeq = 0;
   let aiRequestId: string | null = null;
   let aiOutcome = $state<AiDraftOutcome | null>(null);
   let aiNotice = $state("");
   let aiApplied = $state<{ shell: QuickActionShell; command: string } | null>(null);
+  let clarifyPick = $state("");
+  let clarifyFree = $state("");
+  // The grill chain (ADR-0032): answers accumulate onto the previous narrowed
+  // request so no round loses earlier context; `chainedFrom` guards the chain
+  // against a request edited mid-grill, and `clarifyRound` counts answers for
+  // the question indicator.
+  let lastNarrowed = $state<string | null>(null);
+  let chainedFrom = $state("");
+  let clarifyRound = $state(0);
+  let manualNotice = $state("");
   // The draft under review, if any — flat derivations keep the review
   // markup free of inline declarations and narrowing chains.
   const aiDraft = $derived(aiOutcome?.kind === "draft" ? aiOutcome.draft : null);
-  const aiRefusal = $derived(
-    aiOutcome?.kind === "refused" || aiOutcome?.kind === "clarify" ? aiOutcome.message : null
+  const aiClarify = $derived(aiOutcome?.kind === "clarify" ? aiOutcome : null);
+  const aiClarifyChoices = $derived(aiClarify?.choices ?? []);
+  const aiClarifyAspect = $derived(
+    aiClarify && typeof aiClarify.aspect === "string" && aiClarify.aspect
+      ? aiClarify.aspect
+      : null
   );
+  const aiRefusal = $derived(aiOutcome?.kind === "refused" ? aiOutcome.message : null);
   const aiFailure = $derived(aiOutcome?.kind === "failed" ? aiOutcome.message : null);
   const aiAppliedCurrent = $derived(
     aiDraft !== null &&
@@ -149,6 +180,8 @@
     if (open) {
       if (aiRequestId) void aiCancelDraft(aiRequestId).catch(() => {});
       aiRequestId = null;
+      if (diagRequestId) void aiCancelDraft(diagRequestId).catch(() => {});
+      diagRequestId = null;
       name = action?.name ?? "";
       shell = action?.shell ?? "powershell";
       command = action?.command ?? "";
@@ -168,17 +201,27 @@
       saving = false;
       error = "";
       // AI-first on Add, manual-first on Edit: a new action starts from the
-      // drafting block when one is available, while an edit keeps the
+      // drafting view when one is available, while an edit keeps the
       // author's fields in front (ADR-0030 keeps applied drafts reviewable
       // either way — generation never fills anything unreviewed).
-      aiOpen = aiReady && action === null;
+      aiView = aiReady && action === null ? "ai" : "manual";
       aiRequest = "";
-      aiContext = "";
       aiPending = false;
       aiSeq += 1;
       aiOutcome = null;
       aiNotice = "";
       aiApplied = null;
+      clarifyPick = "";
+      clarifyFree = "";
+      manualNotice = "";
+      diagError = "";
+      diagPending = false;
+      diagSeq += 1;
+      diagRequestId = null;
+      diagOutcome = null;
+      diagNotice = "";
+      diagConflict = "";
+      diagAppliedBaseline = null;
       findQuery = "";
       findScope = "apps";
       findPending = false;
@@ -190,7 +233,6 @@
       rootsNotice = "";
       boundTarget = null;
       filePreview = null;
-      if (aiOpen) void loadRoots();
       // Default ungrouped; an edit preselects its current group when that
       // group is still live.
       groupPick =
@@ -265,19 +307,21 @@
     aiPending = true;
     aiOutcome = null;
     aiNotice = "";
+    clarifyPick = "";
+    clarifyFree = "";
+    lastNarrowed = null;
+    chainedFrom = "";
+    clarifyRound = 0;
     error = "";
     const mine = ++aiSeq;
     const requestId = `draft-${Date.now()}-${mine}`;
     aiRequestId = requestId;
     try {
-      const outcome = await aiGenerateDraft(
-        aiRequest.trim(),
-        shell,
-        aiContext.trim() || null,
-        requestId,
-      );
+      const outcome = await aiGenerateDraft(aiRequest.trim(), shell, null, requestId);
       if (mine !== aiSeq) return;
       aiOutcome = outcome;
+      clarifyPick = "";
+      clarifyFree = "";
       await tick();
       document.getElementById("ai-outcome")?.focus();
     } catch (e) {
@@ -294,6 +338,105 @@
     }
   }
 
+  async function regenerateWithClarification() {
+    const selection = clarifyFree.trim() || clarifyPick.trim();
+    if (!selection) {
+      aiNotice = "Pick a choice or describe it below, then continue.";
+      return;
+    }
+    // The chain carries every prior answer forward, and the aspect key tells
+    // the backend which question this answers — answered questions never
+    // repeat, distinct ones still ask (ADR-0032).
+    const base =
+      lastNarrowed && chainedFrom === aiRequest.trim() ? lastNarrowed : aiRequest.trim();
+    const narrowed = aiClarifyAspect
+      ? `${base} — clarified choice [${aiClarifyAspect}]: ${selection}`
+      : `${base} — clarified choice: ${selection}`;
+    lastNarrowed = narrowed;
+    chainedFrom = aiRequest.trim();
+    clarifyRound += 1;
+    if (aiPending) return;
+    aiPending = true;
+    aiOutcome = null;
+    aiNotice = "";
+    error = "";
+    const mine = ++aiSeq;
+    const requestId = `draft-${Date.now()}-${mine}`;
+    aiRequestId = requestId;
+    try {
+      const outcome = await aiGenerateDraft(narrowed, shell, null, requestId);
+      if (mine !== aiSeq) return;
+      aiOutcome = outcome;
+      clarifyPick = "";
+      clarifyFree = "";
+      await tick();
+      document.getElementById("ai-outcome")?.focus();
+    } catch (e) {
+      console.error(e);
+      if (mine !== aiSeq) return;
+      aiOutcome = { kind: "failed", message: String(e) };
+      await tick();
+      document.getElementById("ai-outcome")?.focus();
+    } finally {
+      if (mine === aiSeq) {
+        aiPending = false;
+        aiRequestId = null;
+      }
+    }
+  }
+
+  async function draftAnyway() {
+    // The explicit user override ends the grill: the chained context goes back
+    // with the override tag, so vagueness is skipped while refusal and
+    // shell-compatibility still guard the draft (ADR-0032).
+    const base =
+      lastNarrowed && chainedFrom === aiRequest.trim() ? lastNarrowed : aiRequest.trim();
+    if (!base) {
+      aiNotice = "Describe what the action should do, then generate.";
+      return;
+    }
+    if (aiPending) return;
+    aiPending = true;
+    aiOutcome = null;
+    aiNotice = "";
+    error = "";
+    const mine = ++aiSeq;
+    const requestId = `draft-${Date.now()}-${mine}`;
+    aiRequestId = requestId;
+    try {
+      const outcome = await aiGenerateDraft(
+        `${base} — draft-anyway: proceed with what you have`,
+        shell,
+        null,
+        requestId
+      );
+      if (mine !== aiSeq) return;
+      aiOutcome = outcome;
+      clarifyPick = "";
+      clarifyFree = "";
+      await tick();
+      document.getElementById("ai-outcome")?.focus();
+    } catch (e) {
+      console.error(e);
+      if (mine !== aiSeq) return;
+      aiOutcome = { kind: "failed", message: String(e) };
+      await tick();
+      document.getElementById("ai-outcome")?.focus();
+    } finally {
+      if (mine === aiSeq) {
+        aiPending = false;
+        aiRequestId = null;
+      }
+    }
+  }
+
+  function clarifyKeydown(event: KeyboardEvent) {
+    if (event.key === "Enter" && (event.ctrlKey || event.metaKey)) {
+      event.preventDefault();
+      void regenerateWithClarification();
+    }
+  }
+
   function cancelDraft() {
     if (aiRequestId) void aiCancelDraft(aiRequestId).catch(() => {});
     aiRequestId = null;
@@ -302,13 +445,17 @@
     aiNotice = "Generation cancelled — nothing saved.";
   }
 
-  function applyDraft() {
+  async function applyDraft() {
     if (aiOutcome?.kind !== "draft") return;
     command = aiOutcome.draft.command;
     shell = aiOutcome.draft.shell;
     aiApplied = { shell: aiOutcome.draft.shell, command: aiOutcome.draft.command };
     aiNotice = "";
     error = "";
+    manualNotice = "Applied — review and save.";
+    aiView = "manual";
+    await tick();
+    document.getElementById("qa-command")?.focus();
   }
 
   function dismissDraft() {
@@ -316,6 +463,163 @@
     aiOutcome = null;
     aiApplied = null;
     aiNotice = "";
+    clarifyPick = "";
+    clarifyFree = "";
+  }
+
+  // Diagnosis (ticket 153, ADR-0030): an edit-only block that sends the
+  // selected saved script plus pasted error output and returns an
+  // explanation or a separately reviewed revision. It never runs, tests, or
+  // stops anything — this section calls only the diagnose/verify/cancel
+  // commands. Rejecting, cancelling, failing, or regenerating leaves the
+  // saved fields intact; only explicit acceptance applies the reviewed
+  // fields (shell, command, working directory, note). `diagSeq` drops late
+  // completions the same way `aiSeq` does for drafts.
+  let diagError = $state("");
+  let diagPending = $state(false);
+  let diagSeq = 0;
+  let diagRequestId: string | null = null;
+  let diagOutcome = $state<AiDiagnoseOutcome | null>(null);
+  let diagNotice = $state("");
+  let diagConflict = $state("");
+  // The accepted revision's baseline: submit() rechecks it against the live
+  // row so source deletion or newer edits block the save with both states
+  // retained, instead of overwriting silently.
+  let diagAppliedBaseline = $state<string | null>(null);
+  const diagRevision = $derived(diagOutcome?.kind === "revision" ? diagOutcome.revision : null);
+  const diagBaseline = $derived(diagOutcome?.kind === "revision" ? diagOutcome.baseline : null);
+  const diagExplanationOnly = $derived(
+    diagOutcome?.kind === "explanation" ? diagOutcome.explanation : null
+  );
+  const diagRefusal = $derived(diagOutcome?.kind === "refused" ? diagOutcome.message : null);
+  const diagFailure = $derived(diagOutcome?.kind === "failed" ? diagOutcome.message : null);
+  const diagClarify = $derived(diagOutcome?.kind === "clarify" ? diagOutcome : null);
+
+  async function diagnose() {
+    if (diagPending || !action) return;
+    if (!command.trim()) {
+      diagOutcome = null;
+      diagNotice = "The saved script is empty — nothing to diagnose.";
+      return;
+    }
+    if (!diagError.trim()) {
+      diagOutcome = null;
+      diagNotice = "Paste the error output to diagnose, then try again.";
+      return;
+    }
+    diagPending = true;
+    diagOutcome = null;
+    diagNotice = "";
+    diagConflict = "";
+    error = "";
+    const mine = ++diagSeq;
+    const requestId = `diagnose-${Date.now()}-${mine}`;
+    diagRequestId = requestId;
+    try {
+      const outcome = await aiDiagnoseDraft(
+        action.id,
+        command,
+        diagError.trim(),
+        shell,
+        cwd.trim() || null,
+        requestId
+      );
+      if (mine !== diagSeq) return;
+      diagOutcome = outcome;
+      await tick();
+      document.getElementById("diag-outcome")?.focus();
+    } catch (e) {
+      console.error(e);
+      if (mine !== diagSeq) return;
+      diagOutcome = { kind: "failed", message: String(e) };
+      await tick();
+      document.getElementById("diag-outcome")?.focus();
+    } finally {
+      if (mine === diagSeq) {
+        diagPending = false;
+        diagRequestId = null;
+      }
+    }
+  }
+
+  function cancelDiagnose() {
+    if (diagRequestId) void aiCancelDraft(diagRequestId).catch(() => {});
+    diagRequestId = null;
+    diagSeq += 1;
+    diagPending = false;
+    diagNotice = "Diagnosis cancelled — nothing saved.";
+  }
+
+  function diagKeydown(event: KeyboardEvent) {
+    if (event.key === "Enter" && (event.ctrlKey || event.metaKey)) {
+      event.preventDefault();
+      void diagnose();
+    }
+  }
+
+  async function applyRevision() {
+    if (diagOutcome?.kind !== "revision" || !action) return;
+    // Acceptance rechecks the baseline first: a deleted source or a newer
+    // edit keeps both states and blocks the apply instead of overwriting.
+    try {
+      const conflict = await aiVerifyRevision(action.id, diagOutcome.baseline);
+      if (conflict) {
+        diagConflict = conflict;
+        return;
+      }
+    } catch (e) {
+      console.error(e);
+      diagConflict = String(e);
+      return;
+    }
+    const revision = diagOutcome.revision;
+    // Only reviewed fields move: shell, command, working directory, note.
+    // Name, Group picker, stoppable settings, auto-run, dock visibility,
+    // and pre-action gates stay exactly as the user left them.
+    shell = revision.shell;
+    command = revision.command;
+    cwd = revision.cwd ?? "";
+    if (revision.note !== null) note = revision.note;
+    aiApplied = { shell: revision.shell, command: revision.command };
+    diagAppliedBaseline = diagOutcome.baseline;
+    diagConflict = "";
+    diagNotice = "";
+    error = "";
+    manualNotice = "Revision applied — review and save.";
+    aiView = "manual";
+    await tick();
+    document.getElementById("qa-command")?.focus();
+  }
+
+  function dismissRevision() {
+    diagSeq += 1;
+    diagOutcome = null;
+    diagNotice = "";
+    diagConflict = "";
+  }
+
+  function selectView(view: "ai" | "manual") {
+    aiView = view;
+  }
+
+  function viewTabsKeydown(event: KeyboardEvent) {
+    if (event.key !== "ArrowRight" && event.key !== "ArrowLeft" && event.key !== "Home" && event.key !== "End")
+      return;
+    event.preventDefault();
+    if (event.key === "Home") {
+      selectView("ai");
+      document.getElementById("tab-ai")?.focus();
+      return;
+    }
+    if (event.key === "End") {
+      selectView("manual");
+      document.getElementById("tab-manual")?.focus();
+      return;
+    }
+    selectView(aiView === "ai" ? "manual" : "ai");
+    requestAnimationFrame(() =>
+      document.getElementById(aiView === "ai" ? "tab-manual" : "tab-ai")?.focus(),
+    );
   }
 
   // AI local-target search (ADR-0031): an explicit find over installed apps
@@ -496,6 +800,32 @@
         const verdict = await aiCheckCandidate(shell, command.trim());
         if (verdict.verdict !== "allow") {
           error = `${verdict.message} Discard the draft below to save this as your own manual text instead.`;
+          return;
+        }
+      } catch (e) {
+        console.error(e);
+      }
+    }
+    // A revision applied from diagnosis is rechecked against the live row
+    // before it may save: source deletion or a newer edit blocks with both
+    // states retained instead of overwriting silently. A revision the user
+    // then edited is their own text — the recheck hatch above already
+    // covered it, so only untouched applies verify here.
+    if (
+      diagAppliedBaseline &&
+      editing &&
+      action &&
+      aiApplied &&
+      shell === aiApplied.shell &&
+      command.trim() === aiApplied.command
+    ) {
+      try {
+        const conflict = await aiVerifyRevision(action.id, diagAppliedBaseline);
+        if (conflict) {
+          error = conflict;
+          aiView = "ai";
+          await tick();
+          document.getElementById("diag-outcome")?.focus();
           return;
         }
       } catch (e) {
@@ -864,275 +1194,330 @@
     }}
   >
     {#if aiReady}
-      <!-- AI drafting leads the dialog while ready (never in the compact
-           dock/window): describe the task, review the candidate, apply it
-           into the fields below, then validate and save normally. Frequent
-           intent first, rare fields behind Details — two levels max. -->
-      <div class="ai">
-        <Disclosure
-          open={aiOpen}
-          controls="qa-ai-body"
-          label="Draft with AI"
-          onclick={() => {
-            aiOpen = !aiOpen;
-            if (aiOpen) void loadRoots();
-          }}
-        />
-
-        <div id="qa-ai-body" class="ai__body" hidden={!aiOpen}>
-          <div class="field">
-            <div class="field__label-row">
-              <label class="field__label" for="qa-ai-request">What should it do</label>
-              <InfoTip label="How AI drafting works">
-                <p>Drafts for the {quickActionShellLabel[shell]} shell selected below. Only what you type here is sent — nothing is read from disk or the app. Drafts never run; you review and save each one.</p>
-              </InfoTip>
-            </div>
-            <textarea
-              id="qa-ai-request"
-              name="ai-request"
-              class="field__cmd"
-              rows="3"
-              maxlength="2000"
-              placeholder="e.g. show the status of the print spooler service"
-              autocomplete="off"
-              spellcheck="true"
-              value={aiRequest}
-              oninput={(e) => (aiRequest = (e.target as HTMLTextAreaElement).value)}
-              onkeydown={aiKeydown}
-            ></textarea>
-          </div>
-
-          <div class="field">
-            <div class="field__label-row">
-              <label class="field__label" for="qa-ai-context">Extra context (optional)</label>
-            </div>
-            <textarea
-              id="qa-ai-context"
-              name="ai-context"
-              class="field__cmd"
-              rows="2"
-              maxlength="2000"
-              placeholder="e.g. service names, paths to mention"
-              autocomplete="off"
-              spellcheck="true"
-              value={aiContext}
-              oninput={(e) => (aiContext = (e.target as HTMLTextAreaElement).value)}
-              onkeydown={aiKeydown}
-            ></textarea>
-          </div>
-
-          <!-- Local-target search: installed apps and approved folders by
-               name. Nothing is read or run — pick a match to bind its path
-               into the command below, then review and save normally. -->
-          <div class="field">
-            <div class="field__label-row">
-              <label class="field__label" for="qa-find-scope">Search in</label>
-              <InfoTip label="How local target search works">
-                <p>Searches installed apps and folders you approve below — names and paths only. You pick a match; Sprout quotes its path into the command. Nothing is read or run during the search.</p>
-              </InfoTip>
-            </div>
-            <Select
-              id="qa-find-scope"
-              value={findScope}
-              onchange={(v) => (findScope = v as AiDiscoveryScope)}
-            >
-              <option value="apps">Installed apps</option>
-              <option value="files">Approved folders</option>
-              <option value="both">Both</option>
-            </Select>
-          </div>
-
-          <TextInput
-            id="qa-find-query"
-            label="Find a local target"
-            placeholder="e.g. notepad"
-            value={findQuery}
-            onchange={(v) => (findQuery = v)}
-            info="What the search covers"
-          >
-            {#snippet infobody()}
-              <p>Matches names, not contents. Ambiguous names list every match for you to choose from.</p>
-            {/snippet}
-          </TextInput>
-
-          <div class="field">
-            <div class="field__label-row">
-              <span class="field__label" id="qa-roots-label">Approved folders</span>
-              <InfoTip label="How approved folders work">
-                <p>Only folders you approve are searched — names and paths, never contents. Revoking forgets a folder, and earlier matches from it stop binding.</p>
-              </InfoTip>
-            </div>
-            {#if roots.length === 0}
-              <p class="ai__meta">None yet — folder search starts after you approve one.</p>
-            {:else}
-              <ul class="find__roots" aria-labelledby="qa-roots-label">
-                {#each roots as root (root.path)}
-                  <li class="find__root">
-                    <span class="find__path">{root.path}</span>
-                    <Button type="button" variant="ghost" onclick={() => void revokeRoot(root.path)}>
-                      Revoke
-                    </Button>
-                  </li>
-                {/each}
-              </ul>
-            {/if}
-            <div class="ai__actions">
-              <Button type="button" variant="secondary" onclick={() => void approveRoot()}>
-                Approve a folder…
-              </Button>
-            </div>
-            {#if rootsNotice}
-              <p class="ai__status" role="status">{rootsNotice}</p>
-            {/if}
-          </div>
-
-          <div class="ai__actions">
-            {#if findPending}
-              <p class="ai__status" role="status">Searching…</p>
-              <Button type="button" variant="ghost" onclick={cancelFind}>Cancel</Button>
-            {:else}
-              <Button
-                type="button"
-                variant="secondary"
-                onclick={() => void runFind()}
-              >
-                Find target
-              </Button>
-            {/if}
-          </div>
-
-          {#if findNotice}
-            <p class="ai__status" role="status">{findNotice}</p>
-          {/if}
-
-          {#if findOutcome && findOutcome.matches.length > 0}
-            <div class="ai__outcome">
-              {#if findOutcome.notice}
-                <p class="ai__meta">{findOutcome.notice}</p>
-              {/if}
-              {#if findOutcome.truncated}
-                <p class="ai__meta">Showing the first {findOutcome.matches.length} matches.</p>
-              {/if}
-              <div class="find__list" role="radiogroup" aria-label="Matching targets">
-                {#each findOutcome.matches as match (match.ref_id)}
-                  <label class="find__row">
-                    <input
-                      type="radio"
-                      name="qa-find-pick"
-                      value={match.ref_id}
-                      checked={findPick === match.ref_id}
-                      onchange={() => (findPick = match.ref_id)}
-                    />
-                    <span class="find__name">{match.name}</span>
-                    <span class="find__path">{match.path}</span>
-                    {#if match.kind !== "app"}
-                      <span class="find__kind">{match.kind}</span>
-                    {/if}
-                  </label>
-                {/each}
-              </div>
-              <div class="ai__actions">
-                <Button type="button" variant="secondary" onclick={() => void useTarget()}>
-                  Use this target
-                </Button>
-                {#if findPicked?.kind === "file"}
-                  <Button type="button" variant="ghost" onclick={() => void previewFile(findPicked.ref_id)}>
-                    Preview contents
-                  </Button>
-                {/if}
-              </div>
-              {#if filePreview}
-                <p class="ai__meta">Preview of {filePreview.path}{filePreview.truncated ? " (first 8 KB)" : ""} — shown only to you, never sent anywhere.</p>
-                <p class="ai__command">{filePreview.content}</p>
-                <div class="ai__actions">
-                  <Button type="button" variant="ghost" onclick={() => void approvePreviewDisclosure()}>
-                    Approve sending this to the model
-                  </Button>
-                  <Button type="button" variant="ghost" onclick={() => (filePreview = null)}>
-                    Hide preview
-                  </Button>
-                </div>
-              {/if}
-            </div>
-          {/if}
-
-          {#if boundTarget}
-            <div class="ai__outcome">
-              <p class="ai__flag">Not run — review before saving.</p>
-              <p class="ai__shell">{quickActionShellLabel[boundTarget.shell]}</p>
-              <p class="ai__command">{boundTarget.command}</p>
-              <p class="ai__meta">Opens: {boundTarget.target}</p>
-              {#if boundTarget.warning}
-                <Notice tone="warn">{boundTarget.warning}</Notice>
-              {/if}
-              <div class="ai__actions">
-                <Button type="button" variant="ghost" onclick={dismissBound}>Dismiss</Button>
-              </div>
-            </div>
-          {/if}
-
-          <div class="ai__actions">
-            {#if aiPending}
-              <p class="ai__status" role="status">Drafting…</p>
-              <Button type="button" variant="ghost" onclick={cancelDraft}>Cancel</Button>
-            {:else}
-              <Button
-                type="button"
-                variant="secondary"
-                onclick={() => void generateDraft()}
-              >
-                Generate draft
-              </Button>
-            {/if}
-          </div>
-
-          {#if aiNotice}
-            <p class="ai__status" role="status">{aiNotice}</p>
-          {/if}
-
-          {#if aiOutcome}
-            <div id="ai-outcome" tabindex="-1" class="ai__outcome">
-              {#if aiDraft}
-                <p class="ai__flag">Not run — review before saving.</p>
-                <p class="ai__shell">{quickActionShellLabel[aiDraft.shell]}</p>
-                <p class="ai__command">{aiDraft.command}</p>
-                {#if aiDraft.assumptions.length > 0}
-                  <p class="ai__meta">Assumes: {aiDraft.assumptions.join("; ")}</p>
-                {/if}
-                {#if aiDraft.affected_targets.length > 0}
-                  <p class="ai__meta">Touches: {aiDraft.affected_targets.join("; ")}</p>
-                {/if}
-                {#if aiDraft.explanation}
-                  <p class="ai__explanation">{aiDraft.explanation}</p>
-                {/if}
-                <div class="ai__actions">
-                  {#if aiAppliedCurrent}
-                    <p class="ai__status" role="status">
-                      Applied — this exact text is in the fields. Edit freely; saving an edit saves your own text.
-                    </p>
-                  {:else}
-                    <Button type="button" variant="secondary" onclick={applyDraft}>
-                      Use this draft
-                    </Button>
-                  {/if}
-                  <Button type="button" variant="ghost" onclick={dismissDraft}>Dismiss</Button>
-                </div>
-              {:else if aiRefusal}
-                <Notice tone="warn">{aiRefusal}</Notice>
-                <div class="ai__actions">
-                  <Button type="button" variant="ghost" onclick={dismissDraft}>Dismiss</Button>
-                </div>
-              {:else if aiFailure}
-                <Notice tone="error">{aiFailure}</Notice>
-                <div class="ai__actions">
-                  <Button type="button" variant="ghost" onclick={dismissDraft}>Dismiss</Button>
-                </div>
-              {/if}
-            </div>
-          {/if}
-        </div>
+      <!-- Two exclusive views (ADR-0028): tabs top-right on-surface, absent
+           when unready. Add opens AI-first, Edit opens manual-first; flips
+           are instant with both labels visible for scent. -->
+      <div class="viewtabs" role="tablist" aria-label="Quick action editor view" tabindex="-1" onkeydown={viewTabsKeydown}>
+        <button
+          id="tab-ai"
+          type="button"
+          role="tab"
+          aria-selected={aiView === "ai"}
+          aria-controls="panel-ai"
+          tabindex={aiView === "ai" ? 0 : -1}
+          class="viewtabs__tab"
+          class:active={aiView === "ai"}
+          onclick={() => selectView("ai")}
+        >
+          AI draft
+        </button>
+        <button
+          id="tab-manual"
+          type="button"
+          role="tab"
+          aria-selected={aiView === "manual"}
+          aria-controls="panel-manual"
+          tabindex={aiView === "manual" ? 0 : -1}
+          class="viewtabs__tab"
+          class:active={aiView === "manual"}
+          onclick={() => selectView("manual")}
+        >
+          Manual
+        </button>
       </div>
     {/if}
+
+    {#if aiReady && aiView === "ai"}
+      <!-- AI view: one Describe textarea plus Generate and outcome. No shell
+           picker, no find/roots chrome up front — the shell lives in Manual,
+           discovery appears only when a clarification needs it. -->
+      <div id="panel-ai" role="tabpanel" aria-labelledby="tab-ai" class="ai">
+        <div class="field">
+          <div class="field__label-row">
+            <label class="field__label" for="qa-ai-request">Describe what to do</label>
+            <InfoTip label="How AI drafting works">
+              <p>Only what you type here is sent — nothing is read from disk or the app. Drafts never run; you review and save each one.</p>
+            </InfoTip>
+          </div>
+          <textarea
+            id="qa-ai-request"
+            name="ai-request"
+            class="field__cmd"
+            rows="3"
+            maxlength="2000"
+            placeholder="e.g. show the status of the print spooler service"
+            autocomplete="off"
+            spellcheck="true"
+            value={aiRequest}
+            oninput={(e) => (aiRequest = (e.target as HTMLTextAreaElement).value)}
+            onkeydown={aiKeydown}
+          ></textarea>
+        </div>
+
+        {#if aiRuntimeStopped}
+          <!-- Ticket 192: stopped-with-config keeps the AI tab with a plain
+               restart hint — never the enable line, which is unready-only. -->
+          <p class="ai__status" role="status">Stopped — Generate will restart.</p>
+        {/if}
+
+        <div class="ai__actions">
+          {#if aiPending}
+            <p class="ai__status" role="status">Drafting…</p>
+            <Button type="button" variant="ghost" onclick={cancelDraft}>Cancel</Button>
+          {:else}
+            <Button type="button" variant="secondary" onclick={() => void generateDraft()}>
+              Generate draft
+            </Button>
+          {/if}
+        </div>
+
+        {#if aiNotice}
+          <p class="ai__status" role="status">{aiNotice}</p>
+        {/if}
+
+        {#if aiOutcome}
+          <div id="ai-outcome" tabindex="-1" class="ai__outcome">
+            {#if aiDraft}
+              <p class="ai__flag">Not run — review before saving.</p>
+              <p class="ai__shell">{quickActionShellLabel[aiDraft.shell]}</p>
+              <p class="ai__command">{aiDraft.command}</p>
+              {#if aiDraft.assumptions.length > 0}
+                <p class="ai__meta">Assumes: {aiDraft.assumptions.join("; ")}</p>
+              {/if}
+              {#if aiDraft.affected_targets.length > 0}
+                <p class="ai__meta">Touches: {aiDraft.affected_targets.join("; ")}</p>
+              {/if}
+              {#if aiDraft.explanation}
+                <p class="ai__explanation">{aiDraft.explanation}</p>
+              {/if}
+              <div class="ai__actions">
+                {#if aiAppliedCurrent}
+                  <p class="ai__status" role="status">Applied — review and save in Manual.</p>
+                {:else}
+                  <Button type="button" variant="secondary" onclick={() => void applyDraft()}>
+                    Use this draft
+                  </Button>
+                {/if}
+                <Button type="button" variant="ghost" onclick={dismissDraft}>Dismiss</Button>
+              </div>
+            {:else if aiClarify}
+              <Notice tone="warn">{aiClarify.message}</Notice>
+              <p class="ai__meta">
+                Question {clarifyRound + 1} — each question is asked once; or draft anyway below.
+              </p>
+              {#if aiClarifyChoices.length > 0}
+                <div class="find__list" role="radiogroup" aria-label="Clarification choices">
+                  {#each aiClarifyChoices as choice (choice)}
+                    <label class="find__row">
+                      <input
+                        type="radio"
+                        name="qa-clarify-pick"
+                        value={choice}
+                        checked={clarifyPick === choice}
+                        onchange={() => (clarifyPick = choice)}
+                      />
+                      <span class="find__name">{choice}</span>
+                    </label>
+                  {/each}
+                </div>
+                <div class="field">
+                  <div class="field__label-row">
+                    <label class="field__label" for="qa-clarify-free">Or describe it yourself</label>
+                  </div>
+                  <textarea
+                    id="qa-clarify-free"
+                    class="field__cmd"
+                    rows="2"
+                    maxlength="2000"
+                    placeholder="e.g. the full folder path"
+                    autocomplete="off"
+                    spellcheck="true"
+                    value={clarifyFree}
+                    oninput={(e) => (clarifyFree = (e.target as HTMLTextAreaElement).value)}
+                    onkeydown={clarifyKeydown}
+                  ></textarea>
+                </div>
+                <div class="ai__actions">
+                  <Button type="button" variant="secondary" onclick={() => void regenerateWithClarification()}>
+                    Continue
+                  </Button>
+                  <Button type="button" variant="ghost" onclick={() => void draftAnyway()}>
+                    Draft anyway
+                  </Button>
+                  <Button type="button" variant="ghost" onclick={dismissDraft}>Dismiss</Button>
+                </div>
+              {:else}
+                <div class="ai__actions">
+                  <Button type="button" variant="ghost" onclick={dismissDraft}>Dismiss</Button>
+                </div>
+              {/if}
+            {:else if aiRefusal}
+              <Notice tone="warn">{aiRefusal}</Notice>
+              <div class="ai__actions">
+                <Button type="button" variant="ghost" onclick={dismissDraft}>Dismiss</Button>
+              </div>
+            {:else if aiFailure}
+              <Notice tone="error">{aiFailure}</Notice>
+              <div class="ai__actions">
+                <Button type="button" variant="ghost" onclick={dismissDraft}>Dismiss</Button>
+              </div>
+            {/if}
+          </div>
+        {/if}
+
+        {#if editing}
+          <!-- Diagnosis (ticket 153): edit-only. Sends the current script
+               plus pasted error output; returns an explanation or a
+               separately reviewed revision. Nothing runs, and accepting
+               applies only the reviewed fields. -->
+          <div class="field">
+            <div class="field__label-row">
+              <label class="field__label" for="qa-diag-error">Diagnose a failure</label>
+              <InfoTip label="How AI diagnosis works">
+                <p>Uses the current script plus the error you paste — nothing else is collected, and nothing runs. A proposal stays separate until you accept and save it.</p>
+              </InfoTip>
+            </div>
+            <textarea
+              id="qa-diag-error"
+              name="diag-error"
+              class="field__cmd"
+              rows="3"
+              maxlength="8000"
+              placeholder="e.g. paste the error output from the last run"
+              autocomplete="off"
+              spellcheck="false"
+              value={diagError}
+              oninput={(e) => (diagError = (e.target as HTMLTextAreaElement).value)}
+              onkeydown={diagKeydown}
+            ></textarea>
+          </div>
+
+          <div class="ai__actions">
+            {#if diagPending}
+              <p class="ai__status" role="status">Diagnosing…</p>
+              <Button type="button" variant="ghost" onclick={cancelDiagnose}>Cancel</Button>
+            {:else}
+              <Button type="button" variant="secondary" onclick={() => void diagnose()}>
+                Diagnose
+              </Button>
+            {/if}
+          </div>
+
+          {#if diagNotice}
+            <p class="ai__status" role="status">{diagNotice}</p>
+          {/if}
+
+          {#if diagConflict}
+            <Notice tone="warn">{diagConflict}</Notice>
+          {/if}
+
+          {#if diagOutcome}
+            <div id="diag-outcome" tabindex="-1" class="ai__outcome">
+              {#if diagRevision}
+                <p class="ai__flag">Not run — review before accepting.</p>
+                {#if diagRevision.explanation}
+                  <p class="ai__explanation">{diagRevision.explanation}</p>
+                {/if}
+                <p class="ai__shell">{quickActionShellLabel[diagRevision.shell]}</p>
+                <p class="ai__command">{diagRevision.command}</p>
+                {#if diagRevision.cwd}
+                  <p class="ai__meta">Working directory: {diagRevision.cwd}</p>
+                {/if}
+                {#if diagRevision.note}
+                  <p class="ai__meta">Proposed note: {diagRevision.note}</p>
+                {/if}
+                {#if diagRevision.assumptions.length > 0}
+                  <p class="ai__meta">Assumes: {diagRevision.assumptions.join("; ")}</p>
+                {/if}
+                {#if diagRevision.affected_targets.length > 0}
+                  <p class="ai__meta">Touches: {diagRevision.affected_targets.join("; ")}</p>
+                {/if}
+                <p class="ai__meta">Accepting changes only the reviewed fields — name, group, stop settings, and pre-action gates stay as they are. Auto-run is {autoRun ? "on" : "off"} for this action and stays that way.</p>
+                <div class="ai__actions">
+                  <Button type="button" variant="secondary" onclick={() => void applyRevision()}>
+                    Accept revision
+                  </Button>
+                  <Button type="button" variant="ghost" onclick={dismissRevision}>Dismiss</Button>
+                </div>
+              {:else if diagExplanationOnly}
+                <p class="ai__explanation">{diagExplanationOnly}</p>
+                <div class="ai__actions">
+                  <Button type="button" variant="ghost" onclick={dismissRevision}>Dismiss</Button>
+                </div>
+              {:else if diagRefusal}
+                <Notice tone="warn">{diagRefusal}</Notice>
+                <div class="ai__actions">
+                  <Button type="button" variant="ghost" onclick={dismissRevision}>Dismiss</Button>
+                </div>
+              {:else if diagClarify}
+                <Notice tone="warn">{diagClarify.message}</Notice>
+                <div class="ai__actions">
+                  <Button type="button" variant="ghost" onclick={dismissRevision}>Dismiss</Button>
+                </div>
+              {:else if diagFailure}
+                <Notice tone="error">{diagFailure}</Notice>
+                <div class="ai__actions">
+                  <Button type="button" variant="ghost" onclick={dismissRevision}>Dismiss</Button>
+                </div>
+              {/if}
+            </div>
+          {/if}
+        {/if}
+
+        {#if boundTarget}
+          <div class="ai__outcome">
+            <p class="ai__flag">Not run — review before saving.</p>
+            <p class="ai__shell">{quickActionShellLabel[boundTarget.shell]}</p>
+            <p class="ai__command">{boundTarget.command}</p>
+            <p class="ai__meta">Opens: {boundTarget.target}</p>
+            {#if boundTarget.warning}
+              <Notice tone="warn">{boundTarget.warning}</Notice>
+            {/if}
+            <div class="ai__actions">
+              <Button type="button" variant="ghost" onclick={dismissBound}>Dismiss</Button>
+            </div>
+          </div>
+        {/if}
+
+        <div class="form__actions">
+          <Button type="button" variant="secondary" onclick={oncancel} disabled={aiPending}>
+            Cancel
+          </Button>
+        </div>
+      </div>
+    {:else}
+      <div
+        id={aiReady ? "panel-manual" : undefined}
+        role={aiReady ? "tabpanel" : undefined}
+        aria-labelledby={aiReady ? "tab-manual" : undefined}
+      >
+      {#if !aiReady}
+        <!-- Ticket 192: one plain-text pointer from the unready view to
+             Settings — no tabs, no hero, no duplicated config, no disabled
+             teaser. The focus ring is the only highlight: no pulse, no flash,
+             no smooth-scroll library. -->
+        <p class="ai-setup">
+          {#if aiSetupKind === "managed"}
+            No managed model is on right now — <button
+              type="button"
+              class="ai-setup__link"
+              onclick={() => void onsetupai?.()}>Enable it</button
+            >
+          {:else}
+            <button
+              type="button"
+              class="ai-setup__link"
+              onclick={() => void onsetupai?.()}>Set up AI assistance in Settings</button
+            >
+          {/if}
+        </p>
+      {/if}
+      {#if manualNotice}
+        <p class="ai__status" role="status">{manualNotice}</p>
+      {/if}
+    <!-- Manual view: today's fields unchanged (Name/Shell/Command + files +
+         Details rares + Test/Save + recheck hatch). Flips preserve typing;
+         no validation fires on flip; Save keeps Manual semantics. -->
 
     <TextInput
       id="qa-name"
@@ -1552,6 +1937,8 @@
             : "Add action"}
       </Button>
     </div>
+      </div>
+    {/if}
   </form>
 </Dialog>
 
@@ -1888,23 +2275,12 @@
     overflow-wrap: anywhere;
   }
 
-  /* AI drafting hero above the authored fields: the same flat disclosure
-     treatment as Details — no frame, body separated by a dashed rule. */
+  /* AI view: single hero plus outcome. Flat, no frame — the view switch
+     above owns the structure. */
   .ai {
     display: flex;
     flex-direction: column;
-  }
-
-  .ai__body {
-    display: flex;
-    flex-direction: column;
     gap: var(--space-4);
-    padding-top: var(--space-3);
-    border-top: 1px dashed var(--border);
-  }
-
-  .ai__body[hidden] {
-    display: none;
   }
 
   .ai__actions {
@@ -1961,31 +2337,74 @@
     flex: none;
   }
 
-  .find__roots {
-    list-style: none;
-    margin: 0;
-    padding: 0;
+  /* Two-view tabs top-right: view-scoped switch on the dialog surface.
+     Labels never wrap, so dock sizes and DPI cannot reflow them. */
+  .viewtabs {
     display: flex;
-    flex-direction: column;
+    justify-content: flex-end;
     gap: var(--space-1);
-    min-width: 0;
+    border-bottom: 1px solid var(--border);
   }
 
-  .find__root {
-    display: flex;
-    align-items: center;
-    gap: var(--space-2);
-    min-width: 0;
+  .viewtabs__tab {
+    appearance: none;
+    margin: 0 0 -1px;
+    padding: var(--space-2);
+    border: none;
+    border-bottom: 2px solid transparent;
+    background: transparent;
+    font-family: var(--font-body);
+    font-size: var(--text-sm);
+    font-weight: 600;
+    color: var(--text-muted);
+    cursor: pointer;
+    white-space: nowrap;
   }
 
-  .find__root .find__path {
-    flex: 1;
+  .viewtabs__tab:hover {
+    color: var(--text);
+  }
+
+  .viewtabs__tab.active {
+    color: var(--accent);
+    border-bottom-color: var(--accent);
+  }
+
+  .viewtabs__tab:focus-visible {
+    outline: 2px solid var(--ring);
+    outline-offset: -2px;
   }
 
   .ai__status {
     margin: 0;
     font-size: var(--text-sm);
     color: var(--text-muted);
+  }
+
+  /* Ticket 192: the unready setup pointer — one plain-text line, tokens
+     only. The focus ring is the only highlight: no transition, no pulse, so
+     the Animation switch and reduced-motion have nothing to gate. */
+  .ai-setup {
+    margin: 0 0 var(--space-3);
+    font-size: var(--text-sm);
+    color: var(--text-muted);
+  }
+
+  .ai-setup__link {
+    appearance: none;
+    background: none;
+    border: none;
+    padding: 0;
+    font: inherit;
+    color: var(--accent);
+    text-decoration: underline;
+    text-underline-offset: 2px;
+    cursor: pointer;
+  }
+
+  .ai-setup__link:focus-visible {
+    outline: 2px solid var(--ring);
+    outline-offset: 2px;
   }
 
   .ai__outcome {

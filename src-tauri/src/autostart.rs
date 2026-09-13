@@ -8,6 +8,14 @@
 //! The decision logic (default-on lives with the setting's default in
 //! `settings`) is pure and unit-tested here; the registry effects are
 //! verified manually against the release exe.
+//!
+//! WHY rewrite-on-mismatch (ADR-0013): the Run value stores the full exe path,
+//! so after the exe-only rename the old `sprout.exe` value no longer matches
+//! the running binary. The next startup/toggle sync sees desired-on but
+//! registered-as-other-exe as not-registered and re-enables, overwriting the
+//! stale value with the current `sprout-windows-desktop.exe --autostart` path.
+//! A stale value pointing at a deleted exe simply never launches until that
+//! rewrite; no orphan cleanup deletes user data.
 
 use tauri::AppHandle;
 use tauri_plugin_autostart::ManagerExt;
@@ -97,7 +105,7 @@ mod tests {
     #[test]
     fn the_run_key_argument_marks_an_autostart_boot() {
         let args = vec![
-            "C:\\Program Files\\Sprout\\sprout.exe".to_string(),
+            "C:\\Program Files\\Sprout\\sprout-windows-desktop.exe".to_string(),
             "--autostart".to_string(),
         ];
         assert!(is_autostart_launch(&args));
@@ -106,7 +114,7 @@ mod tests {
     #[test]
     fn plain_and_import_launches_are_not_autostart_boots() {
         let args = vec![
-            "sprout.exe".to_string(),
+            "sprout-windows-desktop.exe".to_string(),
             "--import".to_string(),
             "C:\\preset.sprout.json".to_string(),
         ];

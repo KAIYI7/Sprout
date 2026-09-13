@@ -1,6 +1,6 @@
 # ADRs — index
 
-32 decisions. Original text is never rewritten; corrections live in dated
+33 decisions. Original text is never rewritten; corrections live in dated
 `## Amendment` sections, each file carrying a `Status` pointer up top.
 Status per file: `accurate` (verified, untouched), `amended <date>`
 (original preserved, correction appended), or `accepted <date>` (a decision;
@@ -50,13 +50,14 @@ Historical events and operational claims were not inferred from source.
 
 ## Frontend system
 
-- 0028 Design system + disclosure rules — `amended 2026-09-09` (selective field guidance, visibility filter lifetime and action scope accepted; implementation pending in 167–169)
+- 0028 Design system + disclosure rules — `amended 2026-09-13` (selective field guidance, visibility filter lifetime and action scope accepted; implementation pending in 167–169; spec-181 two-view dialog delivered in 183)
 
 ## AI-assisted Quick Action authoring
 
 - [0030 AI drafts Quick Actions; never executes](0030-ai-drafts-quick-actions-never-executes.md) — `amended 2026-09-06` (destructive authoring refusal, plain manual boundary; user-controlled execution)
 - [0031 Optional providers and scoped context](0031-optional-ai-providers-and-scoped-context.md) — `amended 2026-09-06` (explicit install, compatible-model reuse, scoped discovery and disclosure)
-- [0032 Recommendations and skills ship with the app](0032-model-recommendations-and-skills-ship-with-app.md) — `amended 2026-09-06` (bundled JSON and Sprout skills; no Microsoft command dataset or independent backend; qualification pending)
+- [0032 Recommendations and skills ship with the app](0032-model-recommendations-and-skills-ship-with-app.md) — `amended 2026-09-13` (bundled JSON and Sprout skills; no Microsoft command dataset or independent backend; scoped clarification + bounded grill delivered in 184; broader qualification pending)
+- [0033 Offline static Discord Rich Presence](0033-discord-rich-presence-offline-static.md) — `amended 2026-09-13` (handwired local IPC, static details/state + session clock, silent-absent, exit-clear; delivered in 182 under spec 181)
 
 Implementation: [spec 145](../../.scratch/sprout-app/issues/145-ai-assisted-quick-action-authoring-spec.md) and tickets 146–155 in the local issues tracker. These accepted decisions are not claims of shipped AI support.
 

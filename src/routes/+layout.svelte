@@ -7,10 +7,11 @@
   import { listen } from "@tauri-apps/api/event";
   import NavRail from "$lib/components/NavRail.svelte";
   import RunBanner from "$lib/components/RunBanner.svelte";
-  import { mainWindowReady, takePendingImport } from "$lib/api";
+  import { mainWindowReady, setPresenceStatus, takePendingImport } from "$lib/api";
   import { launchImport } from "$lib/launchImport.svelte";
   import { startRunAwareness } from "$lib/runAwareness.svelte";
   import { startTheme } from "$lib/theme.svelte";
+  import { startAnimation } from "$lib/animation.svelte";
   import { watchUpdates } from "$lib/updateState.svelte";
 
   let { children }: { children: Snippet } = $props();
@@ -31,9 +32,11 @@
   });
 
   // The theme store (ticket 31) applies its cached mode at import, before the
-  // first paint; this wires the OS listener and backend reconciliation.
+  // first paint; this wires the OS listener and backend reconciliation. The
+  // animation store applies its cached switch the same way.
   $effect(() => {
     startTheme();
+    startAnimation();
   });
 
   // The run-awareness poller (ticket 18) lives at the layout level, so the
@@ -62,6 +65,30 @@
         }
       })
       .catch(() => {});
+  });
+
+  // The Discord section report (ADR-0033): the main window's current section
+  // maps to fixed state text — never user content — so the message follows
+  // navigation while the session clock stands still. One fire per section;
+  // Discord absent fails silently by contract.
+  const PRESENCE_STATE_BY_ROUTE: Record<string, string> = {
+    "/": "Launching apps",
+    "/products": "Browsing products",
+    "/presets": "Composing presets",
+    "/plan": "Reviewing a plan",
+    "/history": "Reviewing history",
+    "/logs": "Reading logs",
+    "/settings": "Tuning settings",
+    "/clips": "Managing clips",
+    "/quick-actions": "Editing quick actions",
+  };
+  let lastPresenceState = "";
+  $effect(() => {
+    if (isQuickLaunchWindow) return;
+    const state = PRESENCE_STATE_BY_ROUTE[page.route.id ?? "/"] ?? "Composing presets";
+    if (state === lastPresenceState) return;
+    lastPresenceState = state;
+    setPresenceStatus("Using Sprout", state).catch(() => {});
   });
 
   // A .sprout.json double-clicked while Sprout is already running arrives as

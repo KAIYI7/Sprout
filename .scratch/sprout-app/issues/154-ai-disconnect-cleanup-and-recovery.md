@@ -4,7 +4,7 @@
 
 **Blocked by:** 150 — cloud credentials/consent; 151 — managed runtime; 153 — revision state.
 
-**Status:** ready-for-agent
+**Status:** superseded 2026-09-13 — split into [186 — managed/local cleanup](186-ai-managed-local-cleanup.md) (unblocked, blocked by 151) + [187 — cloud disconnect cleanup](187-ai-cloud-disconnect-cleanup.md) (blocked by 150 + 186). This file is the frozen audit trail: the ACs below are not worked here. Local ACs live in 186, cloud ACs in 187, revision-state clearing rides with 153, and 155 audits the combined set.
 
 **Parent:** [145 — AI-assisted Quick Action authoring](145-ai-assisted-quick-action-authoring-spec.md).
 

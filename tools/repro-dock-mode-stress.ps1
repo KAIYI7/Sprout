@@ -1,6 +1,6 @@
 ﻿# [DEBUG-66] Ticket 66 repro loop - dock mode switch fixed<->auto-hide stress.
 #
-# Builds the debug backend, then launches sprout.exe with SPROUT_DOCK_STRESS=1
+# Builds the debug backend, then launches sprout-windows-desktop.exe with SPROUT_DOCK_STRESS=1
 # (see lib.rs debug66_dock_mode_stress). The app docks the Quick Launch window
 # fixed and rapid-toggles the visibility mode; a clean run writes a PASS marker
 # and exits 0. The bug under test aborts the whole process instead.
@@ -20,7 +20,7 @@ param(
 
 $ErrorActionPreference = "Stop"
 $repo = Split-Path -Parent $PSScriptRoot
-$exe = Join-Path $repo "src-tauri\target\debug\sprout.exe"
+$exe = Join-Path $repo "src-tauri\target\debug\sprout-windows-desktop.exe"
 
 if (-not $SkipBuild) {
     Write-Host "== cargo build (debug) =="
@@ -34,9 +34,9 @@ if (-not $SkipBuild) {
 
 if (-not (Test-Path $exe)) { Write-Host "exe not found: $exe"; exit 2 }
 
-$existing = Get-Process -Name "sprout" -ErrorAction SilentlyContinue
+$existing = Get-Process -Name "sprout-windows-desktop" -ErrorAction SilentlyContinue
 if ($existing) {
-    Write-Host "sprout.exe is already running (pid $($existing.Id)) - close it first (single-instance would hijack the run)."
+    Write-Host "sprout-windows-desktop.exe is already running (pid $($existing.Id)) - close it first (single-instance would hijack the run)."
     exit 2
 }
 

@@ -1,15 +1,19 @@
 <script lang="ts">
   import { onMount, tick } from "svelte";
   import { beforeNavigate, goto } from "$app/navigation";
-  import type { BackupCounts, CompanionSite, DisplayInfo, ManagedCatalogStatus, Settings } from "$lib/types";
+  import type { BackupCounts, CompanionSite, DisplayInfo, ManagedCatalogStatus, ManagedResourceUsage, Settings } from "$lib/types";
   import { aiProviderLabel } from "$lib/types";
   import type { AiProvider } from "$lib/types";
   import { companionDisplayName, normalizeCompanionSites } from "$lib/companion";
   import {
     aiCheckExistingLocal,
-    aiCancelManagedInstall,
-    aiInstallManaged,
+    aiManagedInstallActive,
+    aiManagedResourceUsage,
+    aiManagedRuntimeStatus,
     aiManagedStatus,
+    aiRemoveManaged,
+    aiStartManagedRuntime,
+    aiStopManagedRuntime,
     exportBackup,
     getDisplayDockEdge,
     getDisplayDockMode,
@@ -31,6 +35,7 @@
   import Dialog from "$lib/components/Dialog.svelte";
   import Button from "$lib/components/Button.svelte";
   import ConfirmDialog from "$lib/components/ConfirmDialog.svelte";
+  import Disclosure from "$lib/components/Disclosure.svelte";
   import EmptyState from "$lib/components/EmptyState.svelte";
   import GroupAccordion from "$lib/components/GroupAccordion.svelte";
   import Notice from "$lib/components/Notice.svelte";
@@ -40,6 +45,8 @@
   import { open, save as saveDialog } from "@tauri-apps/plugin-dialog";
   import { theme, restoreTheme, selectTheme } from "$lib/theme.svelte";
   import type { ThemeMode } from "$lib/theme.svelte";
+  import { animation, restoreAnimation, selectAnimation } from "$lib/animation.svelte";
+  import type { AnimationMode } from "$lib/animation.svelte";
   import {
     checkForUpdates,
     installNow,
@@ -53,6 +60,27 @@
     SETTINGS_GROUP_KNOBS,
     type SettingsGroupKey,
   } from "$lib/settingsSearch";
+  import {
+    cancelManagedInstall as cancelStoreInstall,
+    dismissManagedInstall,
+    formatManagedBytes,
+    formatManagedRam,
+    formatManagedUptime,
+    isOccupyingRevisionError,
+    managedInstall,
+    managedInstallPercent,
+    managedModelParams,
+    managedTierLabel,
+    reconcileManagedInstall,
+    removeAndRetryManagedInstall,
+    startManagedInstall,
+    watchManagedInstall,
+  } from "$lib/managedInstall.svelte";
+  import { honorAiSetupFocus } from "$lib/aiSetupPointer";
+  import {
+    managedResourceDisclosure,
+    setManagedResourceOpen,
+  } from "$lib/managedResource.svelte";
 
   const themeOptions: { mode: ThemeMode; label: string }[] = [
     { mode: "system", label: "System" },
@@ -82,6 +110,11 @@
   ];
 
   const autostartOptions: { value: string; label: string }[] = [
+    { value: "on", label: "On" },
+    { value: "off", label: "Off" },
+  ];
+
+  const animationOptions: { value: AnimationMode; label: string }[] = [
     { value: "on", label: "On" },
     { value: "off", label: "Off" },
   ];
@@ -179,12 +212,79 @@
   let aiTestStatus = $state("");
   let aiTestError = $state("");
   let managedCatalog = $state<ManagedCatalogStatus | null>(null);
+  // Remove-only busy (ticket 186 path); installs ride the app-level
+  // `managedInstall` store (ticket 193) so progress survives tab switches.
   let managedBusy = $state(false);
   let managedError = $state("");
   let managedNotice = $state("");
   let managedDetailsOpen = $state(false);
   let managedReviewId = $state<string | null>(null);
+  // Ticket 189: the cheap running indicator. Polled ~5s while Settings is
+  // open; the interval dies on unmount so closed Settings costs zero.
+  let runtimeRunning = $state(false);
+  let runtimeActiveId = $state<string | null>(null);
+  let runtimeUptimeSecs = $state<number | null>(null);
+  // Separate flags per action: one shared busy flag plus a status-derived
+  // label wedged the control on "Stopping…" (disabled) whenever a start was
+  // still polling health while the process already showed as running — only
+  // a remount cleared it. Stop applies to a live process even mid-startup
+  // (it cancels the wait); only a stop in flight or a not-yet-visible
+  // process disables the control.
+  let startBusy = $state(false);
+  let stopBusy = $state(false);
+  const stopApplies = $derived(runtimeRunning && !stopBusy);
+  const startApplies = $derived(!runtimeRunning && !startBusy && !stopBusy);
+  let runtimeError = $state("");
+  let statusTimer: ReturnType<typeof setInterval> | null = null;
+  // Ticket 190: lazy resource Details (research 0004 rule 2 rare-behind-obvious,
+  // 0006 pattern 7 collapsible over page splits). Collapsed by default; only
+  // the open flag survives tab switches (app-level store — the page unmounts
+  // on navigation); metrics never persist (local, refetched). Closed costs
+  // nothing (no command, no interval); open + running polls ~2s; open +
+  // stopped shows static copy. Numbers update as text with no animated
+  // gauges, so the Animation switch and OS reduced-motion have nothing to gate.
+  const resourceOpen = $derived(managedResourceDisclosure.open);
+  let resourceUsage = $state<ManagedResourceUsage | null>(null);
+  let resourceError = $state("");
+  let resourceTimer: ReturnType<typeof setInterval> | null = null;
+  // Ticket 193: the store reset (reload) while the worker kept the flight —
+  // honest background notice with Cancel instead of a second flight.
+  let backgroundInstall = $state(false);
+  const installInFlight = $derived(managedInstall.status === "installing");
+  const installPercent = $derived(managedInstallPercent());
+  // Silent post-download steps breathe: dots cycle under the stage copy while
+  // a long hash runs, so the line visibly lives. Dots are decorative motion —
+  // the Animation switch or OS reduced-motion freezes them to a static mark
+  // while the stage copy keeps naming the work.
+  let installTick = $state(0);
+  let installDotsTimer: ReturnType<typeof setInterval> | null = null;
+  const installDots = $derived.by(() => {
+    if (!installInFlight || managedInstall.stage === "downloading") return "";
+    if (!installMotionOn()) return "…";
+    return [".", "..", "..."][installTick % 3];
+  });
+  const managedInstalled = $derived(managedCatalog?.models.filter((model) => model.installed) ?? []);
+  // Ticket 191: the explicit Active model. Save-deferred like the provider —
+  // the radio drafts `aiModel`, Save persists it. No fallback to the first
+  // installed entry: a dangling selection (removed model, fresh install)
+  // reads as no active until the user picks one explicitly — no silent
+  // switch. Start/Stop and the status line act on this draft only.
+  const activeManagedId = $derived(
+    aiModel.trim() && managedInstalled.some((model) => model.id === aiModel.trim())
+      ? aiModel.trim()
+      : null,
+  );
+  // Ticket 193: the occupying-revision guard carries explicit recovery.
+  const installGuardHit = $derived(
+    managedInstall.status === "error" &&
+      managedInstall.error !== null &&
+      isOccupyingRevisionError(managedInstall.error),
+  );
   const managedChoices = $derived(managedCatalog?.models.filter((model) => model.installable || model.installed) ?? []);
+  // The install list shows only what is NOT on disk yet (0006 pattern 2:
+  // what you have lives in the Active cards above; what you can get lists
+  // here). Installed entries never render twice.
+  const managedAvailable = $derived(managedChoices.filter((model) => !model.installed));
   const managedReviewModel = $derived(managedCatalog?.models.find((model) => model.id === managedReviewId));
   // Whether the companion knobs were authored on this page since mount —
   // the page loads once while the dock divider and the companion manager
@@ -295,6 +395,13 @@
     return normalizeCompanionSites(list);
   }
 
+  /** A stored switch position the menu does not offer reads back as on —
+   *  the same fallback the backend applies, so a broken value never freezes
+   *  the UI. */
+  function validAnimation(value: unknown): AnimationMode {
+    return value === "off" ? "off" : "on";
+  }
+
   /** A stored route the menu does not offer reads back as off — the same
    *  fallback the backend applies, so a broken value never wakes inference. */
   function validAiProvider(value: unknown): AiProvider {
@@ -327,32 +434,322 @@
     managedError = "";
     try {
       managedCatalog = await aiManagedStatus();
+      // A saved managed model that is no longer installed (removed outside
+      // the app, or a partial install) must not leave generation stuck on a
+      // route with nothing to serve — fall back to Off so the next Generate
+      // says plainly that assistance is off instead of failing on the
+      // missing files. Save persists the fallback like any other knob.
+      if (
+        aiProvider === "managed" &&
+        aiModel.trim() !== "" &&
+        (managedCatalog?.models.some((model) => model.installed) !== true)
+      ) {
+        aiProvider = "off";
+        aiModel = "";
+        managedNotice =
+          "The previously selected managed model is no longer installed, so AI assistance is set to Off — Save to keep it.";
+      }
     } catch (cause) {
       managedCatalog = null;
       managedError = String(cause);
     }
   }
 
+  // Ticket 193: installs ride the app-level store (bar + % + bytes fed by
+  // backend progress events), so every surface reads the same flight and a
+  // second start while one runs is a no-op instead of a per-tab busy string.
+  // Success selects the model only when nothing is active yet (first install
+  // or dangling selection) — ticket 191: later installs never implicitly
+  // retarget the Active radio; failure/cancel never presents a partial
+  // install as installed (the catalog reload is the proof).
   async function installManaged(modelId: string) {
+    if (managedInstall.status === "installing" || managedBusy) return;
+    managedError = "";
+    managedNotice = "";
+    backgroundInstall = false;
+    await startManagedInstall(modelId);
+    if (managedInstall.status === "done") {
+      // Ticket 191: establish an active only when the draft names no
+      // installed model (first install or dangling selection). A healthy
+      // active survives later installs — no implicit retarget.
+      const installedIds = new Set(
+        (managedCatalog?.models ?? []).filter((model) => model.installed).map((model) => model.id),
+      );
+      if (!installedIds.has(aiModel.trim()) || aiModel.trim() === "") {
+        aiModel = modelId;
+      }
+      managedNotice = managedInstall.notice ?? "";
+      await loadManagedCatalog();
+      await refreshRuntimeStatus();
+    } else if (managedInstall.status === "error" && !installGuardHit) {
+      managedError = managedInstall.error ?? "Install failed.";
+    }
+  }
+
+  function cancelManagedInstall() {
+    cancelStoreInstall();
+    backgroundInstall = false;
+    if (managedInstall.status === "installing") {
+      managedNotice = managedInstall.notice ?? "";
+    }
+  }
+
+  // Ticket 193 guard-hit recovery: explicitly removes the occupying
+  // app-owned revision, then retries the same install. Never auto-deletes —
+  // this runs only from the "Remove that revision and retry" action.
+  async function retryAfterRemove(modelId: string) {
+    if (managedInstall.status === "installing" || managedBusy) return;
+    managedError = "";
+    managedNotice = "";
+    await removeAndRetryManagedInstall(modelId);
+    if (managedInstall.status === "done") {
+      aiModel = modelId;
+      managedNotice = managedInstall.notice ?? "";
+      await loadManagedCatalog();
+      await refreshRuntimeStatus();
+    } else if (managedInstall.status === "error" && !installGuardHit) {
+      managedError = managedInstall.error ?? "Install failed.";
+    }
+  }
+
+  function keepInstallFiles() {
+    dismissManagedInstall();
+    managedError = "";
+  }
+
+  function retryManagedInstall() {
+    const modelId = managedInstall.modelId;
+    dismissManagedInstall();
+    if (modelId) void installManaged(modelId);
+  }
+
+  // Ticket 189: Start pre-warms via the health path so metrics read live
+  // immediately; Stop calls the existing stop path and keeps
+  // `provider=managed` + `ai_model` — neither ever mutates the selection,
+  // and Generate after Stop lazily restarts.
+  async function refreshRuntimeStatus() {
+    if (aiProvider !== "managed" || !activeManagedId) {
+      runtimeRunning = false;
+      runtimeActiveId = null;
+      runtimeUptimeSecs = null;
+      return;
+    }
+    try {
+      const status = await aiManagedRuntimeStatus();
+      runtimeRunning = status.running;
+      runtimeActiveId = status.active_model_id;
+      runtimeUptimeSecs = status.uptime_secs;
+    } catch (cause) {
+      console.error("managed runtime status failed", cause);
+    }
+  }
+
+  function startStatusPoll() {
+    stopStatusPoll();
+    void refreshRuntimeStatus();
+    statusTimer = setInterval(() => {
+      void refreshRuntimeStatus();
+    }, 5000);
+  }
+
+  function stopStatusPoll() {
+    if (statusTimer !== null) {
+      clearInterval(statusTimer);
+      statusTimer = null;
+    }
+  }
+
+  // Ticket 190: lazy resource fetch. Closed costs nothing; open + running
+  // polls ~2s; open + stopped never queries (static copy instead). A stopped
+  // answer flips the status line promptly so the panel never shows stale live
+  // numbers past a crash. One query at a time (a slow answer never stacks),
+  // and repeated failures pause the poll instead of hammering the machine.
+  let resourceFetchInFlight = false;
+  let resourceFailures = 0;
+  async function refreshResourceUsage() {
+    if (!resourceOpen || aiProvider !== "managed" || !activeManagedId || !runtimeRunning) return;
+    if (resourceFetchInFlight) return;
+    resourceFetchInFlight = true;
+    try {
+      const usage = await aiManagedResourceUsage();
+      if (!resourceOpen) return;
+      if (!usage.running) {
+        runtimeRunning = false;
+        runtimeActiveId = null;
+        runtimeUptimeSecs = null;
+        resourceUsage = null;
+        resourceError = "";
+        resourceFailures = 0;
+        stopResourcePoll();
+        return;
+      }
+      resourceUsage = usage;
+      resourceError = "";
+      resourceFailures = 0;
+    } catch (cause) {
+      console.error("managed resource usage failed", cause);
+      resourceError = String(cause);
+      resourceFailures += 1;
+      if (resourceFailures >= 3) stopResourcePoll();
+    } finally {
+      resourceFetchInFlight = false;
+    }
+  }
+
+  function startResourcePoll() {
+    stopResourcePoll();
+    if (!resourceOpen || aiProvider !== "managed" || !activeManagedId || !runtimeRunning) return;
+    void refreshResourceUsage();
+    resourceTimer = setInterval(() => {
+      void refreshResourceUsage();
+    }, 2000);
+  }
+
+  function stopResourcePoll() {
+    if (resourceTimer !== null) {
+      clearInterval(resourceTimer);
+      resourceTimer = null;
+    }
+  }
+
+  function syncResourcePoll() {
+    if (!resourceOpen || aiProvider !== "managed" || !activeManagedId || !runtimeRunning) {
+      stopResourcePoll();
+      if (!resourceOpen) {
+        resourceUsage = null;
+        resourceError = "";
+      }
+      return;
+    }
+    startResourcePoll();
+  }
+
+  function toggleResourceDetails() {
+    const next = !resourceOpen;
+    setManagedResourceOpen(next);
+    if (!next) {
+      stopResourcePoll();
+      resourceUsage = null;
+      resourceError = "";
+      return;
+    }
+    resourceError = "";
+    resourceFailures = 0;
+    if (runtimeRunning) startResourcePoll();
+  }
+
+  function formatResourceCpu(cpu: number | null): string {
+    if (cpu === null || !Number.isFinite(cpu)) return "measuring…";
+    return `${new Intl.NumberFormat(undefined, { maximumFractionDigits: 1 }).format(cpu)}%`;
+  }
+
+  function installMotionOn(): boolean {
+    if (animation.mode !== "on") return false;
+    if (typeof window === "undefined" || typeof window.matchMedia !== "function") return true;
+    return !window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  }
+
+  function stopInstallDots() {
+    if (installDotsTimer !== null) {
+      clearInterval(installDotsTimer);
+      installDotsTimer = null;
+    }
+    installTick = 0;
+  }
+
+  async function startManaged() {
+    if (!activeManagedId || startBusy || stopBusy) return;
+    startBusy = true;
+    runtimeError = "";
+    try {
+      await aiStartManagedRuntime(activeManagedId);
+      managedNotice = `${managedTierLabel(activeManagedId)} started — the next Generate finds a live server.`;
+      await refreshRuntimeStatus();
+    } catch (cause) {
+      const message = String(cause);
+      // A prewarm cancelled mid-flight was cancelled by Stop or by leaving
+      // the managed route — those paths already announce, so reporting it as
+      // an error would blame the user's own Stop.
+      if (
+        !message.includes("cancelled during runtime startup") &&
+        !message.includes("cancelled before startup")
+      ) {
+        runtimeError = message;
+      }
+    } finally {
+      startBusy = false;
+    }
+  }
+
+  async function stopManaged() {
+    if (stopBusy) return;
+    stopBusy = true;
+    runtimeError = "";
+    try {
+      await aiStopManagedRuntime();
+      managedNotice = "Stopped — downloads stay, and the next Generate restarts.";
+      await refreshRuntimeStatus();
+    } catch (cause) {
+      runtimeError = String(cause);
+    } finally {
+      stopBusy = false;
+    }
+  }
+
+  let managedConfirmRemoveId = $state<string | null>(null);
+  let copyPathFeedback = $state("");
+  let copyPathTimer: ReturnType<typeof setTimeout> | null = null;
+
+  function askRemoveManaged(modelId: string) {
+    managedConfirmRemoveId = null;
+    reviewManaged(modelId);
+    managedConfirmRemoveId = modelId;
+  }
+
+  /** Moment-of-use preview for removal: the owned targets plus the space
+   *  released where known. Never a permanent artifact listing — this text
+   *  exists only on the removal path. */
+  function managedRemovePreview(modelId: string): string {
+    const model = managedCatalog?.models.find((entry) => entry.id === modelId);
+    if (!model) return "Removes only Sprout's own files for this model.";
+    const runtimeSize = managedCatalog?.runtime.download_size_bytes ?? null;
+    return (
+      `Removes only Sprout's own files for ${model.artifact}: the model weights` +
+      ` (${managedSize(model.download_size_bytes)}) plus its runtime copy` +
+      ` (${managedSize(runtimeSize)}). Your saved Quick Actions stay, and the local server stops first.`
+    );
+  }
+
+  async function removeManaged(modelId: string) {
     if (managedBusy) return;
     managedBusy = true;
     managedError = "";
     managedNotice = "";
     try {
-      const result = await aiInstallManaged(modelId);
-      aiModel = result.model_id;
-      managedNotice = result.message;
+      const result = await aiRemoveManaged(modelId);
+      managedConfirmRemoveId = null;
       await loadManagedCatalog();
+      await refreshRuntimeStatus();
+      const installed =
+        managedCatalog?.models.filter((model) => model.installed) ?? [];
+      if (result.removed && installed.length === 0) {
+        // Nothing left to serve — fall back to Off rather than sticking on
+        // an empty managed route. Save persists it like any other knob.
+        aiProvider = "off";
+        aiModel = "";
+        managedNotice = `${result.message} AI assistance is set to Off — Save to keep it.`;
+      } else {
+        // Ticket 191: survivors keep the draft exactly as authored — even
+        // when the removed entry was the active one. The dangling draft
+        // reads as not-ready until the user picks a new Active model
+        // explicitly; no silent switch to a survivor.
+        managedNotice = result.message;
+      }
     } catch (cause) {
       managedError = String(cause);
     } finally {
       managedBusy = false;
     }
-  }
-
-  function cancelManagedInstall() {
-    void aiCancelManagedInstall().catch(() => {});
-    managedNotice = "Cancelling installation; staged files will not be activated.";
   }
 
   function managedSize(bytes: number | null): string {
@@ -361,9 +758,72 @@
     return `${new Intl.NumberFormat(undefined, { maximumFractionDigits: 2 }).format(gib)} GiB`;
   }
 
+  // Ticket 193: one progress line for the row compact bar and the dialog
+  // full bar (`Step 1 of 2 · Runtime · 38% · 412 MB of 1.04 GB`) so the two
+  // cannot disagree. The step prefix is load-bearing: runtime 100% then model
+  // 0% is the plan (two artifacts), not a restart — without it the phase
+  // switch reads as "completed, then redownloading". Past 100% the backend's
+  // stage names the silent work (verifying → extracting → activating) while
+  // dots breathe beneath it, so a gigabyte hash never reads as a stuck bar.
+  function installStageCopy(): string {
+    switch (managedInstall.stage) {
+      case "verifying-runtime":
+        return "Verifying runtime";
+      case "verifying-model":
+        return "Verifying model";
+      case "extracting":
+        return "Extracting runtime";
+      case "activating":
+        return "Activating";
+      default:
+        return "";
+    }
+  }
+
+  function installProgressLine(): string {
+    const step = managedInstall.phase === "runtime" ? "Step 1 of 2 · Runtime" : "Step 2 of 2 · Model";
+    const pct = installPercent;
+    if (pct === null || managedInstall.totalBytes <= 0) return `${step} · starting…`;
+    const bytes = `${formatManagedBytes(managedInstall.downloadedBytes)} of ${formatManagedBytes(managedInstall.totalBytes)}`;
+    const stageCopy = installStageCopy();
+    if (stageCopy) return `${step} · 100% · ${bytes} · ${stageCopy}${installDots}`;
+    // WHY the generic tail: events from an older backend carry no stage, so
+    // 100% with the flight still open still names the likeliest work.
+    if (pct >= 100) return `${step} · 100% · ${bytes} · verifying…`;
+    return `${step} · ${pct}% · ${bytes}`;
+  }
+
   function reviewManaged(modelId: string | null = null) {
     managedReviewId = modelId;
     managedDetailsOpen = true;
+    copyPathFeedback = "";
+  }
+
+  async function copyInstallPath() {
+    const path = managedReviewModel?.installed_dir;
+    if (!path) return;
+    try {
+      if (typeof navigator !== "undefined" && navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(path);
+      } else if (typeof document !== "undefined") {
+        const area = document.createElement("textarea");
+        area.value = path;
+        area.setAttribute("readonly", "");
+        area.style.position = "absolute";
+        area.style.left = "-9999px";
+        document.body.appendChild(area);
+        area.select();
+        document.execCommand("copy");
+        document.body.removeChild(area);
+      } else {
+        return;
+      }
+      copyPathFeedback = "Copied.";
+      if (copyPathTimer !== null) clearTimeout(copyPathTimer);
+      copyPathTimer = setTimeout(() => (copyPathFeedback = ""), 1500);
+    } catch (e) {
+      console.error(e);
+    }
   }
 
   function useExistingLocal() {
@@ -426,6 +886,8 @@
     buildSettingsSearchIndex({
       themeMode: theme.mode,
       themeLabel: themeOptions.find((o) => o.mode === theme.mode)?.label ?? "System",
+      animation: animation.mode,
+      animationLabel: animationOptions.find((o) => o.value === animation.mode)?.label ?? "On",
       installDir,
       autostart,
       timeoutMinutes: clampTimeout(timeout),
@@ -514,6 +976,31 @@
     void invoke("set_settings_dirty", { dirty: isDirty }).catch(() => {});
   });
 
+  // Ticket 190: keeps the lazy Details poll in step with its gate — open +
+  // running + managed + active installed polls, anything else costs nothing.
+  // Reads only the gate; writes only the interval (plus a metrics clear on
+  // close), so it never loops on the numbers it fetches.
+  $effect(() => {
+    resourceOpen;
+    runtimeRunning;
+    aiProvider;
+    activeManagedId;
+    syncResourcePoll();
+  });
+
+  // Breathes dots under a silent install stage — runs only while a flight is
+  // past downloading with motion on; anything else (or unmount via the
+  // returned cleanup) stops the interval and parks the dots.
+  $effect(() => {
+    const silent = installInFlight && managedInstall.stage !== "downloading";
+    const motion = installMotionOn();
+    if (!silent || !motion) return;
+    installDotsTimer = setInterval(() => {
+      installTick += 1;
+    }, 700);
+    return () => stopInstallDots();
+  });
+
   beforeNavigate((nav) => {
     if (!isDirty || guardOpen) return;
     // willUnload is the window-close path — handled by the Rust emit
@@ -560,6 +1047,39 @@
       await load();
       await loadManagedCatalog();
       await loadDisplays();
+      // Ticket 192: the Quick Action empty-state pointer lands here with a
+      // session flag — expand the AI group and focus the provider control.
+      // Plain focus only (the focus ring is the highlight); no smooth
+      // scroll, no pulse, no per-group route.
+      await honorAiSetupFocus({
+        session: sessionStorage,
+        expandAi: () => {
+          expandGroups(["ai"]);
+          filter = "";
+        },
+        focusProvider: () => document.getElementById("ai-provider")?.focus(),
+        nextTick: tick,
+      });
+      // Ticket 193: one event handler for the whole webview — progress
+      // survives tab switches because the store outlives every surface.
+      watchManagedInstall();
+      try {
+        reconcileManagedInstall(await aiManagedInstallActive());
+      } catch (cause) {
+        console.error("managed install reconcile failed", cause);
+      }
+      // Reload honesty: the store reset but the worker kept the flight.
+      // Never invent a second flight — offer Cancel and let the flight land.
+      try {
+        if (managedInstall.status === "idle" && (await aiManagedInstallActive())) {
+          backgroundInstall = true;
+        }
+      } catch (cause) {
+        console.error("managed install background check failed", cause);
+      }
+      // Ticket 189: cheap status (~5s) while Settings is open; the interval
+      // dies on unmount so closed Settings costs zero.
+      startStatusPoll();
     })();
     const off = listen("displays-changed", () => {
       void loadDisplays();
@@ -581,6 +1101,12 @@
       void offCompanion.then((fn) => fn());
       void offDirtyClose.then((fn) => fn());
       window.removeEventListener("focus", onFocus);
+      stopStatusPoll();
+      stopResourcePoll();
+      if (copyPathTimer !== null) {
+        clearTimeout(copyPathTimer);
+        copyPathTimer = null;
+      }
       // Clear the backend flag when leaving the Settings route while
       // unmounting — a clean navigation or a destroy after Save/Discard
       // also clears via the sync effect, but unmount is the final backstop.
@@ -627,6 +1153,7 @@
       if (persisted === "system" || persisted === "light" || persisted === "dark") {
         if (persisted !== theme.mode) restoreTheme(persisted);
       }
+      restoreAnimation(validAnimation(loaded.animation));
       baseline = {
         timeout: loaded.default_timeout_minutes,
         retention: loaded.log_retention_days,
@@ -806,6 +1333,19 @@
     }
   }
 
+  async function pickAnimation(value: AnimationMode) {
+    const previous = animation.mode;
+    saved = "";
+    error = "";
+    try {
+      await selectAnimation(value);
+    } catch {
+      // The switch never landed — put it back so it tells the truth.
+      restoreAnimation(previous);
+      error = "Couldn't save the animation switch — it applies for now, but won't survive a restart.";
+    }
+  }
+
   async function pickAutostart(value: string) {
     const previous = autostart;
     autostart = value;
@@ -947,6 +1487,9 @@
         default_timeout_minutes: Math.max(1, Math.floor(timeout) || 1),
         log_retention_days: Math.max(1, Math.floor(retention) || 1),
         theme: theme.mode,
+        // The motion switch saves on its own like the theme — the bulk save
+        // only carries it through so a save never resets it.
+        animation: animation.mode,
         install_dir: installDir.trim(),
         launch_concurrency: Math.min(50, Math.max(1, Math.floor(launchConcurrency) || 1)),
         dock_mode: dockMode,
@@ -1381,7 +1924,7 @@
       }}
     >
       {#if groupVisible("general")}
-        <!-- General: theme, install directory, auto-start, and run defaults. -->
+        <!-- General: theme, animation, install directory, auto-start, and run defaults. -->
         <GroupAccordion
           open={groupEffectiveOpen("general")}
           controls="group-general-body"
@@ -1409,6 +1952,29 @@
               {option.label}
             </button>
           {/each}
+        </div>
+      </article>
+
+      <article class="knob" hidden={!knobVisible("animation")}>
+        <div class="knob__body">
+          <span class="knob__label">Animation</span>
+          <p class="knob__hint">
+            Plays every menu, dialog, and pulse transition. Off renders each
+            end state at once, whatever Windows says. Applies immediately; no
+            save needed.
+          </p>
+        </div>
+        <div class="knob__input">
+          <Select
+            id="animation"
+            variant="small"
+            value={animation.mode}
+            onchange={(v) => pickAnimation(validAnimation(v))}
+          >
+            {#each animationOptions as option (option.value)}
+              <option value={option.value}>{option.label}</option>
+            {/each}
+          </Select>
         </div>
       </article>
 
@@ -1988,6 +2554,140 @@
         <article class="knob" hidden={!knobVisible("ai-model")}>
           <div class="knob__body">
             <p class="knob__label">Managed local model</p>
+            {#if managedCatalog && activeManagedId}
+              <!-- Ticket 189: live Running/Stopped indicator — process
+                   liveness, never config readiness. State left, verb right
+                   (the knob's own body/input grammar at status scale); the
+                   same control morphs Start↔Stop (primary↔danger); full model
+                   identity stays in the Model details dialog. Static dot, no pulse. -->
+              <div class="managed__statusrow">
+                <p class="knob__status managed__status" role="status">
+                  <span
+                    class="managed__dot"
+                    class:managed__dot--running={runtimeRunning}
+                    aria-hidden="true"
+                  ></span>
+                  {#if runtimeRunning}
+                    <span class="managed__running">
+                      Running — {managedTierLabel(runtimeActiveId ?? activeManagedId)}{runtimeUptimeSecs !==
+                      null
+                        ? ` · ${formatManagedUptime(runtimeUptimeSecs)}`
+                        : ""}
+                    </span>
+                  {:else}
+                    <span class="managed__stopped">Stopped</span>
+                  {/if}
+                </p>
+                <div class="managed__actions managed__statusactions">
+                  <Button
+                    type="button"
+                    variant={stopApplies || stopBusy ? "danger" : "primary"}
+                    disabled={stopBusy || (startBusy && !runtimeRunning)}
+                    onclick={() => void (stopApplies ? stopManaged() : startApplies ? startManaged() : undefined)}
+                  >
+                    {stopBusy
+                      ? "Stopping…"
+                      : startBusy && !runtimeRunning
+                        ? "Starting…"
+                        : stopApplies
+                          ? "Stop"
+                          : "Start"}
+                  </Button>
+                </div>
+              </div>
+              {#if runtimeError}
+                <Notice tone="error">{runtimeError}</Notice>
+              {/if}
+              <!-- Ticket 190: lazy resource usage (0004 rule 2 rare-behind-obvious,
+                   0006 pattern 7 collapsible over page splits). Shared Disclosure
+                   only, collapsed by default, never persisted. Closed costs
+                   nothing; open + running polls ~2s; open + stopped shows static
+                   copy. Named for what it reveals — the model-details dialog
+                   owns the bare "Details" word (0005 rule 4 scent logic).
+                   Tooltip-grade numbers as text only — no animated gauges,
+                   so Animation/reduced-motion have nothing to gate. -->
+              <div class="managed__details">
+                <Disclosure
+                  open={resourceOpen}
+                  controls="managed-resource-details"
+                  label="Resource usage"
+                  onclick={toggleResourceDetails}
+                />
+                {#if resourceOpen}
+                  <div id="managed-resource-details" class="managed__resource">
+                    {#if !runtimeRunning}
+                      <p class="knob__hint">Stopped — will start on next Generate.</p>
+                    {:else if resourceError}
+                      <p class="knob__hint" role="status">{resourceError}</p>
+                    {:else if resourceUsage}
+                      <p class="knob__hint" role="status">
+                        Model {managedTierLabel(resourceUsage.active_model_id ?? activeManagedId)} ·
+                        Memory {resourceUsage.working_set_bytes !== null
+                          ? formatManagedBytes(resourceUsage.working_set_bytes)
+                          : "measuring…"} ·
+                        CPU {formatResourceCpu(resourceUsage.cpu_percent)} ·
+                        {formatManagedUptime(resourceUsage.uptime_secs)}
+                      </p>
+                    {:else}
+                      <p class="knob__hint" role="status">Reading usage…</p>
+                    {/if}
+                  </div>
+                {/if}
+                </div>
+            {/if}
+            {#if managedInstalled.length > 0}
+              <!-- Ticket 191: the explicit Active model. Installed entries
+                   only, as flat option rows in the shared find-row idiom —
+                   never nested cards (0014 keeps Settings rows flat).
+                   Save-deferred like the provider (picking drafts `aiModel`).
+                   Tier-first names choose by cost; the full artifact identity
+                   stays one level down in the Details dialog. -->
+              <fieldset class="managed__active">
+                <legend class="knob__label">Active model</legend>
+                {#each managedInstalled as model (model.id)}
+                  <div class="managed__option">
+                    <input
+                      id={"active-managed-" + model.id}
+                      type="radio"
+                      name="active-managed-model"
+                      value={model.id}
+                      checked={aiModel.trim() === model.id}
+                      onchange={() => (aiModel = model.id)}
+                    />
+                    <div class="managed__optionbody">
+                      <label class="managed__pick" for={"active-managed-" + model.id}>
+                        <span class="managed__name"
+                          >{managedTierLabel(model.id)} — {managedModelParams(model.id)}</span
+                        >
+                        <span class="managed__meta"
+                          >{model.download_size_bytes !== null
+                            ? formatManagedBytes(model.download_size_bytes)
+                            : "size pending"} · {formatManagedRam(model.memory_needs_mb)}</span
+                        >
+                      </label>
+                      <div class="managed__actions">
+                        <Button
+                          type="button"
+                          variant="secondary"
+                          disabled={managedBusy || installInFlight}
+                          onclick={() => reviewManaged(model.id)}
+                        >
+                          Model details
+                        </Button>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          disabled={managedBusy || installInFlight}
+                          onclick={() => askRemoveManaged(model.id)}
+                        >
+                          Remove…
+                        </Button>
+                      </div>
+                    </div>
+                  </div>
+                {/each}
+              </fieldset>
+            {/if}
             {#if managedCatalog}
               {#if managedChoices.length === 0}
                 <p class="knob__hint">Managed setup is unavailable in this build. Model and runtime verification is unfinished; your hardware has not been assessed.</p>
@@ -1996,12 +2696,30 @@
                   <Button type="button" variant="ghost" onclick={() => reviewManaged()}>Why unavailable?</Button>
                 </div>
               {:else}
-                {#each managedChoices as model (model.id)}
+                <p class="knob__label">Available to install</p>
+                {#each managedAvailable as model (model.id)}
                   <div class="managed__choice">
-                    <p class="knob__hint">{model.artifact} · {model.installed ? "Installed" : `${managedSize(model.download_size_bytes)} download`}</p>
+                    <p class="managed__name">{managedTierLabel(model.id)} — {managedModelParams(model.id)}</p>
+                    <p class="managed__meta">{managedSize(model.download_size_bytes)} download</p>
+                    {#if installInFlight && managedInstall.modelId === model.id}
+                      <!-- Ticket 193: row-level compact bar + Cancel. The same
+                           flight renders in the dialog — one store, both
+                           places, surviving tab switches. -->
+                      <div class="managed__progress" role="status" aria-label="Install progress">
+                        <div class="managed__bar">
+                          <div class="managed__fill" style="width: {installPercent ?? 0}%"></div>
+                        </div>
+                        <p class="knob__hint">{installProgressLine()}</p>
+                        <div class="managed__actions">
+                          <Button type="button" variant="secondary" onclick={cancelManagedInstall}>
+                            Cancel install
+                          </Button>
+                        </div>
+                      </div>
+                    {/if}
                     <div class="managed__actions">
-                      <Button type="button" variant="secondary" disabled={managedBusy} onclick={() => reviewManaged(model.id)}>
-                        {model.installed ? "Model details" : "Review & install…"}
+                      <Button type="button" variant="secondary" disabled={managedBusy || installInFlight} onclick={() => reviewManaged(model.id)}>
+                        Review & install…
                       </Button>
                     </div>
                   </div>
@@ -2009,9 +2727,63 @@
               {/if}
               {#if managedBusy}
                 <div class="managed__actions">
-                  <p class="knob__status" role="status">Installing model and runtime…</p>
-                  <Button type="button" variant="secondary" onclick={cancelManagedInstall}>Cancel install</Button>
+                  <p class="knob__status" role="status">Removing managed model…</p>
                 </div>
+              {/if}
+              {#if backgroundInstall}
+                <Notice tone="warn">
+                  A managed installation started before the last reload is still
+                  running in the background — wait for it to land, or cancel it
+                  and retry.
+                </Notice>
+                <div class="managed__actions">
+                  <Button type="button" variant="secondary" onclick={cancelManagedInstall}>
+                    Cancel install
+                  </Button>
+                </div>
+              {/if}
+              {#if installGuardHit}
+                <!-- Ticket 193 guard-hit recovery: explicit remove-and-retry
+                     for that revision, or keep the files. Never auto-deletes. -->
+                <Notice tone="error">{managedInstall.error}</Notice>
+                <div class="managed__actions">
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    disabled={managedBusy}
+                    onclick={() => managedInstall.modelId && void retryAfterRemove(managedInstall.modelId)}
+                  >
+                    Remove that revision and retry
+                  </Button>
+                  <Button type="button" variant="ghost" onclick={keepInstallFiles}>
+                    Keep files
+                  </Button>
+                </div>
+              {:else if managedInstall.status === "interrupted"}
+                <Notice tone="warn">{managedInstall.error}</Notice>
+                <div class="managed__actions">
+                  <Button type="button" variant="secondary" onclick={retryManagedInstall}>
+                    Retry install
+                  </Button>
+                  <Button type="button" variant="ghost" onclick={keepInstallFiles}>
+                    Dismiss
+                  </Button>
+                </div>
+              {:else if managedInstall.status === "error" && managedInstall.error}
+                <!-- Any failed install retries in one click — the guard-hit
+                     branch above keeps its own remove-and-retry, so this never
+                     loops a revision the backend refused to overwrite. -->
+                <div class="managed__actions">
+                  <Button type="button" variant="secondary" onclick={retryManagedInstall}>
+                    Retry install
+                  </Button>
+                  <Button type="button" variant="ghost" onclick={keepInstallFiles}>
+                    Dismiss
+                  </Button>
+                </div>
+              {/if}
+              {#if managedInstall.status === "done" && managedInstall.notice}
+                <p class="knob__status" role="status">{managedInstall.notice}</p>
               {/if}
               {#if managedNotice}
                 <p class="knob__status" role="status">{managedNotice}</p>
@@ -2092,8 +2864,41 @@
           >
             {aiTestBusy ? "Testing…" : "Test connection"}
           </Button>
-        </div>
-      </article>
+          </div>
+        </article>
+      {/if}
+      {#if aiProvider !== "managed" && managedInstalled.length > 0}
+        <!-- Ticket 186: Off keeps downloads for later reuse — and keeps their
+             deliberate removal reachable. Without this the managed section
+             above unmounts on Off and stranded files have no UI. -->
+        <article class="knob" hidden={!knobVisible("ai-model")}>
+          <div class="knob__body">
+            <p class="knob__label">Managed downloads on this PC</p>
+            <p class="knob__hint">
+              AI assistance is off — downloads stay for later reuse. Removing is
+              deliberate and keeps your saved Quick Actions.
+            </p>
+            {#each managedInstalled as model (model.id)}
+              <div class="managed__choice">
+                <p class="knob__hint">{model.artifact} · Installed · {managedSize(model.download_size_bytes)}</p>
+                <div class="managed__actions">
+                  <Button type="button" variant="secondary" disabled={managedBusy} onclick={() => reviewManaged(model.id)}>
+                    Model details
+                  </Button>
+                  <Button type="button" variant="ghost" disabled={managedBusy} onclick={() => askRemoveManaged(model.id)}>
+                    Remove…
+                  </Button>
+                </div>
+              </div>
+            {/each}
+            {#if managedBusy}
+              <p class="knob__status" role="status">Removing managed model…</p>
+            {/if}
+            {#if managedNotice}
+              <p class="knob__status" role="status">{managedNotice}</p>
+            {/if}
+          </div>
+        </article>
       {/if}
         </GroupAccordion>
       {/if}
@@ -2150,7 +2955,10 @@
 <Dialog
   open={managedDetailsOpen}
   title={managedReviewModel && !managedReviewModel.installed ? "Install local model" : "Managed model details"}
-  onclose={() => (managedDetailsOpen = false)}
+  onclose={() => {
+    managedDetailsOpen = false;
+    managedConfirmRemoveId = null;
+  }}
 >
   {#if managedDetailsOpen && managedCatalog}
     <div class="guard">
@@ -2188,19 +2996,69 @@
           {#if model.context_limit_tokens !== null}<p class="guard__body">Context limit: {new Intl.NumberFormat().format(model.context_limit_tokens)} tokens</p>{/if}
           {#if model.minimum_runtime_version}<p class="guard__body">Minimum runtime: {model.minimum_runtime_version}</p>{/if}
           {#if model.sha256}<p class="guard__body managed__source">SHA-256: {model.sha256}</p>{/if}
+          {#if model.installed && model.installed_dir}
+            <p class="guard__body managed__source">Installed at: {model.installed_dir}</p>
+            <p class="guard__body">
+              The weights file and the runtime server live inside this folder.
+              You can delete it yourself in Explorer while the server is
+              stopped — Sprout will read the model as not installed.
+            </p>
+            <div class="managed__actions">
+              <Button variant="secondary" onclick={copyInstallPath}>Copy path</Button>
+              {#if copyPathFeedback}
+                <span class="knob__status" role="status">{copyPathFeedback}</span>
+              {/if}
+            </div>
+          {/if}
         </section>
       {/each}
+      {#if managedReviewModel && installInFlight && managedInstall.modelId === managedReviewModel.id}
+        <!-- Ticket 193: dialog full bar for the same flight the row shows. -->
+        <div class="managed__progress" role="status" aria-label="Install progress">
+          <div class="managed__bar">
+            <div class="managed__fill" style="width: {installPercent ?? 0}%"></div>
+          </div>
+          <p class="guard__body">{installProgressLine()}</p>
+        </div>
+      {/if}
+      {#if managedReviewModel && installGuardHit && managedInstall.modelId === managedReviewModel.id}
+        <Notice tone="error">{managedInstall.error}</Notice>
+        <div class="managed__actions">
+          <Button variant="secondary" onclick={() => void retryAfterRemove(managedReviewModel!.id)}>
+            Remove that revision and retry
+          </Button>
+          <Button variant="ghost" onclick={keepInstallFiles}>Keep files</Button>
+        </div>
+      {/if}
       {#if managedBusy}
-        <p class="guard__body" role="status">Installing model and runtime…</p>
+        <p class="guard__body" role="status">Removing managed model…</p>
       {:else if managedNotice}
         <p class="guard__body" role="status">{managedNotice}</p>
       {/if}
       {#if managedError}<Notice tone="error">{managedError}</Notice>{/if}
+      {#if managedReviewModel?.installed}
+        <section class="knob__body">
+          <h3 class="knob__label">Remove this model</h3>
+          <p class="guard__body">{managedRemovePreview(managedReviewModel.id)}</p>
+          {#if managedConfirmRemoveId === managedReviewModel.id}
+            <div class="managed__actions">
+              <Button variant="secondary" disabled={managedBusy} onclick={() => (managedConfirmRemoveId = null)}>Keep it</Button>
+              <Button disabled={managedBusy} onclick={() => void removeManaged(managedReviewModel!.id)}>{managedBusy ? "Removing…" : "Confirm remove"}</Button>
+            </div>
+          {:else}
+            <div class="managed__actions">
+              <Button variant="secondary" disabled={managedBusy} onclick={() => (managedConfirmRemoveId = managedReviewModel!.id)}>Remove model…</Button>
+            </div>
+          {/if}
+        </section>
+      {/if}
       <div class="managed__actions">
-        <Button variant="secondary" onclick={() => (managedDetailsOpen = false)}>Close</Button>
-        {#if managedBusy}
+        <Button variant="secondary" onclick={() => { managedDetailsOpen = false; managedConfirmRemoveId = null; }}>Close</Button>
+        {#if managedReviewModel && installInFlight && managedInstall.modelId === managedReviewModel.id}
           <Button variant="secondary" onclick={cancelManagedInstall}>Cancel install</Button>
-        {:else if managedReviewModel?.installable && !managedReviewModel.installed}
+        {:else if !managedBusy && !installInFlight && managedInstall.status === "error" && !installGuardHit && managedInstall.modelId === managedReviewModel?.id}
+          <Button variant="secondary" onclick={retryManagedInstall}>Retry install</Button>
+        {:else if !managedBusy && !installInFlight && managedReviewModel?.installable && !managedReviewModel.installed}
           <Button onclick={() => void installManaged(managedReviewModel!.id)}>Install model and runtime</Button>
         {/if}
       </div>
@@ -2279,8 +3137,157 @@
     margin-top: var(--space-2);
   }
 
+  /* Ticket 190: lazy Details disclosure — the shared Disclosure header plus
+     one tooltip-grade line. Tokens only; no transition or gauge, so Animation
+     off and reduced-motion change nothing (numbers update as text). */
+  .managed__details {
+    margin-top: var(--space-2);
+  }
+
+  .managed__resource {
+    margin-top: var(--space-1);
+  }
+
+  /* Tickets 189/193: static Running/Stopped dot (no pulse — stillness is
+     the honest state for a status) plus the install progress bar. Tokens
+     only; no transition, so the Animation switch and reduced-motion have
+     nothing to gate — the fill jumps to each reported percent. The status
+     row splits state left / verb right like the knob itself. */
+  .managed__statusrow {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-2);
+  }
+
+  .managed__statusactions {
+    margin-top: 0;
+    flex-shrink: 0;
+  }
+
+  .managed__status {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+  }
+
+  .managed__dot {
+    width: 8px;
+    height: 8px;
+    border-radius: var(--radius-pill);
+    background: var(--text-muted);
+    flex-shrink: 0;
+  }
+
+  .managed__dot--running {
+    background: var(--status-applied-text);
+  }
+
+  .managed__running {
+    color: var(--status-applied-text);
+    font-weight: 500;
+  }
+
+  .managed__stopped {
+    color: var(--text-muted);
+  }
+
+  .managed__progress {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
+    margin-top: var(--space-2);
+  }
+
+  .managed__bar {
+    height: 8px;
+    border-radius: var(--radius-pill);
+    background: var(--border);
+    overflow: hidden;
+  }
+
+  .managed__fill {
+    height: 100%;
+    background: var(--accent);
+    border-radius: var(--radius-pill);
+  }
+
   .managed__choice {
     padding-block: var(--space-2);
+  }
+
+  /* Ticket 191: the explicit Active-model radio. Native fieldset + radios in
+     the shared find-row idiom (flat stacked option rows — 0014 keeps
+     Settings rows flat, never nested cards). The radio itself carries state;
+     the focus ring is the only highlight, no transition, so the Animation
+     switch and reduced-motion have nothing to gate. */
+  .managed__active {
+    border: none;
+    padding: 0;
+    margin: var(--space-2) 0 0;
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
+  }
+
+  .managed__option {
+    display: flex;
+    align-items: flex-start;
+    gap: var(--space-2);
+    min-width: 0;
+  }
+
+  .managed__option > input {
+    margin: 0;
+    margin-top: 2px;
+    accent-color: var(--accent);
+    flex: none;
+    width: 14px;
+    height: 14px;
+  }
+
+  .managed__option > input:focus-visible {
+    outline: 2px solid var(--ring);
+    outline-offset: 2px;
+  }
+
+  /* Option body stacks the label over its actions (0006 pattern 9: child
+     content aligns with its control's text start, never the card edge). */
+  .managed__optionbody {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-1);
+    min-width: 0;
+    flex: 1;
+  }
+
+  .managed__pick {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    cursor: pointer;
+  }
+
+  .managed__name {
+    margin: 0;
+    font-size: var(--text-sm);
+    font-weight: 600;
+    color: var(--text);
+    overflow-wrap: anywhere;
+  }
+
+  .managed__meta {
+    margin: 0;
+    font-family: var(--font-mono);
+    font-size: var(--text-xs);
+    color: var(--text-muted);
+    overflow-wrap: anywhere;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .managed__status,
+  .managed__resource {
+    font-variant-numeric: tabular-nums;
   }
 
   .managed__source {

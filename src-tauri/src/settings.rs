@@ -9,6 +9,9 @@
 //!   prune it. History rows are kept forever; only raw log files expire;
 //! - `theme` — the app-wide look: "system" follows the OS, "light"/"dark"
 //!   pin it. Saved on its own the moment it is picked (ticket 31);
+//! - `animation` — the app-wide motion switch: "on" plays every menu,
+//!   dialog, and pulse transition; "off" renders each end state at once.
+//!   Saved on its own the moment it is picked, like the theme;
 //! - `install_dir` — the machine-local default install directory (ticket 34):
 //!   empty means winget's own default, otherwise every winget install/upgrade
 //!   carries `--location`. It is a Settings value, never part of a Product,
@@ -48,6 +51,9 @@ pub const DEFAULT_TIMEOUT_MINUTES: u32 = 10;
 pub const DEFAULT_RETENTION_DAYS: u32 = 30;
 /// The app-wide theme: "system" follows the OS, "light"/"dark" pin it.
 pub const DEFAULT_THEME: &str = "system";
+/// The app-wide motion switch: "on" plays every transition, "off" renders
+/// each end state at once. On is today's behavior.
+pub const DEFAULT_ANIMATION: &str = "on";
 /// How many Quick Launch entries may launch at once before the rest queue.
 pub const DEFAULT_LAUNCH_CONCURRENCY: u32 = 8;
 /// The dock's default visibility mode: auto-hide slides to a sliver when not
@@ -108,6 +114,7 @@ pub const DEFAULT_AI_BASE_URL: &str = "http://127.0.0.1:11434";
 const KEY_TIMEOUT: &str = "settings.timeout_minutes";
 const KEY_RETENTION: &str = "settings.log_retention_days";
 const KEY_THEME: &str = "settings.theme";
+const KEY_ANIMATION: &str = "settings.animation";
 const KEY_INSTALL_DIR: &str = "settings.install_dir";
 const KEY_LAUNCH_CONCURRENCY: &str = "launch.concurrency";
 const KEY_LAUNCH_GROUPS: &str = "launch.groups";
@@ -229,6 +236,12 @@ pub struct Settings {
     pub default_timeout_minutes: u32,
     pub log_retention_days: u32,
     pub theme: String,
+    /// The app-wide motion switch: "on" or "off". Off forces the
+    /// reduced-motion path everywhere — menus, dialogs, entrances, and
+    /// pulses render their end states at once — regardless of the OS
+    /// setting, which is still honored on its own.
+    #[serde(default = "default_animation")]
+    pub animation: String,
     /// Machine-local default install directory (ADR-0009): empty = winget's
     /// default; non-empty = every winget step carries `--location`.
     pub install_dir: String,
@@ -309,12 +322,17 @@ pub struct Settings {
     pub ai_model: String,
 }
 
+/// Missing motion switch reads as on — older saves predate the knob and
+/// today everything moves.
+fn default_animation() -> String {
+    DEFAULT_ANIMATION.to_string()
+}
+
 /// Missing AI route reads as off — older saves predate the knobs and must
 /// never wake inference.
 fn default_ai_provider() -> String {
     DEFAULT_AI_PROVIDER.to_string()
 }
-
 /// Missing service root reads as the loopback default.
 fn default_ai_base_url() -> String {
     DEFAULT_AI_BASE_URL.to_string()
@@ -326,6 +344,7 @@ impl Default for Settings {
             default_timeout_minutes: DEFAULT_TIMEOUT_MINUTES,
             log_retention_days: DEFAULT_RETENTION_DAYS,
             theme: DEFAULT_THEME.to_string(),
+            animation: DEFAULT_ANIMATION.to_string(),
             install_dir: String::new(),
             launch_concurrency: DEFAULT_LAUNCH_CONCURRENCY,
             dock_mode: DEFAULT_DOCK_MODE.to_string(),
@@ -347,6 +366,14 @@ impl Default for Settings {
             ai_base_url: DEFAULT_AI_BASE_URL.to_string(),
             ai_model: String::new(),
         }
+    }
+}
+
+/// Accepts only the two states the Settings screen offers.
+pub fn validate_animation(value: &str) -> std::result::Result<(), String> {
+    match value {
+        "on" | "off" => Ok(()),
+        _ => Err("Animation must be \"on\" or \"off\"".into()),
     }
 }
 
@@ -623,6 +650,7 @@ impl Settings {
             return Err("Log retention must be between 1 and 3650 days (10 years)".into());
         }
         validate_theme(&self.theme)?;
+        validate_animation(&self.animation)?;
         validate_install_dir(&self.install_dir)?;
         if !(1..=50).contains(&self.launch_concurrency) {
             return Err("Launch concurrency must be between 1 and 50".into());
@@ -712,6 +740,8 @@ pub fn load(conn: &Connection) -> Settings {
         log_retention_days: number(conn, KEY_RETENTION).unwrap_or(DEFAULT_RETENTION_DAYS),
         theme: validated(conn, KEY_THEME, validate_theme)
             .unwrap_or_else(|| DEFAULT_THEME.to_string()),
+        animation: validated(conn, KEY_ANIMATION, validate_animation)
+            .unwrap_or_else(|| DEFAULT_ANIMATION.to_string()),
         install_dir: validated(conn, KEY_INSTALL_DIR, validate_install_dir).unwrap_or_default(),
         launch_concurrency: number(conn, KEY_LAUNCH_CONCURRENCY)
             .filter(|value| (1..=50).contains(value))
@@ -764,6 +794,7 @@ pub fn save(conn: &Connection, settings: &Settings) -> std::result::Result<(), S
     upsert_meta(&tx, KEY_TIMEOUT, &settings.default_timeout_minutes.to_string()).map_err(|e| e.to_string())?;
     upsert_meta(&tx, KEY_RETENTION, &settings.log_retention_days.to_string()).map_err(|e| e.to_string())?;
     upsert_meta(&tx, KEY_THEME, &settings.theme).map_err(|e| e.to_string())?;
+    upsert_meta(&tx, KEY_ANIMATION, &settings.animation).map_err(|e| e.to_string())?;
     upsert_meta(&tx, KEY_INSTALL_DIR, &settings.install_dir).map_err(|e| e.to_string())?;
     upsert_meta(&tx, KEY_LAUNCH_CONCURRENCY, &settings.launch_concurrency.to_string())
         .map_err(|e| e.to_string())?;
@@ -805,6 +836,13 @@ pub fn save(conn: &Connection, settings: &Settings) -> std::result::Result<(), S
 pub fn save_theme(conn: &Connection, theme: &str) -> std::result::Result<(), String> {
     validate_theme(theme)?;
     upsert_meta(conn, KEY_THEME, theme).map_err(|e| e.to_string())
+}
+
+/// Persists only the motion switch — the Settings screen applies it the
+/// moment it is picked, without touching the other knobs, like the theme.
+pub fn save_animation(conn: &Connection, value: &str) -> std::result::Result<(), String> {
+    validate_animation(value)?;
+    upsert_meta(conn, KEY_ANIMATION, value).map_err(|e| e.to_string())
 }
 
 /// Persists only the dock state (ticket 57) — the in-window dock/undock
@@ -924,6 +962,7 @@ mod tests {
         assert_eq!(load(&conn).default_timeout_minutes, 10);
         assert_eq!(load(&conn).log_retention_days, 30);
         assert_eq!(load(&conn).theme, DEFAULT_THEME);
+        assert_eq!(load(&conn).animation, DEFAULT_ANIMATION);
         assert_eq!(load(&conn).install_dir, "");
         assert_eq!(load(&conn).dock_mode, DEFAULT_DOCK_MODE);
         assert_eq!(load(&conn).dock_edge, DEFAULT_DOCK_EDGE);
@@ -941,6 +980,7 @@ mod tests {
             default_timeout_minutes: 25,
             log_retention_days: 90,
             theme: "dark".to_string(),
+            animation: "off".to_string(),
             install_dir: r"D:\Apps".to_string(),
             launch_concurrency: 12,
             dock_mode: "fixed".to_string(),
@@ -992,6 +1032,12 @@ mod tests {
         s.theme = "sepia".to_string();
         assert!(s.validate().is_err());
         s.theme = DEFAULT_THEME.to_string();
+        assert!(s.validate().is_ok());
+        s.animation = "sometimes".to_string();
+        assert!(s.validate().is_err());
+        s.animation = "off".to_string();
+        assert!(s.validate().is_ok());
+        s.animation = DEFAULT_ANIMATION.to_string();
         assert!(s.validate().is_ok());
         s.launch_concurrency = 0;
         assert!(s.validate().is_err());
@@ -1323,6 +1369,44 @@ mod tests {
     }
 
     #[test]
+    fn animation_roundtrips_on_its_own() {
+        let dir = clean_dir();
+        {
+            let conn = crate::db::init_at(&dir).unwrap();
+            save_animation(&conn, "off").unwrap();
+            assert_eq!(load(&conn).animation, "off");
+        }
+        // Re-open: the switch survives the connection.
+        let conn = crate::db::init_at(&dir).unwrap();
+        assert_eq!(load(&conn).animation, "off");
+    }
+
+    #[test]
+    fn save_animation_rejects_unknown_values_and_keeps_the_old_one() {
+        let conn = conn();
+        assert!(save_animation(&conn, "sometimes").is_err());
+        // Nothing was persisted.
+        assert_eq!(load(&conn).animation, DEFAULT_ANIMATION);
+    }
+
+    #[test]
+    fn invalid_stored_animation_falls_back_to_default() {
+        let conn = conn();
+        // A broken value must never freeze the UI — it reads back as on.
+        upsert_meta(&conn, KEY_ANIMATION, "sometimes").unwrap();
+        assert_eq!(load(&conn).animation, DEFAULT_ANIMATION);
+        upsert_meta(&conn, KEY_ANIMATION, "").unwrap();
+        assert_eq!(load(&conn).animation, DEFAULT_ANIMATION);
+        // Every offered state persists through the ordinary save path.
+        let mut s = Settings::default();
+        for state in ["on", "off"] {
+            s.animation = state.to_string();
+            save(&conn, &s).unwrap();
+            assert_eq!(load(&conn).animation, state);
+        }
+    }
+
+    #[test]
     fn autostart_roundtrips_on_its_own() {
         let dir = clean_dir();
         {
@@ -1353,6 +1437,7 @@ mod tests {
             default_timeout_minutes: 0,
             log_retention_days: 7,
             theme: "dark".to_string(),
+            animation: DEFAULT_ANIMATION.to_string(),
             install_dir: String::new(),
             launch_concurrency: 8,
             dock_mode: DEFAULT_DOCK_MODE.to_string(),

@@ -438,7 +438,7 @@ fn launch_run(preset_names: Vec<String>, requirements: Vec<Requirement>) -> Resu
     std::fs::write(dir.join("request.json"), serde_json::to_vec(&request).map_err(|e| e.to_string())?)
         .map_err(|e| format!("cannot write the run request: {e}"))?;
 
-    let exe = std::env::current_exe().map_err(|e| format!("cannot locate Sprout.exe: {e}"))?;
+    let exe = std::env::current_exe().map_err(|e| format!("cannot locate sprout-windows-desktop.exe: {e}"))?;
     worker::launch_elevated(&exe, &["--worker", "--run", run_id.as_str()]).map_err(|e| {
         format!(
             "Sprout could not start the elevated worker: {e}. If you declined the UAC prompt, click Run again."
@@ -536,6 +536,11 @@ fn update_settings(
     let conn = lock(&state)?;
     settings::save(&conn, &settings)?;
     drop(conn);
+    // Leaving the managed route must release the owned server's memory
+    // promptly instead of waiting out the idle reap; downloads stay for reuse.
+    if settings.ai_provider != "managed" {
+        state.managed_ai.stop_for_disable();
+    }
     // Off (null or blank) must leave no WebView2 behind — same guarantee as
     // set_companion_url, since this bulk save is the Settings Off-select path.
     if settings::normalize_companion_url(settings.companion_url.as_deref()).is_none() {
@@ -560,6 +565,23 @@ fn update_theme(
 ) -> Result<(), String> {
     let conn = lock(&state)?;
     settings::save_theme(&conn, &theme)?;
+    drop(conn);
+    emit_quick_launch_changed(&app);
+    Ok(())
+}
+
+/// Persists the motion switch on its own — the Settings screen applies it
+/// the moment it is picked, before the rest of the form is saved, like the
+/// theme. The Quick Launch window is told via `quick-launch-changed` so it
+/// re-applies the hook without reopening.
+#[tauri::command]
+fn update_animation(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    animation: String,
+) -> Result<(), String> {
+    let conn = lock(&state)?;
+    settings::save_animation(&conn, &animation)?;
     drop(conn);
     emit_quick_launch_changed(&app);
     Ok(())
@@ -606,6 +628,14 @@ fn destroy_main_window(app: AppHandle) -> Result<(), String> {
         window.destroy().map_err(|e| e.to_string())?;
     }
     Ok(())
+}
+
+/// The UI's section report for Discord presence: validated fixed text only —
+/// the session clock stays untouched, so the elapsed timer never resets when
+/// the message changes (ADR-0033). Discord absent is a silent no-op.
+#[tauri::command]
+fn set_presence_status(details: String, state: String) -> Result<(), String> {
+    presence::set_status(&details, &state)
 }
 
 /// The Logs screen's picture of where logs live and how big they are — no
@@ -2227,18 +2257,85 @@ fn ai_managed_status(state: State<'_, AppState>) -> Result<ai_managed::ManagedCa
 
 #[tauri::command]
 async fn ai_install_managed(
+    app: AppHandle,
     state: State<'_, AppState>,
     model_id: String,
 ) -> Result<ai_managed::ManagedInstallResult, String> {
     let managed_ai = Arc::clone(&state.managed_ai);
-    tauri::async_runtime::spawn_blocking(move || managed_ai.install(&model_id))
-        .await
-        .map_err(|error| format!("Managed installation worker failed: {error}"))?
+    tauri::async_runtime::spawn_blocking(move || {
+        managed_ai.install_with_progress(&model_id, &|progress| {
+            let _ = app.emit(ai_managed::MANAGED_INSTALL_PROGRESS_EVENT, &progress);
+        })
+    })
+    .await
+    .map_err(|error| format!("Managed installation worker failed: {error}"))?
 }
 
 #[tauri::command]
 fn ai_cancel_managed_install(state: State<'_, AppState>) -> bool {
     state.managed_ai.cancel_install()
+}
+
+/// The in-memory single-flight flag behind ticket 193's reload honesty:
+/// installing here but idle there means the attempt died with the last page.
+#[tauri::command]
+fn ai_managed_install_active(state: State<'_, AppState>) -> bool {
+    state.managed_ai.is_installing()
+}
+
+/// The cheap running indicator behind ticket 189's status line: process
+/// liveness plus the serving model and its uptime. Polled only while
+/// Settings is open; zero cost when closed.
+#[tauri::command]
+fn ai_managed_runtime_status(state: State<'_, AppState>) -> ai_managed::ManagedRunState {
+    state.managed_ai.runtime_status()
+}
+
+/// Tooltip-grade live numbers behind ticket 190's lazy Details disclosure:
+/// working set plus CPU % plus uptime for the owned runtime. The frontend
+/// calls this only while the disclosure is open and running (~2s); closed
+/// costs nothing. Stopped reads as stopped with no process query.
+#[tauri::command]
+fn ai_managed_resource_usage(state: State<'_, AppState>) -> ai_managed::ManagedResourceUsage {
+    state.managed_ai.resource_usage()
+}
+
+/// Pre-warms the owned runtime for one installed model (ticket 189's Start):
+/// the Generate health path with the request released at once, so the next
+/// Generate finds a live server. Never touches provider selection.
+#[tauri::command]
+async fn ai_start_managed_runtime(
+    state: State<'_, AppState>,
+    model_id: String,
+) -> Result<String, String> {
+    let managed_ai = Arc::clone(&state.managed_ai);
+    tauri::async_runtime::spawn_blocking(move || managed_ai.start_model(&model_id))
+        .await
+        .map_err(|error| format!("Managed start worker failed: {error}"))?
+}
+
+/// Removes one explicitly selected app-owned managed model installation:
+/// stops the owned runtime serving it first, deletes only its directory
+/// under the app-owned root, and reports how many managed models remain so
+/// Settings can fall back to Off when none survive. Saved Quick Actions are
+/// untouched — generation simply has one fewer installed route.
+#[tauri::command]
+async fn ai_remove_managed(
+    state: State<'_, AppState>,
+    model_id: String,
+) -> Result<ai_managed::ManagedRemoveResult, String> {
+    let managed_ai = Arc::clone(&state.managed_ai);
+    tauri::async_runtime::spawn_blocking(move || managed_ai.remove(&model_id))
+        .await
+        .map_err(|error| format!("Managed removal worker failed: {error}"))?
+}
+
+/// Stops the Sprout-owned inference server and releases its model memory
+/// without deleting downloads, for the Settings Save path leaving the
+/// managed route (ADR-0031: the app owns this server's lifetime end to end).
+#[tauri::command]
+fn ai_stop_managed_runtime(state: State<'_, AppState>) {
+    state.managed_ai.stop_for_disable();
 }
 
 #[tauri::command]
@@ -2262,11 +2359,115 @@ fn ai_check_candidate(
             verdict: "refuse".into(),
             message: Some(reason),
         },
-        ai_assist::OutputVerdict::Clarify { message } => AiCheckVerdict {
+        ai_assist::OutputVerdict::Clarify { message, .. } => AiCheckVerdict {
             verdict: "clarify".into(),
             message: Some(message),
         },
     })
+}
+
+/// Diagnoses a selected saved script plus its error output through the single
+/// configured route (ADR-0031): an explanation, a separately reviewed
+/// revision, a refusal, a clarification, or an actionable failure. Diagnosis
+/// never executes, collects nothing automatically, and persists nothing —
+/// accepting and saving stay explicit later steps through the normal
+/// validation (ADR-0030).
+#[tauri::command]
+async fn ai_diagnose_draft(
+    state: State<'_, AppState>,
+    action_id: i64,
+    script: String,
+    error: String,
+    shell: quick_actions::QuickActionShell,
+    cwd: Option<String>,
+    request_id: Option<String>,
+) -> Result<ai_assist::DiagnoseOutcome, String> {
+    let (provider, base_url, model) = {
+        let conn = lock(&state)?;
+        let settings = settings::load(&conn);
+        (settings.ai_provider, settings.ai_base_url, settings.ai_model)
+    };
+    let route = ai_assist::resolve_route(&provider, &base_url, &model)?;
+    let skills = ai_assist::load_skills()?;
+    let managed_ai = Arc::clone(&state.managed_ai);
+    tauri::async_runtime::spawn_blocking(move || {
+        Ok(match route.provider {
+            ai_assist::AiProvider::Off => ai_assist::DiagnoseOutcome::Failed {
+                message: "AI assistance is off — set it up in Settings → AI assistance. The manual editor works regardless.".into(),
+            },
+            ai_assist::AiProvider::Managed => {
+                let request_id = request_id
+                    .as_deref()
+                    .filter(|value| !value.trim().is_empty())
+                    .ok_or_else(|| "Managed diagnosis needs a request id for cancellation.".to_string())?;
+                let provider = managed_ai.begin_request(request_id, &route.model)?;
+                ai_assist::request_diagnosis(
+                    &provider,
+                    &skills,
+                    action_id,
+                    &ai_assist::DiagnoseInput {
+                        shell,
+                        script,
+                        error,
+                        cwd,
+                        model: route.model,
+                        grants: ai_assist::RequestGrants::none(),
+                    },
+                )
+            }
+            ai_assist::AiProvider::Cloud => ai_assist::DiagnoseOutcome::Failed {
+                message: "Cloud providers are not in this build yet — switch to your existing local service or turn AI off. Nothing was sent anywhere.".into(),
+            },
+            ai_assist::AiProvider::ExistingLocal => {
+                let client = ai_assist::ExistingLocalClient {
+                    root: route.root,
+                    timeout: ai_assist::GENERATION_TIMEOUT,
+                };
+                ai_assist::request_diagnosis(
+                    &client,
+                    &skills,
+                    action_id,
+                    &ai_assist::DiagnoseInput {
+                        shell,
+                        script,
+                        error,
+                        cwd,
+                        model: route.model,
+                        grants: ai_assist::RequestGrants::none(),
+                    },
+                )
+            }
+        })
+    })
+    .await
+    .map_err(|error| format!("AI diagnosis worker failed: {error}"))?
+}
+
+/// Rechecks a diagnosed revision against the current saved row before the
+/// dialog saves it: source deletion or newer edits come back as a conflict
+/// retaining both the saved state and the reviewable candidate, instead of
+/// overwriting silently (ADR-0030).
+#[tauri::command]
+fn ai_verify_revision(
+    state: State<'_, AppState>,
+    action_id: i64,
+    baseline: String,
+) -> Result<Option<String>, String> {
+    let conn = lock(&state)?;
+    let actions = quick_actions::list_quick_actions(&conn).map_err(|e| e.to_string())?;
+    match actions.into_iter().find(|action| action.id == action_id) {
+        None => Ok(Some("The action this revision was diagnosed against no longer exists — it was deleted. The proposal is kept for review; save it as a new action instead.".into())),
+        Some(action) => {
+            let cwd = action.action.cwd.as_deref().unwrap_or_default();
+            Ok(ai_assist::verify_revision_baseline(
+                Some(action.id),
+                &baseline,
+                action.action.shell,
+                &action.action.command,
+                cwd,
+            ))
+        }
+    }
 }
 
 /// Lists the folders the user approved for local target discovery
@@ -3292,6 +3493,7 @@ pub fn run() {
             get_settings,
             update_settings,
             update_theme,
+            update_animation,
             update_autostart,
             update_groups_enabled,
             check_for_update,
@@ -3329,8 +3531,16 @@ pub fn run() {
             ai_managed_status,
             ai_install_managed,
             ai_cancel_managed_install,
+            ai_managed_install_active,
+            ai_managed_runtime_status,
+            ai_managed_resource_usage,
+            ai_start_managed_runtime,
+            ai_remove_managed,
+            ai_stop_managed_runtime,
             ai_cancel_draft,
             ai_check_candidate,
+            ai_diagnose_draft,
+            ai_verify_revision,
             ai_list_approved_roots,
             ai_approve_root,
             ai_revoke_root,
@@ -3385,7 +3595,8 @@ pub fn run() {
             companion_go_forward,
             ensure_companion_history_hook,
             set_settings_dirty,
-            destroy_main_window
+            destroy_main_window,
+            set_presence_status,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")

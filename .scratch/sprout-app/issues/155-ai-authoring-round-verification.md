@@ -2,7 +2,7 @@
 
 **What to build:** Verify the complete user-controlled authoring feature across supported providers, both shells, new/existing installs, and release-owned resources; close only proven acceptance criteria.
 
-**Blocked by:** 149 — discovery; 150 — cloud; 152 — stronger tier/updates; 153 — revisions; 154 — cleanup.
+**Blocked by:** 149 — discovery; 150 — cloud; 152 — stronger tier/updates; 153 — revisions; 186 — local cleanup; 187 — cloud cleanup (154 split into 186 + 187).
 
 **Status:** ready-for-agent
 

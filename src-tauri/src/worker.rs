@@ -1,7 +1,7 @@
 //! The elevated worker (ADR-0003, ticket 06).
 //!
 //! The main process stays non-elevated throughout; the run phase relaunches
-//! this same exe as `Sprout.exe --worker --run <id>` under one UAC prompt.
+//! this same exe as `sprout-windows-desktop.exe --worker --run <id>` under one UAC prompt.
 //! There is no cross-elevation IPC — the only shared state is the per-run
 //! working directory on disk:
 //!
@@ -371,13 +371,13 @@ mod tests {
 
     #[test]
     fn parses_the_run_flag() {
-        let args = vec!["sprout.exe".to_string(), "--worker".to_string(), "--run".to_string(), "run-123".to_string()];
+        let args = vec!["sprout-windows-desktop.exe".to_string(), "--worker".to_string(), "--run".to_string(), "run-123".to_string()];
         assert_eq!(worker_run_id(&args), Some("run-123".to_string()));
 
-        assert_eq!(worker_run_id(&["sprout.exe".to_string()]), None);
+        assert_eq!(worker_run_id(&["sprout-windows-desktop.exe".to_string()]), None);
         assert_eq!(worker_run_id(&["--run".to_string()]), None);
         assert_eq!(
-            worker_run_id(&["sprout.exe".to_string(), "--import".to_string(), "x.sprout.json".to_string()]),
+            worker_run_id(&["sprout-windows-desktop.exe".to_string(), "--import".to_string(), "x.sprout.json".to_string()]),
             None
         );
     }

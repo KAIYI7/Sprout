@@ -188,3 +188,19 @@ dialog above the manual fields (pattern 2's minimal-until-content ordering:
 intent first, rare fields behind one Details disclosure per pattern 7),
 with Add opening it expanded and Edit keeping manual fields in front.
 Evidence for the entry-point choice lives in research 0019.
+
+## Decision update — 2026-09-13 (two-view dialog; spec 181, tickets 183–185)
+
+The stacked hero above (AI block leading over full manual fields) is
+superseded for the Quick Action Add/Edit dialog: one dialog with two
+exclusive views behind `AI draft | Manual` tabs top-right (pattern 8
+view-scoped on-surface; 0004 rule 4 tab hygiene). The strip is absent when
+AI is not ready (pattern 11 content-gated activation); Add opens AI-first,
+Edit opens manual-first; flips are instant with both labels visible for
+scent. The AI view holds a single textarea plus Generate and outcome
+(pattern 2 minimal-until-content; pattern 1 config-elsewhere — no shell
+picker, no find/roots chrome up front); discovery appears only when a
+clarification needs it, restoring the two-level maximum. `Use this draft`
+applies shell plus command and auto-flips to Manual for full review with
+applied feedback. Patterns 1–12 stand unchanged; only this applied case
+moved from stacking to exclusive views.

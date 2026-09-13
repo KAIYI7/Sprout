@@ -1,6 +1,6 @@
 # Model recommendations and curated AI skills ship with Sprout releases
 
-> Status: amended 2026-09-06 — accepted design; original text preserved. See dated amendments for current scope and tracker numbering. Implementation is pending.
+> Status: amended 2026-09-13 — scoped clarification + bounded grill delivered in 184 under spec 181 (see dated amendments); original text preserved. Broader qualification (146/150–152/155) stays open.
 
 Sprout maintains its model recommendations as JSON in the repository and bundles that data with the application. Curated script-authoring and diagnosis skills are likewise versioned in the repository and packaged as runtime resources. Both change through reviewed Sprout application releases. This accepts slower recommendation delivery to keep distribution and configuration simple, without another backend or independently updated policy channel.
 
@@ -31,3 +31,31 @@ The user declined a copied/downloaded Microsoft command-reference dataset to avo
 ## Amendment — 2026-09-12 (scoped clarification template; spec 181, ticket 184)
 
 The pinned `create-quick-action` skill gains one appended Clarification template section: vague requests (unknown path, ambiguous app, unknown prerequisite) return `Clarify` with two to four pickable choices plus a free-text slot — the grill-with-docs frontier question scoped to command generation. Tone, language, rules, and section structure of the skill are otherwise unchanged; NOTICES and attribution are retained. App-side enforcement is unchanged (ADR-0030 request/output checks; ADR-0031 bounded discovery plus separate disclosure grants): clarification carries no executable code and answering never widens consent. No custom, editable, or remote skills. Implementation pending in 184.
+
+## Amendment — 2026-09-13 (bounded grill consensus; ticket 184 follow-up)
+
+The single round-trip rule is replaced by aspect-keyed one-shot questions: each
+vagueness aspect (unknown folder, ambiguous app, unknown prerequisite, scope,
+bypass) fires at most once per generation thread, answers chain onto the
+request, and an answered question never repeats while a distinct one still asks
+back — the exchange ends when no question remains open (detector consensus) or
+when the user drafts anyway with what they have (user consensus). Shell
+compatibility stays outside the grill and always re-fires; refusal still beats
+everything. Enforcement stays app-side and rule-based (ADR-0030/ADR-0031
+unchanged); the skill template gains only the one-shot wording above.
+
+## Amendment — 2026-09-13 (round delivery; spec 181, ticket 185)
+
+Delivered in 184 with the 183↔184 dialog handoff: the Clarification template
+append ships as described (append-only to `create-quick-action.md`, existing
+sections byte-identical, NOTICES retained, `include_str!` packaging unchanged);
+vague fixtures clarify with 2–4 choices plus free text and no usable draft,
+answering regenerates via aspect-keyed tags (`clarified choice [aspect]: …`,
+legacy bare tag honored, `draft-anyway:` override), refusal and
+shell-compatibility guard every draft, cloud/disclosure/binding boundaries
+unchanged (ADR-0030/0031). Frontend renders choices as radios reusing the
+find-pick row pattern (183 owns the view). Fixture battery green
+(`ai-eval-fixtures.json` verdicts asserted in `eval_fixtures_reach_their_expected_verdicts`);
+packaging check holds (installed app serves pinned skills without checkout).
+Original plus 2026-09-06/12/13 text untouched; broader qualification
+(146/150–152/155) stays open.

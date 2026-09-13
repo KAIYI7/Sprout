@@ -644,10 +644,10 @@ pub fn bind_target(
         }
     }
     let command = command_for(shell, stored.kind, &stored.path)?;
-    let warning = match crate::ai_assist::check_output(shell, &command) {
+    let warning = match crate::ai_assist::check_output(shell, &command, &crate::ai_assist::AnsweredAspects::none()) {
         crate::ai_assist::OutputVerdict::Allow => None,
         crate::ai_assist::OutputVerdict::Refuse { reason } => Some(reason),
-        crate::ai_assist::OutputVerdict::Clarify { message } => Some(message),
+        crate::ai_assist::OutputVerdict::Clarify { message, .. } => Some(message),
     };
     Ok(BoundCommand {
         ref_id: ref_id.to_string(),

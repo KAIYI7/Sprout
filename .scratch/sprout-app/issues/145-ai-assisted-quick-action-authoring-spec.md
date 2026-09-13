@@ -130,7 +130,9 @@ The reviewed guidance supports least privilege, narrow tools, and application-en
 | [151](151-ai-managed-lightweight-local-setup.md) | Explicit verified lightweight install → managed on-demand generation | 148 |
 | [152](152-ai-stronger-model-choice-and-release-recommendations.md) | Stronger tier and release-driven recommendation/selection behavior | 151 |
 | [153](153-ai-diagnosis-and-reviewed-action-revisions.md) | Selected errors → proposed revision → accepted replacement | 148 |
-| [154](154-ai-disconnect-cleanup-and-recovery.md) | Revoke/disconnect/remove owned AI resources without losing actions | 150, 151, 153 |
+| [154](154-ai-disconnect-cleanup-and-recovery.md) | ~~Revoke/disconnect/remove owned AI resources without losing actions~~ Superseded 2026-09-13 by 186 + 187 (frozen audit trail) | 150, 151, 153 |
+| [186](186-ai-managed-local-cleanup.md) | Managed/local disable, disconnect, removal + recovery without losing actions | 151 |
+| [187](187-ai-cloud-disconnect-cleanup.md) | Cloud credential/consent removal + cloud disconnect without losing actions | 150, 186 |
 | [155](155-ai-authoring-round-verification.md) | Cross-mode, adversarial, packaged-resource and compatibility audit | 149, 150, 152, 153, 154 |
 
 146 is a bounded qualification task with a reviewable report; 147 is an independently demoable compatibility prerequisite. The implementation tickets are complete user-facing slices rather than separate backend/UI layers. Dependencies represent behavior requirements, not merely shared-file edits; coordinate any future concurrent work under the repository's parallel-ticket rules.

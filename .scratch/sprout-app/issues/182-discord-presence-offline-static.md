@@ -4,7 +4,7 @@
 
 **Blocked by:** None — can start immediately. Requests the Discord Application ID from the user (see ACs).
 
-**Status:** agent-done — awaiting user verification (Discord running → presence visible)
+**Status:** done — user-verified live 2026-09-12 (Discord running → presence visible)
 
 **Parent:** [181 — Discord + AI two-view + clarify (spec)](181-discord-presence-ai-two-view-clarify-spec.md). New decision [ADR-0033](../../../docs/adr/0033-discord-rich-presence-offline-static.md).
 
@@ -33,7 +33,62 @@
 - New module `src-tauri/src/presence.rs` (sole Discord IPC owner): `APPLICATION_ID` / `DETAILS` / `STATE` constants, `static_activity()`, `start()` (background connect→set + 30 s heartbeat + capped 1/2/5/10 s backoff, silent `eprintln`-only failures), `shutdown()` (stop flag + synchronous clear for real exit). Internal `Ipc` seam with real + fake adapters.
 - Wiring: `mod presence` in `lib.rs`; `presence::start()` in setup (never blocks); `presence::shutdown()` in `RunEvent::Exit` only.
 - Verification: `cargo check` clean (0 warnings), `cargo test` 612 passed / 0 failed (10 new presence tests), ownership gate pass. Frontend untouched. Handoff scope (prompts/skills/ai_assist parsing/fixtures) untouched — pinned qualification evidence unaffected.
+- Live user verification 2026-09-12: Discord running → presence visible with the static details/state; ticket closed on that confirmation.
 
 ## Verification
 
 - Deterministic fake-IPC tests for set/clear/reconnect/silent-fail + payload-exactness + zero-token assertions; relevant existing backend checks/tests; frontend check/build unaffected (or run if touched); ownership gate before sync.
+
+## Follow-up — 2026-09-13 (continuous total elapsed clock, text updates independently)
+
+Process note: appended here per owner rule — amend the existing presence
+ticket instead of opening a new one unless completely irrelevant.
+
+**Change:** Discord Rich Presence shows a continuous total elapsed time: a
+single `started at` timestamp set once when the app launches/connects, never
+reset. `details`/`state` text updates independently as the user's activity
+changes within the app — every `set_activity()` call reuses the same original
+start timestamp so the elapsed clock keeps counting instead of resetting to
+`0:00` when the activity message changes.
+
+**Requires before implementation:** dated `## Amendment` to
+[ADR-0033](../../../docs/adr/0033-discord-rich-presence-offline-static.md) —
+v1 explicitly promises no `timestamps` and no dynamic per-screen text
+(`static_payload_sets_no_optional_sections` locks it). Dynamic text also needs
+its disclosure review: which activities map to which fixed strings, and proof
+no preset/action names, paths, counts, or run states leak.
+
+## ACs (follow-up — done 2026-09-13)
+
+- [x] Start timestamp is captured once at launch/first-connect and reused on
+  every `set_activity()` (including heartbeat re-asserts and reconnects) —
+  changing `details`/`state` never resets the elapsed clock.
+- [x] Elapsed clock survives Discord restarts/reconnects within the same app
+  run (pipe drop → retry → re-set keeps the original start, not `now()`).
+- [x] Fake-IPC regression test: two consecutive sets with different
+  `details`/`state` carry the identical start timestamp.
+- [x] ADR-0033 amendment + spec-181 reconciliation ship in the same unit of
+  work (no silent overwrite of the static-only promise).
+
+## Results (follow-up 2026-09-13)
+
+- `src-tauri/src/presence.rs` (still the sole Discord IPC owner): session
+  clock (`SESSION_START_MS`, captured in `start()` at launch), current section
+  text (`CURRENT`, validated non-blank / 128 chars max), `activity_for()` pure
+  in the start, `set_status()` stores + pushes one immediate set (Discord
+  absent stays a silent no-op), loop snapshots text per set against the pinned
+  start. Old static-only helpers removed; old loud `timestamps` refusal
+  replaced by a start-presence + still-no-assets/buttons/party/secrets shape
+  test.
+- Wiring: `set_presence_status` Tauri command (registered in `lib.rs`
+  `invoke_handler`); `src/lib/api.ts` wrapper; `src/routes/+layout.svelte`
+  reports the main-window section from a fixed route map (default
+  `"Composing presets"`), one fire per section, failures silent. No user
+  content crosses — fixed vocabulary only.
+- Decision: dated `## Amendment — 2026-09-13` in ADR-0033 (original + 2026-09-12
+  amendment untouched).
+- Verification: `cargo check` 0 warnings, `cargo test` 617 passed / 0 failed
+  (13 presence tests, incl. `consecutive_sets_reuse_the_original_start_when_text_changes`
+  and reconnect-keeps-start), `npm.cmd run check` 0 errors (2 pre-existing
+  warnings in untouched `QuickActionFormDialog.svelte`), ownership gate pass.
+  Live Discord-visible elapsed clock left to the user.

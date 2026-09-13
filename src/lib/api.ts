@@ -2,6 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import type {
   ActiveRunInfo,
   AiCheckVerdict,
+  AiDiagnoseOutcome,
   AiDraftOutcome,
   BackupCounts,
   BackupImportSummary,
@@ -190,6 +191,11 @@ export function updateSettings(settings: Settings): Promise<void> {
 /** Persists the theme on its own — it applies the moment it is picked. */
 export function updateTheme(theme: string): Promise<void> {
   return invoke<void>("update_theme", { theme });
+}
+
+/** Persists the motion switch on its own — it applies the moment it is picked. */
+export function updateAnimation(animation: string): Promise<void> {
+  return invoke<void>("update_animation", { animation });
 }
 
 /** Persists the auto-start preference and reconciles the Windows Run-key
@@ -435,6 +441,47 @@ export function aiCancelManagedInstall(): Promise<boolean> {
   return invoke<boolean>("ai_cancel_managed_install");
 }
 
+/** The in-memory single-flight flag behind ticket 193's reload honesty:
+ *  installing here but idle there means the attempt died with the last page. */
+export function aiManagedInstallActive(): Promise<boolean> {
+  return invoke<boolean>("ai_managed_install_active");
+}
+
+/** The cheap running indicator behind ticket 189's status line: process
+ *  liveness plus the serving model and its uptime. Polled only while
+ *  Settings is open; zero cost when closed. */
+export function aiManagedRuntimeStatus(): Promise<import("./types").ManagedRunState> {
+  return invoke<import("./types").ManagedRunState>("ai_managed_runtime_status");
+}
+
+/** Tooltip-grade live numbers behind ticket 190's lazy Details disclosure:
+ *  working set plus CPU % plus uptime. Called only while the disclosure is
+ *  open and running (~2s); closed costs nothing. */
+export function aiManagedResourceUsage(): Promise<import("./types").ManagedResourceUsage> {
+  return invoke<import("./types").ManagedResourceUsage>("ai_managed_resource_usage");
+}
+
+/** Pre-warms the owned runtime for one installed model (ticket 189's Start):
+ *  the Generate health path with the request released at once. Never touches
+ *  provider selection. */
+export function aiStartManagedRuntime(modelId: string): Promise<string> {
+  return invoke<string>("ai_start_managed_runtime", { modelId });
+}
+
+/** Stops the owned runtime and releases its model memory without deleting
+ *  downloads (ticket 189's Stop): keeps `provider=managed` + `ai_model`,
+ *  cancels owned requests. The next Generate lazily restarts. */
+export function aiStopManagedRuntime(): Promise<void> {
+  return invoke<void>("ai_stop_managed_runtime");
+}
+
+/** Removes one explicitly selected app-owned managed model installation:
+ *  stops the owned runtime serving it first, deletes only its directory,
+ *  and reports how many managed models remain. Saved Quick Actions stay. */
+export function aiRemoveManaged(modelId: string): Promise<import("./types").ManagedRemoveResult> {
+  return invoke<import("./types").ManagedRemoveResult>("ai_remove_managed", { modelId });
+}
+
 /** Tests an existing-local service without saving anything: classifies the
  *  endpoint and checks the named model against what the service exposes.
  *  Resolves to the exposed model names. */
@@ -449,6 +496,35 @@ export function aiCheckCandidate(
   command: string
 ): Promise<AiCheckVerdict> {
   return invoke<AiCheckVerdict>("ai_check_candidate", { shell, command });
+}
+
+/** Diagnoses a selected saved script plus its error output: an explanation,
+ *  a separately reviewed revision, a refusal, a clarification, or an
+ *  actionable failure. Diagnosis never executes, collects nothing
+ *  automatically, and persists nothing — accepting and saving stay explicit. */
+export function aiDiagnoseDraft(
+  actionId: number,
+  script: string,
+  error: string,
+  shell: QuickActionShell,
+  cwd: string | null,
+  requestId: string,
+): Promise<AiDiagnoseOutcome> {
+  return invoke<AiDiagnoseOutcome>("ai_diagnose_draft", {
+    actionId,
+    script,
+    error,
+    shell,
+    cwd,
+    requestId,
+  });
+}
+
+/** Rechecks a diagnosed revision against the current saved row before the
+ *  dialog saves it: resolves to a conflict message retaining both states,
+ *  or null when saving may proceed. */
+export function aiVerifyRevision(actionId: number, baseline: string): Promise<string | null> {
+  return invoke<string | null>("ai_verify_revision", { actionId, baseline });
 }
 
 /** Lists every Clip in order (ticket 78). */
@@ -771,6 +847,13 @@ export function openMainWindow(): Promise<void> {
 
 export function mainWindowReady(): Promise<void> {
   return invoke<void>("main_window_ready");
+}
+
+/** Reports the current section for Discord presence (ADR-0033): fixed text
+ * only, session clock untouched. Discord absent is a silent no-op — callers
+ * never surface its outcome. */
+export function setPresenceStatus(details: string, state: string): Promise<void> {
+  return invoke<void>("set_presence_status", { details, state });
 }
 
 export function openSprout(): Promise<void> {

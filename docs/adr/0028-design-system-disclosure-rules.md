@@ -1,6 +1,6 @@
 # One design system and disclosure rules govern every screen
 
-> Latest status: amended 2026-09-09 for selective field guidance, dock visibility discovery and filter/action scope; implementation pending in 167-169 under spec 166. See the final amendments; earlier text is preserved.
+> Latest status: amended 2026-09-13 for spec-181 round delivery (two-view dialog shipped in 183, clarify handoff in 183–184); selective guidance + dock visibility implementation still pending in 167–169 under spec 166. See the final amendments; earlier text is preserved.
 
 > Status: amended 2026-09-05 — original decision text preserved; see the executable-source audit amendment for current behavior and implementation gaps.
 
@@ -34,3 +34,17 @@ Field cleanup in 167 also covers AI authoring fields added since the first audit
 ## Amendment — 2026-09-12 (AI two-view dialog; spec 181, ticket 183)
 
 The AI-first inline hero stacked above the full manual form (research 0006 applied case, 0019) is superseded for the Quick Action Add/Edit dialog: one dialog with two exclusive views behind `AI draft | Manual` tabs top-right (0004 rule 4 tab hygiene; 0006 pattern 8 view-scoped on-surface). The tab strip is entirely absent when AI is not ready (0004 rule 2; 0006 pattern 11 content-gated activation). Add opens AI-first, Edit opens manual-first; flips are instant with both labels visible for scent (0008 rules 1–3). The AI view holds a single `Describe what to do` textarea plus Generate and outcome (0006 pattern 2 minimal-until-content; 0006 pattern 1 config-elsewhere); discovery/disclosure appear only when needed, restoring the two-level maximum (0004 rule 3). `Use this draft` applies shell plus command and auto-flips to Manual for full review with applied feedback (0004 rule 5; HAX G9 accordion-editing). Standing token/component, single-size-source, and 167 copy rules are unchanged. Implementation pending in 183; research 0006 and 0019 gain dated decision updates on delivery.
+
+## Amendment — 2026-09-13 (round delivery; spec 181, ticket 185)
+
+Delivered in 183 with the 183↔184 clarify handoff: the two-view dialog
+above ships as described — tab strip content-gated on `aiReady`, Add-AI /
+Edit-Manual defaults, instant flips preserving typed content, single hero,
+auto-flip-to-Manual review with `Applied — review and save` plus Command
+focus, recheck hatch with manual-save escape (ADR-0030 unchanged), clarify
+choices as radios reusing the find-pick row pattern with free-text slot plus
+Continue / Draft anyway / Dismiss. No new component, token, or dimension
+(tokens plus Dialog/Button/Notice/InfoTip/Select/TestResult only; single
+size source untouched); 167 copy rules reconciled with no removed hint
+re-added. Research 0006 and 0019 carry the dated decision updates. Original
+plus 2026-09-05/08/09/12 text untouched.

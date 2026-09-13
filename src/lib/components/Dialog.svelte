@@ -3,6 +3,7 @@
   import { fade } from "svelte/transition";
   import Icon from "./Icon.svelte";
   import { dialogSubmitAction } from "$lib/dialogSubmit";
+  import { animation } from "$lib/animation.svelte";
 
   let {
     open,
@@ -146,7 +147,7 @@
     onkeydown={onKeydown}
     onpointerdown={onPointerDown}
     onclick={onBackdrop}
-    transition:fade={{ duration: 140 }}
+    transition:fade={animation.mode === "on" ? { duration: 140 } : { duration: 0 }}
   >
     <header class="dialog__head">
       <h2 id={titleId} class="dialog__title">{title}</h2>

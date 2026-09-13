@@ -94,7 +94,7 @@ function Get-SproutWindows([int]$ProcessId) {
     return @($windows)
 }
 
-if (Get-Process sprout -ErrorAction SilentlyContinue) {
+if (Get-Process sprout-windows-desktop -ErrorAction SilentlyContinue) {
     throw "Close every existing Sprout process before running this repro."
 }
 try {
@@ -109,7 +109,7 @@ if (-not (Test-Path -LiteralPath (Join-Path $AppDataRoot "Sprout\sprout.db"))) {
 
 $env:LOCALAPPDATA = [IO.Path]::GetFullPath($AppDataRoot)
 $env:WEBVIEW2_USER_DATA_FOLDER = [IO.Path]::GetFullPath($WebViewRoot)
-$executable = "C:\Sprout\src-tauri\target\debug\sprout.exe"
+$executable = "C:\Sprout\src-tauri\target\debug\sprout-windows-desktop.exe"
 $launched = [Collections.Generic.List[int]]::new()
 $exitCode = 2
 

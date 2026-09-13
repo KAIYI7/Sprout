@@ -62,6 +62,7 @@
   import { createGroupCollapse } from "$lib/groupCollapse.svelte";
   import type { QuickLaunchDockState } from "$lib/types";
   import { restoreTheme, type ThemeMode } from "$lib/theme.svelte";
+  import { restoreAnimation, type AnimationMode } from "$lib/animation.svelte";
   import { titleBarDragRegion } from "$lib/quickLaunchTitleBar";
   import {
     companionWebviewBounds,
@@ -1552,6 +1553,9 @@
       if (mode === "system" || mode === "light" || mode === "dark") {
         restoreTheme(mode);
       }
+      // The same read carries the motion switch — the docked and floating
+      // lists honor it through the same tokens as the main window.
+      restoreAnimation((settings.animation === "off" ? "off" : "on") as AnimationMode);
       launchGroups = lgs;
       actionGroups = ags;
       clipGroups = cgs;

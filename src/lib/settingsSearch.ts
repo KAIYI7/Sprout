@@ -17,7 +17,7 @@ export const SETTINGS_GROUPS: { key: SettingsGroupKey; label: string }[] = [
 
 /// Knob ids per group, backing the section count badges and the resolver.
 export const SETTINGS_GROUP_KNOBS: Record<SettingsGroupKey, string[]> = {
-  general: ["theme", "install-dir", "autostart", "default-timeout", "log-retention", "launch-concurrency"],
+  general: ["theme", "animation", "install-dir", "autostart", "default-timeout", "log-retention", "launch-concurrency"],
   dock: ["dock-state", "dock-mode", "dock-edge", "dock-width", "dock-density", "per-monitor", "reveal-dwell", "reveal-sensitivity"],
   companion: ["companion-active", "companion-height", "companion-sites"],
   backup: ["backup", "updates"],
@@ -41,6 +41,8 @@ export interface SettingsSearchEntry {
 export interface SettingsSearchSnapshot {
   themeMode: string;
   themeLabel: string;
+  animation: string;
+  animationLabel: string;
   installDir: string;
   autostart: string;
   timeoutMinutes: number;
@@ -75,7 +77,7 @@ export function buildSettingsSearchIndex(snap: SettingsSearchSnapshot): Settings
       label: "General",
       synonyms: ["settings", "defaults"],
       values: [],
-      description: "Theme, install directory, auto-start, and run defaults.",
+      description: "Theme, animation, install directory, auto-start, and run defaults.",
     },
     {
       group: "general",
@@ -84,6 +86,14 @@ export function buildSettingsSearchIndex(snap: SettingsSearchSnapshot): Settings
       synonyms: ["appearance", "look", "mode", "system", "light", "dark"],
       values: [snap.themeMode, snap.themeLabel],
       description: "Follows Windows or pins the app light or dark. Applies immediately.",
+    },
+    {
+      group: "general",
+      id: "animation",
+      label: "Animation",
+      synonyms: ["motion", "movement", "transitions", "effects", "fade", "pulses", "still"],
+      values: [snap.animation, snap.animationLabel],
+      description: "Plays every menu, dialog, and pulse transition, or renders each end state at once. Applies immediately.",
     },
     {
       group: "general",

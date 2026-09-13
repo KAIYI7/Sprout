@@ -261,6 +261,9 @@ export interface Settings {
   log_retention_days: number;
   /** "system" | "light" | "dark" — the app-wide theme (ticket 31). */
   theme: string;
+  /** "on" | "off" — the app-wide motion switch: off renders every menu,
+   * dialog, and pulse end state at once, regardless of the OS setting. */
+  animation: string;
   /** Machine-local default install directory (ticket 34, ADR-0009): "" means
    * winget's own default; otherwise an absolute Windows path like D:\Apps.
    * Never exported with presets. */
@@ -773,6 +776,11 @@ export interface ManagedModelStatus {
   minimum_runtime_version: string | null;
   installable: boolean;
   installed: boolean;
+  /** Absolute on-disk folder for this model's weights, runtime copy and
+   *  manifest when installed (`None`/`null` otherwise). Display-only: the
+   *  user can open it in Explorer and — with the server stopped — delete it
+   *  by hand; Sprout then reads the model as not installed. */
+  installed_dir?: string | null;
 }
 
 export interface ManagedCatalogStatus {
@@ -788,13 +796,86 @@ export interface ManagedInstallResult {
   message: string;
 }
 
+export interface ManagedRemoveResult {
+  model_id: string;
+  removed: boolean;
+  remaining_installed: number;
+  message: string;
+}
+
+/** One install-progress event (ticket 193): the backend worker's per-phase
+ *  byte counts, mirrored into the app-level store so progress survives tab
+ *  switches. Keep in step with `ManagedInstallProgress` in
+ *  `src-tauri/src/ai_managed.rs` and `MANAGED_INSTALL_PROGRESS_EVENT`. */
+export type ManagedInstallPhase = "runtime" | "model";
+
+export interface ManagedInstallProgress {
+  model_id: string;
+  phase: ManagedInstallPhase;
+  /** The backend's current step (`downloading`, `verifying-runtime`,
+   *  `verifying-model`, `extracting`, `activating`); absent on events from
+   *  an older backend, which the store reads as `downloading`. */
+  stage?: string;
+  downloaded_bytes: number;
+  total_bytes: number;
+}
+
+/** The cheap running indicator behind ticket 189's status line: process
+ *  liveness plus the serving model and its uptime — never config readiness. */
+export interface ManagedRunState {
+  running: boolean;
+  active_model_id: string | null;
+  uptime_secs: number | null;
+}
+
+/** Tooltip-grade live numbers behind ticket 190's lazy Details disclosure:
+ *  working set plus CPU % plus uptime for the owned runtime. The frontend
+ *  polls this only while the disclosure is open and running; closed costs
+ *  nothing. The first sample after start carries working set and uptime with
+ *  no percent yet; stopped carries none of the three. */
+export interface ManagedResourceUsage {
+  running: boolean;
+  active_model_id: string | null;
+  uptime_secs: number | null;
+  working_set_bytes: number | null;
+  cpu_percent: number | null;
+}
+
 /** One generation request's outcome: a candidate, a refusal, a
  *  clarification, or an actionable failure. Refused, clarified, and failed
- *  outcomes carry no executable text. */
+ *  outcomes carry no executable text. A clarification carries its grill-aspect
+ *  key when the question is answerable once (ADR-0032); absent for
+ *  shell-compatibility holds, which always re-fire. */
 export type AiDraftOutcome =
   | { kind: "draft"; draft: AiDraft }
   | { kind: "refused"; message: string }
-  | { kind: "clarify"; message: string }
+  | { kind: "clarify"; message: string; choices?: string[]; aspect?: string | null }
+  | { kind: "failed"; message: string };
+
+/** One proposed Quick Action revision from diagnosis (ADR-0030): reviewable
+ *  data, never an executed thing. `executed` is always false. Only the
+ *  reviewed fields (shell, command, working directory, note) may change on
+ *  acceptance — Group/order, stoppable settings, and auto-run survive. */
+export interface AiRevision {
+  shell: QuickActionShell;
+  command: string;
+  cwd: string | null;
+  note: string | null;
+  explanation: string;
+  assumptions: string[];
+  affected_targets: string[];
+  executed: boolean;
+}
+
+/** One diagnosis request's outcome: a separate revision with its saved
+ *  baseline, an explanation without a revision, a refusal, a clarification,
+ *  or an actionable failure. Refused, clarified, and failed outcomes carry
+ *  no executable text. */
+export type AiDiagnoseOutcome =
+  | { kind: "revision"; explanation: string; revision: AiRevision; baseline: string }
+  | { kind: "explanation"; explanation: string }
+  | { kind: "refused"; message: string }
+  | { kind: "clarify"; message: string; choices?: string[]; aspect?: string | null }
   | { kind: "failed"; message: string };
 
 /** Rechecking a candidate accepted through AI assistance: the same output

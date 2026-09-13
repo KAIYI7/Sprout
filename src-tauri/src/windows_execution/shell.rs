@@ -61,9 +61,9 @@ mod tests {
 
     #[test]
     fn worker_relaunch_keeps_elevation_hidden_window_and_error_translation() {
-        assert!(elevate_with(Path::new(r"C:\My Apps\Sprout.exe"), &["--worker", "--run", "run-id"], |call| {
+        assert!(elevate_with(Path::new(r"C:\My Apps\sprout-windows-desktop.exe"), &["--worker", "--run", "run-id"], |call| {
             assert_eq!(text(&call.operation), "runas");
-            assert_eq!(text(&call.target), r"C:\My Apps\Sprout.exe");
+            assert_eq!(text(&call.target), r"C:\My Apps\sprout-windows-desktop.exe");
             assert_eq!(text(call.parameters.as_ref().unwrap()), "--worker --run run-id");
             assert_eq!(call.show, SW_HIDE);
             33

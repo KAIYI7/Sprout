@@ -1,6 +1,6 @@
 # Offline static Discord Rich Presence via handwired IPC (no accounts)
 
-> Status: accepted 2026-09-12 — decision; implementation pending in ticket 182 under spec 181.
+> Status: amended 2026-09-13 — delivered in ticket 182 under spec 181 (static presence + session clock + fixed section text; see dated amendments). Original decision text preserved.
 
 Sprout shows a static offline Rich Presence activity while it runs by handwiring the `discord-rich-presence` crate directly over Discord's local IPC. No Tauri wrapper plugin, no OAuth, no account access, no user-information read. This keeps the fully-offline posture (AI cloud mode excepted) while giving Discord users a lightweight "Playing …" status.
 
@@ -36,3 +36,57 @@ pipeline, so no new brand geometry exists to drift. The v1 payload promise
 is unchanged — static text only, still no OAuth, tokens, user-ID reads,
 Join buttons, or dynamic per-screen text; images carry the fixed mark, no
 user content.
+
+## Amendment — 2026-09-13
+
+Continuous session clock plus fixed section text, at the user's explicit
+direction. The v1 static-only promise above is superseded in two narrow ways;
+everything else (local IPC only, no OAuth, tokens, user-ID reads, Join
+buttons, assets, party, secrets) still holds:
+
+- One `timestamps.start` per process: captured at app launch
+(`presence::start` reads the session clock before spawning the loop) and
+reused on every `set_activity` — heartbeat re-asserts, section changes, and
+reconnects — so the elapsed timer measures the whole run and never resets to
+`0:00` when the message changes. A late Discord connect still shows total
+elapsed since launch.
+- `details` stays `"Using Sprout"`; `state` follows the main-window section
+through a fixed allowlist (route map owned by the layout, default
+`"Composing presets"`). Section changes store validated text (non-blank, 128
+chars max) and push one immediate set on top of the heartbeat pickup. Still no
+user-derived content — no preset/action names, paths, counts, or run states —
+so the no-user-info posture is unchanged, only the fixed vocabulary grew.
+
+## Amendment — 2026-09-13 (round delivery; spec 181, ticket 185)
+
+Delivered in 182 with the 2026-09-13 follow-up: new single-owner module
+`src-tauri/src/presence.rs` (sole Discord IPC site per ADR-0029) plus
+setup/exit wiring and `discord-rich-presence` v1.1.0 dependency —
+`APPLICATION_ID` hardcoded (`1548219927264235580`, user-supplied, not
+Settings-editable/backed-up/exported), static `details`/`state` plus session
+`timestamps.start` captured once at launch and reused on every set
+(heartbeat re-asserts, section changes, reconnects), `set_presence_status`
+command with fixed-vocabulary route map, background connect→set loop with
+capped backoff, silent no-op when Discord is closed, `clear/close` on actual
+exit only (close-to-tray untouched), single-flight start guard. Proof of no
+account access asserted at the seam (fake-IPC payload-exactness +
+zero-token tests). Size budget holds (only new crate is the IPC client; all
+transitive deps already in-tree — exe delta is the crate itself, negligible;
+no release binary built in this unit). User-verified live 2026-09-12
+(Discord running → presence visible). Original plus 2026-09-12/13 text
+untouched.
+
+## Amendment — 2026-09-13 (brand assets in payload)
+
+The 2026-09-12 file allowance becomes a payload attachment, at the user's
+explicit direction: every set now carries static `assets`
+(`large_image: "rp_large"` with hover `"Sprout"`, `small_image: "rp_small"`
+with hover `"Ready"`), resolving to the portal-uploaded art for app
+`1548219927264235580` (manual Rich Presence → Art Assets upload with keys
+`rp_large`/`rp_small`, saved before landing — code cannot substitute for it).
+Both hover strings are fixed literals, far under the 128-char cap, carrying
+no user data; `buttons`/`party`/`secrets`/urls/`activity_type` stay absent,
+and silent-absent plus exit-clear behavior is unchanged. Dynamic or
+per-section hover text is explicitly still banned: the vocabulary stays two
+static strings, so the no-user-info posture is unchanged — only the fixed
+payload grew.

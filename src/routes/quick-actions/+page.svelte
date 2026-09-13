@@ -1,8 +1,10 @@
 <script lang="ts">
   import { onMount } from "svelte";
+  import { goto } from "$app/navigation";
   import type { Group, QuickAction } from "$lib/types";
   import type { PreCheckReport, PreFixResult } from "$lib/types";
   import {
+    aiManagedRuntimeStatus,
     aiManagedStatus,
     deleteQuickAction,
     exportQuickAction,
@@ -56,6 +58,7 @@
   import SearchInput from "$lib/components/SearchInput.svelte";
   import { hasNote } from "$lib/noteFormat";
   import { actionExportTarget } from "$lib/quickActionExport";
+  import { goAiSetup } from "$lib/aiSetupPointer";
 
   let quickActions = $state<QuickAction[]>([]);
   let loading = $state(true);
@@ -97,6 +100,11 @@
   // assistance off until deliberately configured). Fail-closed — loading or
   // failed settings read as not ready, so the dialog renders zero AI chrome.
   let aiReady = $state(false);
+  // Ticket 192: which unready pointer the dialog shows (`managed` names the
+  // stopped managed route, `generic` offers setup), and whether a ready
+  // managed route is currently stopped (the tab stays with a restart hint).
+  let aiSetupKind = $state<"managed" | "generic">("generic");
+  let aiRuntimeStopped = $state(false);
 
   // Groups (tickets 89/90): the page-features gear menu is the feature's
   // only switch (research 0008 — ticket 88's bare toolbar checkbox was
@@ -161,11 +169,25 @@
       const s = await getSettings();
       groups.setEnabledFromSettings(s.action_groups === "on");
       aiReady = s.ai_provider === "existing-local" && s.ai_model.trim() !== "";
+      // Ticket 192: the managed route names its own pointer; every other
+      // unready route offers generic setup.
+      aiSetupKind = s.ai_provider === "managed" ? "managed" : "generic";
+      aiRuntimeStopped = false;
       if (s.ai_provider === "managed" && s.ai_model.trim() !== "") {
         const catalog = await aiManagedStatus();
         aiReady = catalog.models.some(
           (model) => model.id === s.ai_model.trim() && model.installed,
         );
+        // Stopped-with-config still offers the AI tab: one cheap liveness
+        // read decides between the restart hint and silence — the enable
+        // line never shows while ready.
+        if (aiReady) {
+          try {
+            aiRuntimeStopped = !(await aiManagedRuntimeStatus()).running;
+          } catch {
+            aiRuntimeStopped = false;
+          }
+        }
       }
     } catch (e) {
       console.error(e);
@@ -287,6 +309,15 @@
     details = null;
     formAction = action;
     formOpen = true;
+  }
+
+  // Ticket 192: one plain-text pointer from the unready dialog to Settings.
+  // The dialog closes first so navigation lands clean; the shared handoff
+  // flags the AI group + provider focus and takes the plain route — no
+  // per-group route, no smooth-scroll library, no pulse.
+  async function goSetupAi() {
+    formOpen = false;
+    await goAiSetup({ goto, session: sessionStorage, local: localStorage });
   }
 
   function openDetails(action: QuickAction) {
@@ -875,6 +906,9 @@
   groups={groups.groups}
   groupsEnabled={groups.enabled}
   aiReady={aiReady}
+  aiSetupKind={aiSetupKind}
+  aiRuntimeStopped={aiRuntimeStopped}
+  onsetupai={() => void goSetupAi()}
   onsave={async (message) => {
     formOpen = false;
     flash(message);

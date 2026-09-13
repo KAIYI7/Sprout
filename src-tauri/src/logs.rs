@@ -619,6 +619,7 @@ mod tests {
                 default_timeout_minutes: 10,
                 log_retention_days: 90,
                 theme: "system".to_string(),
+                animation: settings::DEFAULT_ANIMATION.to_string(),
                 install_dir: String::new(),
                 launch_concurrency: 8,
                 dock_mode: settings::DEFAULT_DOCK_MODE.to_string(),

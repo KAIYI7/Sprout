@@ -3631,8 +3631,8 @@ dependencies = [
 ]
 
 [[package]]
-name = "sprout"
-version = "0.9.3"
+name = "sprout-windows-desktop"
+version = "1.0.0"
 dependencies = [
  "base64 0.22.1",
  "dirs 6.0.0",

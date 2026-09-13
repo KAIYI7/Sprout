@@ -332,3 +332,18 @@ h3 {
     transition-duration: 0.01ms !important;
   }
 }
+
+/* The Animation switch's off position (data-animation="off" on <html>,
+   applied by the animation store): the same reduce path as the OS setting,
+   forced regardless of it. Either one being off renders every end state at
+   once; both on plays the tokens above. The zeroed delay additionally
+   collapses staggered entrances (packet cards) that a bare duration cut
+   would leave queued. */
+html[data-animation="off"] *,
+html[data-animation="off"] *::before,
+html[data-animation="off"] *::after {
+  animation-duration: 0.01ms !important;
+  animation-iteration-count: 1 !important;
+  animation-delay: 0ms !important;
+  transition-duration: 0.01ms !important;
+}

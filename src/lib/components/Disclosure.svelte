@@ -6,8 +6,8 @@
    *  with a label (e.g. the product form's Advanced section). The filled
    *  triangle points right when closed and rotates 90° to point down when
    *  open — the <details>/Notion tree convention — via a transform-only
-   *  transition; the global prefers-reduced-motion rule collapses it to
-   *  nothing. */
+   *  transition; the global reduced-motion rule and the Animation off hook
+   *  collapse it to nothing. */
   let {
     open,
     controls,

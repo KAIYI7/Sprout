@@ -15,6 +15,8 @@ const SETTINGS_SOURCE = readFileSync(
 const SNAPSHOT: SettingsSearchSnapshot = {
   themeMode: "system",
   themeLabel: "System",
+  animation: "on",
+  animationLabel: "On",
   installDir: "",
   autostart: "on",
   timeoutMinutes: 10,
@@ -46,6 +48,15 @@ describe("settings search index", () => {
   it("surfaces the theme knob for theme, light, and dark alike", () => {
     for (const query of ["theme", "light", "dark"]) {
       expect(matchedIds(query)).toContain("theme");
+    }
+  });
+
+  it("surfaces the animation knob for motion words without stealing theme queries", () => {
+    for (const query of ["animation", "motion", "transitions"]) {
+      expect(matchedIds(query)).toContain("animation");
+    }
+    for (const query of ["theme", "light", "dark"]) {
+      expect(matchedIds(query)).not.toContain("animation");
     }
   });
 

@@ -36,6 +36,111 @@ use crate::quick_actions::QuickActionShell;
 /// skill file ever fails to load (ADR-0030).
 pub const REFUSAL_BOUNDARY: &str = "Destructive commands are outside AI assistance. You can write and manage those commands in the manual editor.";
 
+/// Tag the dialog appends when the user answers a clarification with a pick
+/// or free text. Aspect-keyed tags (`clarified choice [unknown-folder]: …`)
+/// stand down only their own question; the bare tag keeps its old promise and
+/// stands down every vague detector. Refusal still wins, and typing a tag by
+/// hand only affects the typer's own draft flow (ADR-0032, ADR-0030).
+pub const CLARIFIED_CHOICE_MARKER: &str = "clarified choice:";
+
+/// Tag the dialog appends when the user ends the grill early with "draft
+/// anyway": vagueness is overridden by explicit user intent, so the detectors
+/// stand down and the draft is attempted — refusal and shell-compatibility
+/// still guard the output, so the override never authorizes unsafe text
+/// (ADR-0032, ADR-0030).
+pub const DRAFT_ANYWAY_MARKER: &str = "draft-anyway:";
+
+/// One grill aspect: a single frontier question the vague detectors may ask.
+/// Each aspect fires at most once per generation thread — an answered question
+/// is honored, never repeated — so the exchange terminates without a round
+/// cap: drafting proceeds when no unanswered aspect fires, or when the user
+/// ends the grill early (ADR-0032).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ClarifyAspect {
+    UnknownFolder,
+    AmbiguousApp,
+    UnknownPrerequisite,
+    ScopeUncertain,
+    BypassUncertain,
+}
+
+impl ClarifyAspect {
+    /// WHY slugs: the key crosses the Tauri seam as text and back inside the
+    /// chained request, so both sides share fixed strings, never enum order.
+    pub fn slug(&self) -> &'static str {
+        match self {
+            ClarifyAspect::UnknownFolder => "unknown-folder",
+            ClarifyAspect::AmbiguousApp => "ambiguous-app",
+            ClarifyAspect::UnknownPrerequisite => "unknown-prerequisite",
+            ClarifyAspect::ScopeUncertain => "scope-uncertain",
+            ClarifyAspect::BypassUncertain => "bypass-uncertain",
+        }
+    }
+
+    fn from_slug(slug: &str) -> Option<Self> {
+        match slug {
+            "unknown-folder" => Some(ClarifyAspect::UnknownFolder),
+            "ambiguous-app" => Some(ClarifyAspect::AmbiguousApp),
+            "unknown-prerequisite" => Some(ClarifyAspect::UnknownPrerequisite),
+            "scope-uncertain" => Some(ClarifyAspect::ScopeUncertain),
+            "bypass-uncertain" => Some(ClarifyAspect::BypassUncertain),
+            _ => None,
+        }
+    }
+}
+
+/// The answered aspects parsed from one flattened request: aspect-keyed tags
+/// plus the two blanket markers. Stateless by construction — the chain rides
+/// in the request text, so no session map can leak answers across drafts
+/// (ADR-0031).
+#[derive(Debug, Default)]
+pub struct AnsweredAspects {
+    all: bool,
+    aspects: Vec<ClarifyAspect>,
+}
+
+impl AnsweredAspects {
+    pub fn none() -> Self {
+        Self::default()
+    }
+
+    pub fn parse(flat: &str) -> Self {
+        if flat.contains(DRAFT_ANYWAY_MARKER) {
+            return Self {
+                all: true,
+                aspects: Vec::new(),
+            };
+        }
+        let mut aspects = Vec::new();
+        let mut rest = flat;
+        while let Some(start) = rest.find("clarified choice [") {
+            let after = &rest[start + "clarified choice [".len()..];
+            match after.find("]:") {
+                Some(end) => {
+                    if let Some(aspect) = ClarifyAspect::from_slug(after[..end].trim()) {
+                        if !aspects.contains(&aspect) {
+                            aspects.push(aspect);
+                        }
+                    }
+                    rest = &after[end + 2..];
+                }
+                None => break,
+            }
+        }
+        // WHY the legacy arm: the bare tag predates aspect keys and stood down
+        // every vague detector — honoring it preserves that promise.
+        let legacy = flat.contains(CLARIFIED_CHOICE_MARKER);
+        Self {
+            all: legacy,
+            aspects,
+        }
+    }
+
+    pub fn stands_down(&self, aspect: ClarifyAspect) -> bool {
+        self.all || self.aspects.contains(&aspect)
+    }
+}
+
 /// Bounds are implementation defaults with boundary tests, not measured user
 /// commitments — qualification recorded no latency or budget evidence, so
 /// these stay conservative and documented here.
@@ -51,6 +156,10 @@ pub const MODELS_TIMEOUT: Duration = Duration::from_secs(15);
 /// (ADR-0032).
 const SHARED_RULES: &str = include_str!("../resources/ai-skills/shared-rules.md");
 const CREATE_SKILL: &str = include_str!("../resources/ai-skills/create-quick-action.md");
+/// WHY a second task skill instead of reusing creation (ADR-0032): diagnosis
+/// reads a selected saved script plus its error and proposes a separate
+/// revision — different inputs, different output contract, same shared rules.
+const DIAGNOSE_SKILL: &str = include_str!("../resources/ai-skills/diagnose-quick-action.md");
 
 /// The provider route for one request. One route per request, never a silent
 /// fallback to another (ADR-0031).
@@ -196,16 +305,24 @@ fn is_loopback_host(host: &str) -> bool {
     false
 }
 
-/// The pinned skill pair loaded on every generation request. Fail-closed:
+/// The pinned skill set loaded on every generation request. Fail-closed:
 /// an empty or boundary-less bundle refuses generation rather than running
 /// ungoverned (ADR-0032).
 pub struct SkillPair {
     pub shared: String,
     pub create: String,
+    /// WHY loaded with the pair: diagnosis must face the same shared rules
+    /// plus its own task skill on each request — merely naming the skill
+    /// never loads it (ADR-0032).
+    pub diagnose: String,
 }
 
 pub fn load_skills() -> Result<SkillPair, String> {
-    for (name, text) in [("shared rules", SHARED_RULES), ("Create Quick Action", CREATE_SKILL)] {
+    for (name, text) in [
+        ("shared rules", SHARED_RULES),
+        ("Create Quick Action", CREATE_SKILL),
+        ("Diagnose Quick Action", DIAGNOSE_SKILL),
+    ] {
         if text.trim().is_empty() {
             return Err(format!("The bundled {name} skill is missing — reinstall Sprout."));
         }
@@ -213,9 +330,13 @@ pub fn load_skills() -> Result<SkillPair, String> {
     if !SHARED_RULES.contains("Destructive commands are outside AI assistance") {
         return Err("The bundled skills failed their integrity check — reinstall Sprout.".into());
     }
+    if !DIAGNOSE_SKILL.contains("Never") || !DIAGNOSE_SKILL.contains("revision") {
+        return Err("The bundled skills failed their integrity check — reinstall Sprout.".into());
+    }
     Ok(SkillPair {
         shared: SHARED_RULES.to_string(),
         create: CREATE_SKILL.to_string(),
+        diagnose: DIAGNOSE_SKILL.to_string(),
     })
 }
 
@@ -224,7 +345,13 @@ pub fn load_skills() -> Result<SkillPair, String> {
 pub enum RequestVerdict {
     Allow,
     Refuse { reason: String },
-    Clarify { reason: String },
+    Clarify {
+        /// WHY optional: vagueness carries its aspect key for one-shot
+        /// stand-down; shell-compatibility carries none and always re-fires.
+        aspect: Option<ClarifyAspect>,
+        reason: String,
+        choices: Vec<String>,
+    },
 }
 
 /// What the output checks decided before a candidate became usable.
@@ -232,7 +359,13 @@ pub enum RequestVerdict {
 pub enum OutputVerdict {
     Allow,
     Refuse { reason: String },
-    Clarify { message: String },
+    Clarify {
+        /// WHY optional: same contract as the request verdict — aspect-keyed
+        /// vagueness stands down once answered, shell-compatibility never does.
+        aspect: Option<ClarifyAspect>,
+        message: String,
+        choices: Vec<String>,
+    },
 }
 
 /// Splits text into comparable tokens: lowercase alphanumerics plus `-`,
@@ -378,62 +511,162 @@ fn drive_context(flat: &str, toks: &[String]) -> bool {
 
 /// Uncertain effects need clarification or refusal — never a guessed
 /// destructive expansion (ADR-0030).
-fn clarify_reason(flat: &str, toks: &[String]) -> Option<String> {
+/// PowerShell 7-only tells in request or candidate text. WHY a separate
+/// function from vagueness: shell-compatibility is not a grill aspect — it
+/// never stands down, so answered markers must not silence it.
+fn shell_request_hint(flat: &str, toks: &[String]) -> Option<(String, Vec<String>)> {
     let has = |word: &str| toks.iter().any(|t| t == word);
     let phrase = |p: &str| flat.contains(p);
+    let choices_of = |items: &[&str]| items.iter().map(|s| s.to_string()).collect();
 
     if phrase("foreach-object -parallel")
         || (phrase("foreach-object") && has("-parallel"))
         || has("pwsh")
         || phrase("powershell 7")
     {
-        return Some(
+        return Some((
             "That needs PowerShell 7-only syntax, but Sprout targets Windows PowerShell 5.1 — say how to tell the services apart or ask for a 5.1-compatible draft.".into(),
-        );
+            choices_of(&[
+                "Draft a 5.1-compatible version instead",
+                "Explain what needs PowerShell 7 first",
+                "I'll describe the fallback behavior below",
+            ]),
+        ));
     }
     if has("??") && flat.contains('$') {
-        return Some(
+        return Some((
             "That uses PowerShell 7-only operators under a 5.1 target — name the fallback behavior or ask for a 5.1-compatible draft.".into(),
-        );
+            choices_of(&[
+                "Draft a 5.1-compatible version instead",
+                "I'll describe the fallback behavior below",
+            ]),
+        ));
     }
-    if has("module") || has("sdk") || phrase("external tool") || phrase("install and use") {
-        return Some(
+    None
+}
+
+/// One vagueness branch per grill aspect, in stable priority order. WHY the
+/// stand-down guards: an answered aspect is honored, never repeated — a
+/// second *distinct* vagueness still asks back (ADR-0032).
+fn vague_aspect(
+    flat: &str,
+    toks: &[String],
+    answered: &AnsweredAspects,
+) -> Option<(ClarifyAspect, String, Vec<String>)> {
+    use ClarifyAspect::*;
+    let has = |word: &str| toks.iter().any(|t| t == word);
+    let phrase = |p: &str| flat.contains(p);
+    let choices_of = |items: &[&str]| items.iter().map(|s| s.to_string()).collect();
+
+    if !answered.stands_down(UnknownPrerequisite)
+        && (has("module") || has("sdk") || phrase("external tool") || phrase("install and use"))
+    {
+        return Some((
+            UnknownPrerequisite,
             "That depends on a module or external tool whose presence is unknown — name what is installed or ask for a built-in-only draft.".into(),
-        );
+            choices_of(&[
+                "Draft with built-in commands only",
+                "Explain what's needed first",
+                "I'll name what's installed below",
+            ]),
+        ));
     }
-    for vague in [
-        "open the editor",
-        "open my editor",
-        "open the app",
-        "open my app",
-        "open the program",
-        "launch the editor",
-        "start the editor",
-    ] {
-        if phrase(vague) {
-            return Some(
-                "Several apps match that description — name the exact app to open.".into(),
-            );
+    if !answered.stands_down(AmbiguousApp) {
+        for vague in [
+            "open the editor",
+            "open my editor",
+            "open the app",
+            "open my app",
+            "open the program",
+            "launch the editor",
+            "start the editor",
+        ] {
+            if phrase(vague) {
+                return Some((
+                    AmbiguousApp,
+                    "Several apps match that description — name the exact app to open.".into(),
+                    choices_of(&[
+                        "Notepad",
+                        "Visual Studio Code",
+                        "I'll name the exact app below",
+                    ]),
+                ));
+            }
         }
     }
-    if (has("everything") || phrase("all files") || phrase("clean up"))
+    if !answered.stands_down(ScopeUncertain)
+        && (has("everything") || phrase("all files") || phrase("clean up"))
         && (flat.contains("c:") || has("system32") || phrase("windows folder") || has("everything"))
     {
-        return Some(
+        return Some((
+            ScopeUncertain,
             "That scope is uncertain — say exactly which folder and what may go.".into(),
-        );
+            choices_of(&[
+                "List the folder contents first (read-only)",
+                "Work only with files I name below",
+                "I'll give the exact folder and rules below",
+            ]),
+        ));
     }
-    if has("bypass") || (has("disable") && !flat.contains("defender")) {
-        return Some(
+    if !answered.stands_down(BypassUncertain)
+        && (has("bypass") || (has("disable") && !flat.contains("defender")))
+    {
+        return Some((
+            BypassUncertain,
             "The effect of disabling or bypassing that is uncertain — say what should keep working.".into(),
-        );
+            choices_of(&[
+                "Explain what should keep working first",
+                "I'll describe the goal without disabling anything below",
+            ]),
+        ));
+    }
+    // A named folder without an exact path is vague — guessing a location
+    // would invent a target, so ask back with safe picks instead (ADR-0032).
+    // Absolute paths (`c:\…`, `\\…`) and refusal-bound effects never land
+    // here: refusal wins earlier, and an exact path needs no clarification.
+    let has_exact_path = flat.contains(":\\") || flat.contains("c:") || flat.contains("\\\\");
+    let names_folder = !has_exact_path
+        && (phrase("download folder")
+            || phrase("downloads folder")
+            || has("downloads")
+            || (has("download")
+                && (phrase("my download")
+                    || phrase("download folder")
+                    || flat.contains("downloads")))
+            || phrase("my documents")
+            || phrase("documents folder")
+            || phrase("my desktop")
+            || phrase("desktop folder")
+            || (has("desktop") && phrase("my ")));
+    let wants_folder_action = phrase("clean")
+        || phrase("do something")
+        || phrase("organize")
+        || phrase("organise")
+        || phrase("tidy")
+        || phrase("sort")
+        || phrase("list")
+        || phrase("show")
+        || has("folder")
+        || has("downloads");
+    if !answered.stands_down(UnknownFolder) && names_folder && wants_folder_action {
+        return Some((
+            UnknownFolder,
+            "That names a folder without an exact path, so nothing was drafted — say which folder and what should happen there.".into(),
+            choices_of(&[
+                "The standard Downloads folder",
+                "The Documents folder",
+                "I'll give the full folder path below",
+            ]),
+        ));
     }
     None
 }
 
 /// Runs the request checks over the typed request plus the explicitly
 /// supplied context as one text. Refusal wins over clarification; a model
-/// rating its own output safe is never consulted (ADR-0030).
+/// rating its own output safe is never consulted (ADR-0030). Answered aspects
+/// stand down only their own detectors, so a second distinct vagueness still
+/// asks back while an answered question never repeats (ADR-0032).
 pub fn classify_request(request: &str, context: &str) -> RequestVerdict {
     let combined = format!("{request}\n{context}");
     let flat = flattened(&combined);
@@ -441,16 +674,37 @@ pub fn classify_request(request: &str, context: &str) -> RequestVerdict {
     if let Some(reason) = refusal_reason(&combined, &flat, &toks) {
         return RequestVerdict::Refuse { reason };
     }
-    if let Some(reason) = clarify_reason(&flat, &toks) {
-        return RequestVerdict::Clarify { reason };
+    let answered = AnsweredAspects::parse(&flat);
+    if answered.all {
+        return RequestVerdict::Allow;
+    }
+    if let Some((reason, choices)) = shell_request_hint(&flat, &toks) {
+        return RequestVerdict::Clarify {
+            aspect: None,
+            reason,
+            choices,
+        };
+    }
+    if let Some((aspect, reason, choices)) = vague_aspect(&flat, &toks, &answered) {
+        return RequestVerdict::Clarify {
+            aspect: Some(aspect),
+            reason,
+            choices,
+        };
     }
     RequestVerdict::Allow
 }
 
 /// Runs the output checks over a candidate command: the same effect scan
 /// (the model is untrusted input — it may emit what the request would never
-/// say), plus shell-compatibility for the explicitly selected shell.
-pub fn check_output(shell: QuickActionShell, command: &str) -> OutputVerdict {
+/// say), plus shell-compatibility for the explicitly selected shell. Answered
+/// aspects stand down only their own vagueness detectors while refusal and
+/// shell-compatibility still hold the draft (ADR-0032).
+pub fn check_output(
+    shell: QuickActionShell,
+    command: &str,
+    answered: &AnsweredAspects,
+) -> OutputVerdict {
     if command.trim().is_empty() {
         return OutputVerdict::Refuse {
             reason: "The model returned no command.".into(),
@@ -470,7 +724,12 @@ pub fn check_output(shell: QuickActionShell, command: &str) -> OutputVerdict {
         QuickActionShell::Powershell => {
             if flat.contains("foreach-object -parallel") || toks.iter().any(|t| t == "pwsh") {
                 return OutputVerdict::Clarify {
+                    aspect: None,
                     message: "The draft needs PowerShell 7-only syntax under a 5.1 target — it is held for clarification, not saved.".into(),
+                    choices: vec![
+                        "Draft a 5.1-compatible version instead".into(),
+                        "I'll describe the fallback behavior below".into(),
+                    ],
                 };
             }
         }
@@ -478,13 +737,29 @@ pub fn check_output(shell: QuickActionShell, command: &str) -> OutputVerdict {
             let powershellism = ["get-", "set-", "where-object", "foreach-object", "$_", "$env:", "write-output", "start-process"];
             if powershellism.iter().any(|marker| flat.contains(marker)) {
                 return OutputVerdict::Clarify {
+                    aspect: None,
                     message: "The draft looks like PowerShell, but cmd is selected — it is held for clarification, not saved.".into(),
+                    choices: vec![
+                        "Draft a cmd version instead".into(),
+                        "I'll pick the PowerShell shell below".into(),
+                    ],
                 };
             }
         }
     }
-    if let Some(message) = clarify_reason(&flat, &toks) {
-        return OutputVerdict::Clarify { message };
+    if let Some((message, choices)) = shell_request_hint(&flat, &toks) {
+        return OutputVerdict::Clarify {
+            aspect: None,
+            message,
+            choices,
+        };
+    }
+    if let Some((aspect, message, choices)) = vague_aspect(&flat, &toks, answered) {
+        return OutputVerdict::Clarify {
+            aspect: Some(aspect),
+            message,
+            choices,
+        };
     }
     OutputVerdict::Allow
 }
@@ -786,7 +1061,15 @@ pub struct DraftCandidate {
 pub enum DraftOutcome {
     Draft { draft: DraftCandidate },
     Refused { message: String },
-    Clarify { message: String },
+    Clarify {
+        message: String,
+        #[serde(default)]
+        choices: Vec<String>,
+        /// WHY optional with a default: aspect keys postdate the clarify shape
+        /// — older payloads without one still deserialize (ADR-0032).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        aspect: Option<String>,
+    },
     Failed { message: String },
 }
 
@@ -991,10 +1274,20 @@ pub fn request_draft(
     input: &DraftInput,
 ) -> DraftOutcome {
     let context = input.context.as_deref().unwrap_or_default();
+    let answered =
+        AnsweredAspects::parse(&flattened(&format!("{}\n{context}", input.request)));
     match classify_request(&input.request, context) {
         RequestVerdict::Refuse { reason } => return refused(&reason),
-        RequestVerdict::Clarify { reason } => {
-            return DraftOutcome::Clarify { message: reason };
+        RequestVerdict::Clarify {
+            aspect,
+            reason,
+            choices,
+        } => {
+            return DraftOutcome::Clarify {
+                message: reason,
+                choices,
+                aspect: aspect.map(|a| a.slug().to_string()),
+            };
         }
         RequestVerdict::Allow => {}
     }
@@ -1019,7 +1312,7 @@ pub fn request_draft(
             message: ProviderError::Oversized.message(),
         };
     }
-    match check_output(input.shell, &parsed.command) {
+    match check_output(input.shell, &parsed.command, &answered) {
         OutputVerdict::Allow => DraftOutcome::Draft {
             draft: DraftCandidate {
                 shell: input.shell,
@@ -1031,15 +1324,290 @@ pub fn request_draft(
             },
         },
         OutputVerdict::Refuse { reason } => refused(&reason),
-        OutputVerdict::Clarify { message } => DraftOutcome::Clarify { message },
+        OutputVerdict::Clarify {
+            aspect,
+            message,
+            choices,
+        } => DraftOutcome::Clarify {
+            message,
+            choices,
+            aspect: aspect.map(|a| a.slug().to_string()),
+        },
     }
 }
 
 /// Rechecks a candidate when it is accepted through AI assistance: the same
 /// output checks, no provider, no persistence, no execution. The revision
-/// flow owns the baseline comparison; this owns only the verdict.
+/// flow owns the baseline comparison; this owns only the verdict. Manual text
+/// is never treated as an answered clarification, so the full checks apply.
 pub fn recheck_candidate(shell: QuickActionShell, command: &str) -> OutputVerdict {
-    check_output(shell, command)
+    check_output(shell, command, &AnsweredAspects::none())
+}
+
+// ---------------------------------------------------------------------------
+// Diagnosis: explain a selected error and propose a separately reviewed
+// revision. Built on the checked-draft seam — request checks before
+// inference, output checks before usability, no execution anywhere — with
+// the shared rules plus the Diagnose task skill on each request (ADR-0030).
+// ---------------------------------------------------------------------------
+
+/// The input to one diagnosis request: the explicitly selected saved script
+/// and error output, plus the action's shell and working directory. Nothing
+/// is collected automatically — no log scan, no folder inspection, no Test
+/// run, no rerun of the action (ticket 153).
+pub struct DiagnoseInput {
+    pub shell: QuickActionShell,
+    pub script: String,
+    pub error: String,
+    pub cwd: Option<String>,
+    pub model: String,
+    /// The raw-field approvals recorded for this request. Diagnosis defaults
+    /// to nothing approved; a later cloud path must consult this before
+    /// uploading the selected script or error (ADR-0031).
+    #[allow(dead_code)]
+    pub grants: RequestGrants,
+}
+
+/// A proposed revision: reviewable data, never an executed thing. Only the
+/// reviewed fields (shell, command, working directory, note) may change on
+/// acceptance — Group/order, stoppable settings, and auto-run survive unless
+/// the user deliberately changes them elsewhere (ADR-0030).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct RevisionCandidate {
+    pub shell: QuickActionShell,
+    pub command: String,
+    pub cwd: Option<String>,
+    pub note: Option<String>,
+    pub explanation: String,
+    pub assumptions: Vec<String>,
+    pub affected_targets: Vec<String>,
+    pub executed: bool,
+}
+
+/// The single outcome of one diagnosis request: a separate revision, an
+/// explanation without a revision, a refusal, a clarification, or an
+/// actionable failure. Refused, clarified, and failed outcomes carry no
+/// executable text.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(tag = "kind", rename_all = "lowercase")]
+pub enum DiagnoseOutcome {
+    Revision {
+        explanation: String,
+        revision: RevisionCandidate,
+        /// The saved baseline the revision was diffed against
+        /// (`revision_baseline`): acceptance rechecks it before saving, so an
+        /// older proposal never overwrites a newer saved action silently.
+        baseline: String,
+    },
+    Explanation {
+        explanation: String,
+    },
+    Refused {
+        message: String,
+    },
+    Clarify {
+        message: String,
+        #[serde(default)]
+        choices: Vec<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        aspect: Option<String>,
+    },
+    Failed {
+        message: String,
+    },
+}
+
+/// The stable identity of the saved action a diagnosis was requested against.
+/// The revision carries it; acceptance recomputes it from the current row and
+/// refuses to save on mismatch instead of overwriting silently (ADR-0030).
+pub fn revision_baseline(action_id: i64, shell: QuickActionShell, command: &str, cwd: &str) -> String {
+    let normalized = format!(
+        "{}|{}|{}|{}",
+        action_id,
+        shell.as_str(),
+        command.trim(),
+        cwd.trim()
+    );
+    let mut hash = 0xcbf29ce484222325u64;
+    for byte in normalized.bytes() {
+        hash ^= byte as u64;
+        hash = hash.wrapping_mul(0x100000001b3);
+    }
+    format!("{action_id}:{hash:016x}")
+}
+
+/// Rechecks the saved baseline at acceptance time. Returns the conflict to
+/// show — retaining both the current saved state and the reviewable
+/// candidate — or `None` when saving may proceed.
+pub fn verify_revision_baseline(
+    action_id: Option<i64>,
+    baseline: &str,
+    shell: QuickActionShell,
+    command: &str,
+    cwd: &str,
+) -> Option<String> {
+    let Some(action_id) = action_id else {
+        return Some("The action this revision was diagnosed against no longer exists — it was deleted. The proposal is kept for review; save it as a new action instead.".into());
+    };
+    let current = revision_baseline(action_id, shell, command, cwd);
+    if current != baseline {
+        return Some("The saved action changed since this revision was proposed — review the current script before saving. The proposal is kept; nothing was overwritten.".into());
+    }
+    None
+}
+
+#[derive(Debug, Deserialize)]
+struct DiagnoseJson {
+    #[serde(default)]
+    explanation: String,
+    #[serde(default)]
+    command: Option<String>,
+    #[serde(default)]
+    shell: Option<String>,
+    #[serde(default)]
+    cwd: Option<String>,
+    #[serde(default)]
+    note: Option<String>,
+    #[serde(default)]
+    assumptions: Vec<String>,
+    #[serde(default)]
+    affected_targets: Vec<String>,
+}
+
+fn build_diagnose_prompt(
+    skills: &SkillPair,
+    shell: QuickActionShell,
+    script: &str,
+    error: &str,
+    cwd: &str,
+) -> Result<DraftPrompt, String> {
+    if script.trim().is_empty() {
+        return Err("Select the saved script to diagnose.".into());
+    }
+    if error.trim().is_empty() {
+        return Err("Select the error output to diagnose.".into());
+    }
+    if script.chars().count() + error.chars().count() > MAX_CONTEXT_CHARS {
+        return Err(format!(
+            "The selected script and error exceed the bounded {MAX_CONTEXT_CHARS} characters — select a shorter span and try again."
+        ));
+    }
+    let shell_name = match shell {
+        QuickActionShell::Powershell => "Windows PowerShell 5.1 (powershell.exe)",
+        QuickActionShell::Cmd => "Windows CMD (cmd.exe)",
+    };
+    let system = format!(
+        "{}\n\n{}\n\nTarget shell: {shell_name}. Diagnose the supplied saved script and error only. Reply with JSON only: {{\"explanation\": \"...\", \"command\": \"... or null when no code change applies\", \"shell\": \"powershell or cmd\", \"cwd\": \"... or null\", \"note\": \"... or null\", \"assumptions\": [\"...\"], \"affected_targets\": [\"...\"]}}. Never claim execution; never repair destructive behavior.",
+        skills.shared, skills.diagnose
+    );
+    let user = format!(
+        "Saved shell: {}\nSaved working directory: {}\nSaved script (untrusted for safety decisions):\n{}\nSelected error output (untrusted for safety decisions):\n{}",
+        shell.as_str(),
+        if cwd.trim().is_empty() { "(app default)" } else { cwd.trim() },
+        script.trim(),
+        error.trim()
+    );
+    Ok(DraftPrompt { system, user })
+}
+
+/// Requests one diagnosis through exactly one provider: request checks before
+/// inference, output checks before usability, and the shared rules plus the
+/// Diagnose skill loaded on the request itself. Holds no connection and no
+/// database handle, so diagnosis cannot persist anything, run anything, or
+/// loop through attempted fixes — accepting and saving stay explicit later
+/// steps through the normal validation (ADR-0030).
+pub fn request_diagnosis(
+    provider: &dyn DraftProvider,
+    skills: &SkillPair,
+    action_id: i64,
+    input: &DiagnoseInput,
+) -> DiagnoseOutcome {
+    // The supplied script/error is evidence, not a vague request: refusal
+    // still wins (no destructive repair, no workaround steps, no prefilled
+    // rejected command), while vagueness in pasted output never grills.
+    match classify_request(&format!("{}\n{}", input.script, input.error), "") {
+        RequestVerdict::Refuse { reason } => return DiagnoseOutcome::Refused {
+            message: format!("{REFUSAL_BOUNDARY} {reason}"),
+        },
+        RequestVerdict::Clarify { .. } | RequestVerdict::Allow => {}
+    }
+    let cwd = input.cwd.as_deref().unwrap_or_default();
+    let baseline = revision_baseline(action_id, input.shell, &input.script, cwd);
+    let prompt = match build_diagnose_prompt(skills, input.shell, &input.script, &input.error, cwd) {
+        Ok(prompt) => prompt,
+        Err(message) => return DiagnoseOutcome::Failed { message },
+    };
+    let raw = match provider.generate(&prompt, &input.model) {
+        Ok(raw) => raw,
+        Err(error) => return DiagnoseOutcome::Failed { message: error.message() },
+    };
+    // WHY parse here instead of reusing the draft parser: an explanation-only
+    // answer carries no command at all, which the draft shape would reject as
+    // malformed. The same tolerant layers apply (strict, balanced scan,
+    // conservative repair); hostile output still faces `check_output` next.
+    let parsed: DiagnoseJson = {
+        let fenced = unfence(&raw);
+        let direct: Result<DiagnoseJson, _> = serde_json::from_str(fenced);
+        match direct {
+            Ok(parsed) => parsed,
+            Err(_) => {
+                let candidate = first_balanced_object(fenced).unwrap_or(fenced);
+                let scanned: Result<DiagnoseJson, _> = serde_json::from_str(candidate);
+                match scanned {
+                    Ok(parsed) => parsed,
+                    Err(_) => match serde_json::from_str::<DiagnoseJson>(&repair_json(candidate)) {
+                        Ok(parsed) => parsed,
+                        Err(_) => {
+                            return DiagnoseOutcome::Failed {
+                                message: ProviderError::Malformed.message(),
+                            }
+                        }
+                    },
+                }
+            }
+        }
+    };
+    let explanation = parsed.explanation.trim().to_string();
+    let Some(proposed) = parsed.command.map(|command| command.trim().to_string()).filter(|command| !command.is_empty()) else {
+        if explanation.is_empty() {
+            return DiagnoseOutcome::Failed { message: ProviderError::Malformed.message() };
+        }
+        return DiagnoseOutcome::Explanation { explanation };
+    };
+    if proposed.chars().count() > MAX_COMMAND_CHARS {
+        return DiagnoseOutcome::Failed { message: ProviderError::Oversized.message() };
+    }
+    let proposed_shell = match parsed.shell.as_deref().map(str::trim) {
+        Some("cmd") => QuickActionShell::Cmd,
+        _ => input.shell,
+    };
+    match check_output(proposed_shell, &proposed, &AnsweredAspects::none()) {
+        OutputVerdict::Allow => DiagnoseOutcome::Revision {
+            explanation: explanation.clone(),
+            revision: RevisionCandidate {
+                shell: proposed_shell,
+                command: proposed,
+                cwd: parsed.cwd.map(|cwd| cwd.trim().to_string()).filter(|cwd| !cwd.is_empty()),
+                note: parsed.note.map(|note| note.trim().to_string()).filter(|note| !note.is_empty()),
+                explanation: explanation.clone(),
+                assumptions: parsed.assumptions,
+                affected_targets: parsed.affected_targets,
+                executed: false,
+            },
+            baseline,
+        },
+        // WHY no prefilled command on refusal: the model proposed repairing
+        // into destructive behavior — releasing its text as an editable draft
+        // would hand over the refused outcome through another slot (ADR-0030).
+        OutputVerdict::Refuse { reason } => DiagnoseOutcome::Refused {
+            message: format!("{REFUSAL_BOUNDARY} {reason}"),
+        },
+        OutputVerdict::Clarify { aspect, message, choices } => DiagnoseOutcome::Clarify {
+            message,
+            choices,
+            aspect: aspect.map(|a| a.slug().to_string()),
+        },
+    }
 }
 
 /// The deterministic test adapter: scripted responses in order, with every
@@ -1171,6 +1739,232 @@ mod tests {
                 other => panic!("{id} has an unknown expectation: {other}"),
             }
         }
+    }
+
+    #[test]
+    fn vague_requests_clarify_with_pickable_choices_and_no_draft() {
+        // Vague intents ask back instead of guessing: each carries two to
+        // four safe picks plus an implied free-text slot, its aspect key for
+        // one-shot stand-down, and never a command (ADR-0032).
+        for (shell, request, aspect) in [
+            (
+                "powershell",
+                "Clean up my Download folder",
+                "unknown-folder",
+            ),
+            ("cmd", "Do something to my Downloads", "unknown-folder"),
+            ("cmd", "Open the editor", "ambiguous-app"),
+            (
+                "powershell",
+                "Draft a script using the XYZ-Cloud module to sync my folder",
+                "unknown-prerequisite",
+            ),
+        ] {
+            let outcome = outcome_for(
+                &serde_json::json!({"shell": shell, "request": request}),
+            );
+            let DraftOutcome::Clarify {
+                message,
+                choices,
+                aspect: got,
+            } = outcome
+            else {
+                panic!("{request} must clarify, got {outcome:?}");
+            };
+            assert!(!message.trim().is_empty(), "clarification names what is unknown");
+            assert_eq!(got.as_deref(), Some(aspect), "{request} carries its aspect key");
+            assert!(
+                (2..=4).contains(&choices.len()),
+                "{request} carries 2-4 picks, got {choices:?}"
+            );
+            assert!(
+                (2..=4).contains(&choices.len()),
+                "{request} carries 2-4 picks, got {choices:?}"
+            );
+            for choice in &choices {
+                assert!(!choice.trim().is_empty(), "picks stay selectable");
+                assert!(
+                    !choice.contains("Remove-Item") && !choice.contains("del "),
+                    "clarification carries no executable code"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn answered_clarifications_regenerate_without_re_asking() {
+        // The legacy bare tag keeps its old promise: an answered question
+        // stands down every vague detector, while refusal still wins
+        // (ADR-0032, ADR-0030).
+        for (shell, request, answer, command) in [
+            (
+                "powershell",
+                "Clean up my Download folder",
+                "The standard Downloads folder",
+                "Get-Service -Name Spooler",
+            ),
+            ("cmd", "Open the editor", "Notepad", "start notepad.exe"),
+            (
+                "cmd",
+                "Do something to my Downloads",
+                "The standard Downloads folder",
+                "dir \"%USERPROFILE%\\Downloads\"",
+            ),
+        ] {
+            let narrowed = format!("{request} — clarified choice: {answer}");
+            assert!(
+                matches!(classify_request(&narrowed, ""), RequestVerdict::Allow),
+                "{request} + answer must proceed"
+            );
+            let client =
+                TestClient::new(vec![Scripted::Body(chat_body(command, "A read-only draft."))]);
+            let outcome = request_draft(&client, &skills(), &draft_input(shell, &narrowed));
+            assert!(
+                matches!(outcome, DraftOutcome::Draft { .. }),
+                "{request} + answer must draft, got {outcome:?}"
+            );
+        }
+        // The model's output gets one real attempt too: a location-bearing
+        // draft after an answered folder question is reviewable, not re-asked.
+        let narrowed =
+            "Do something to my Downloads — clarified choice: The standard Downloads folder";
+        let client = TestClient::new(vec![Scripted::Body(chat_body(
+            "Get-ChildItem $env:USERPROFILE\\Downloads",
+            "Lists the standard Downloads folder.",
+        ))]);
+        let outcome = request_draft(&client, &skills(), &draft_input("powershell", narrowed));
+        assert!(
+            matches!(outcome, DraftOutcome::Draft { .. }),
+            "answered folder output must draft, got {outcome:?}"
+        );
+        // Refusal still wins over an answered clarification, and
+        // shell-compatibility still holds a bad draft for clarification.
+        assert!(matches!(
+            classify_request(
+                "Delete C:\\Temp\\notes.txt — clarified choice: go ahead",
+                ""
+            ),
+            RequestVerdict::Refuse { .. }
+        ));
+        let client = TestClient::new(vec![Scripted::Body(chat_body(
+            "Get-Process | ForEach-Object -Parallel { $_.Name }",
+            "Lists processes.",
+        ))]);
+        let outcome = request_draft(
+            &client,
+            &skills(),
+            &draft_input(
+                "powershell",
+                "Show my processes — clarified choice: list them all",
+            ),
+        );
+        assert!(
+            matches!(outcome, DraftOutcome::Clarify { .. }),
+            "PS7-only output still clarifies, got {outcome:?}"
+        );
+    }
+
+    #[test]
+    fn answered_aspect_never_repeats_but_distinct_aspect_still_asks() {
+        // Each frontier question is asked once: the answered aspect stays
+        // down even though its trigger words remain, while a second distinct
+        // vagueness still asks back (ADR-0032).
+        let answered_folder =
+            "Clean up my Download folder — clarified choice [unknown-folder]: The standard Downloads folder";
+        assert!(
+            matches!(classify_request(answered_folder, ""), RequestVerdict::Allow),
+            "answered folder must proceed, not re-ask"
+        );
+        // A second vagueness in the same thread still asks — with its own key.
+        let folder_then_app = format!("{answered_folder} for open the editor");
+        match classify_request(&folder_then_app, "") {
+            RequestVerdict::Clarify { aspect, .. } => assert_eq!(
+                aspect,
+                Some(ClarifyAspect::AmbiguousApp),
+                "second question carries the app key"
+            ),
+            other => panic!("distinct vagueness must clarify, got {other:?}"),
+        }
+        // Answering both ends the grill.
+        let both_answered = format!(
+            "{folder_then_app} — clarified choice [ambiguous-app]: Notepad"
+        );
+        assert!(
+            matches!(classify_request(&both_answered, ""), RequestVerdict::Allow),
+            "two answered aspects must proceed"
+        );
+        // Unknown slugs never stand anything down.
+        let bogus =
+            "Clean up my Download folder — clarified choice [no-such-aspect]: somewhere";
+        assert!(
+            matches!(
+                classify_request(bogus, ""),
+                RequestVerdict::Clarify { .. }
+            ),
+            "bogus aspect must not silence the folder question"
+        );
+    }
+
+    #[test]
+    fn draft_anyway_marker_proceeds_past_vagueness() {
+        // The explicit user override ends the grill: vagueness is skipped at
+        // request stage, while refusal still wins (ADR-0032, ADR-0030).
+        assert!(
+            matches!(
+                classify_request(
+                    "Clean up my Download folder — draft-anyway: proceed with what you have",
+                    ""
+                ),
+                RequestVerdict::Allow
+            ),
+            "draft-anyway must proceed past vagueness"
+        );
+        assert!(matches!(
+            classify_request(
+                "Delete C:\\Temp\\notes.txt — draft-anyway: proceed with what you have",
+                ""
+            ),
+            RequestVerdict::Refuse { .. }
+        ));
+    }
+
+    #[test]
+    fn output_vagueness_honors_answered_aspects() {
+        // A location-bearing candidate after an answered folder question is
+        // reviewable, not re-asked; an unanswered aspect in the candidate
+        // still asks back with its key (ADR-0032).
+        let folder = AnsweredAspects::parse(&flattened(
+            "Do something to my Downloads — clarified choice [unknown-folder]: The standard Downloads folder",
+        ));
+        assert_eq!(
+            check_output(
+                QuickActionShell::Powershell,
+                "Get-ChildItem $env:USERPROFILE\\Downloads",
+                &folder
+            ),
+            OutputVerdict::Allow
+        );
+        match check_output(
+            QuickActionShell::Cmd,
+            "open the editor",
+            &folder,
+        ) {
+            OutputVerdict::Clarify { aspect, .. } => assert_eq!(
+                aspect,
+                Some(ClarifyAspect::AmbiguousApp),
+                "unanswered app vagueness in output still asks"
+            ),
+            other => panic!("unanswered aspect must clarify, got {other:?}"),
+        }
+        // Shell-compatibility never stands down, answered or not.
+        assert!(matches!(
+            check_output(
+                QuickActionShell::Powershell,
+                "Get-Process | ForEach-Object -Parallel { $_.Name }",
+                &folder
+            ),
+            OutputVerdict::Clarify { aspect: None, .. }
+        ));
     }
 
     #[test]
@@ -1654,6 +2448,252 @@ mod tests {
             recheck_candidate(QuickActionShell::Cmd, "Get-Process"),
             OutputVerdict::Clarify { .. }
         ));
+    }
+
+    // ------------------------------------------------------------------
+    // Ticket 153: diagnose selected errors, accept a revision explicitly.
+    // Built on the checked-draft seam — the same request/output checks, the
+    // shared rules plus the Diagnose skill per request, no execution.
+    // ------------------------------------------------------------------
+
+    fn diagnose_input(shell: QuickActionShell, script: &str, error: &str) -> DiagnoseInput {
+        DiagnoseInput {
+            shell,
+            script: script.to_string(),
+            error: error.to_string(),
+            cwd: None,
+            model: "test-model".to_string(),
+            grants: RequestGrants::none(),
+        }
+    }
+
+    fn diagnose_body(command: Option<&str>, explanation: &str) -> String {
+        serde_json::json!({
+            "explanation": explanation,
+            "command": command,
+            "shell": "powershell",
+            "cwd": null,
+            "note": null,
+            "assumptions": ["Windows PowerShell 5.1 is available"],
+            "affected_targets": [],
+        })
+        .to_string()
+    }
+
+    fn saved_action(conn: &rusqlite::Connection, shell: QuickActionShell, command: &str) -> crate::quick_actions::QuickAction {
+        let input = crate::quick_actions::QuickActionInput {
+            name: "Diagnosed action".to_string(),
+            shell,
+            command: command.to_string(),
+            cwd: None,
+            stoppable: true,
+            stop_command: None,
+            note: Some("operator note".to_string()),
+            auto_run: false,
+            show_in_dock: true,
+            pre_check: None,
+            pre_fix: None,
+        };
+        crate::quick_actions::validate_quick_action(&input).unwrap();
+        crate::quick_actions::create_quick_action(conn, &input).unwrap()
+    }
+
+    #[test]
+    fn diagnosis_returns_a_separate_revision_without_execution() {
+        let conn = crate::db::init_at(&tempfile::tempdir().unwrap().into_path()).unwrap();
+        let action = saved_action(&conn, QuickActionShell::Powershell, "Get-Service -Name Spoolr");
+        let client = TestClient::new(vec![Scripted::Body(diagnose_body(
+            Some("Get-Service -Name Spooler"),
+            "The service name had a typo.",
+        ))]);
+        let outcome = request_diagnosis(
+            &client,
+            &skills(),
+            action.id,
+            &diagnose_input(
+                QuickActionShell::Powershell,
+                "Get-Service -Name Spoolr",
+                "Get-Service: Cannot find any service with service name 'Spoolr'.",
+            ),
+        );
+        let DiagnoseOutcome::Revision { explanation, revision, baseline } = outcome else {
+            panic!("benign diagnosis must propose a revision");
+        };
+        assert!(explanation.contains("typo"));
+        assert_eq!(revision.command, "Get-Service -Name Spooler");
+        assert!(!revision.executed, "revisions are marked unexecuted");
+        assert_eq!(baseline, revision_baseline(action.id, action.action.shell, &action.action.command, ""));
+        // The saved action and its baseline stay separate from the proposal.
+        let current = crate::quick_actions::list_quick_actions(&conn).unwrap();
+        assert_eq!(current.len(), 1);
+        assert_eq!(current[0].action.command, "Get-Service -Name Spoolr");
+        // The Diagnose skill — not just shared rules — shaped the prompt.
+        let prompts = client.prompts();
+        assert_eq!(prompts.len(), 1);
+        assert!(prompts[0].contains("Proposes a separate"), "diagnose skill loads per request");
+        assert!(prompts[0].contains("Destructive commands are outside AI assistance"));
+    }
+
+    #[test]
+    fn diagnosis_explains_without_a_revision_when_no_code_change_applies() {
+        let client = TestClient::new(vec![Scripted::Body(diagnose_body(
+            None,
+            "The service is disabled by policy; no command change fixes that.",
+        ))]);
+        let outcome = request_diagnosis(
+            &client,
+            &skills(),
+            7,
+            &diagnose_input(
+                QuickActionShell::Cmd,
+                "sc query spooler",
+                "[SC] EnumQueryServicesStatus:OpenService FAILED 5: Access is denied.",
+            ),
+        );
+        let DiagnoseOutcome::Explanation { explanation } = outcome else {
+            panic!("policy-blocked diagnosis must explain only, got {outcome:?}");
+        };
+        assert!(explanation.contains("policy"));
+    }
+
+    #[test]
+    fn diagnosis_refuses_destructive_repair_without_leaking_code() {
+        let conn = crate::db::init_at(&tempfile::tempdir().unwrap().into_path()).unwrap();
+        // Repairing destructive behavior visible in the selection is refused.
+        let refusing = TestClient::new(vec![Scripted::Body(diagnose_body(Some("anything"), "x"))]);
+        let outcome = request_diagnosis(
+            &refusing,
+            &skills(),
+            1,
+            &diagnose_input(
+                QuickActionShell::Powershell,
+                "Remove-Item C:\\Temp\\notes.txt -Force",
+                "Remove-Item: Access to the path is denied.",
+            ),
+        );
+        let DiagnoseOutcome::Refused { message } = outcome else {
+            panic!("destructive repair must refuse, got {outcome:?}");
+        };
+        assert!(message.contains(REFUSAL_BOUNDARY));
+        assert!(!message.contains("Remove-Item"), "no prefilled rejected command");
+        assert_eq!(refusing.prompts().len(), 0, "refused selections never reach inference");
+        // A model-proposed destructive fix is refused the same way, even for
+        // a benign selection — the proposal never becomes a usable revision.
+        let hostile = TestClient::new(vec![Scripted::Body(diagnose_body(
+            Some("Remove-Item C:\\Temp\\notes.txt -Force"),
+            "Trust me, this is safe.",
+        ))]);
+        let hostile_outcome = request_diagnosis(
+            &hostile,
+            &skills(),
+            1,
+            &diagnose_input(
+                QuickActionShell::Powershell,
+                "Get-Content C:\\Temp\\notes.txt",
+                "Get-Content: Cannot find path.",
+            ),
+        );
+        let DiagnoseOutcome::Refused { message } = hostile_outcome else {
+            panic!("hostile revision must refuse, got {hostile_outcome:?}");
+        };
+        assert!(message.contains(REFUSAL_BOUNDARY));
+        assert!(!message.contains("Remove-Item"));
+        assert!(
+            crate::quick_actions::list_quick_actions(&conn).unwrap().is_empty(),
+            "refusals persist nothing"
+        );
+    }
+
+    #[test]
+    fn diagnosis_malformed_cancellation_and_stale_fail_without_persisting() {
+        let conn = crate::db::init_at(&tempfile::tempdir().unwrap().into_path()).unwrap();
+        let input = diagnose_input(QuickActionShell::Cmd, "ipconfig", "unexpected footer text");
+        let malformed = TestClient::new(vec![Scripted::Body("this is not json".to_string())]);
+        assert!(matches!(
+            request_diagnosis(&malformed, &skills(), 1, &input),
+            DiagnoseOutcome::Failed { .. }
+        ));
+        let cancelled = TestClient::new(vec![Scripted::Timeout]);
+        let DiagnoseOutcome::Failed { message } = request_diagnosis(&cancelled, &skills(), 1, &input) else {
+            panic!("cancellation must fail");
+        };
+        assert!(!message.is_empty());
+        // A late completion with no live request behind it fails instead of
+        // surfacing a stale proposal.
+        let stale = TestClient::new(vec![]);
+        assert!(matches!(
+            request_diagnosis(&stale, &skills(), 1, &input),
+            DiagnoseOutcome::Failed { .. }
+        ));
+        assert!(
+            crate::quick_actions::list_quick_actions(&conn).unwrap().is_empty(),
+            "failures persist nothing"
+        );
+    }
+
+    #[test]
+    fn revision_acceptance_detects_conflict_deletion_and_save_failure() {
+        let conn = crate::db::init_at(&tempfile::tempdir().unwrap().into_path()).unwrap();
+        let action = saved_action(&conn, QuickActionShell::Powershell, "Get-Service -Name Spoolr");
+        let baseline = revision_baseline(action.id, action.action.shell, &action.action.command, "");
+        // Unchanged source verifies clean.
+        assert!(verify_revision_baseline(Some(action.id), &baseline, action.action.shell, &action.action.command, "").is_none());
+        // A newer edit conflicts: both states are retained, nothing is
+        // overwritten silently.
+        let conflict = verify_revision_baseline(
+            Some(action.id),
+            &baseline,
+            QuickActionShell::Powershell,
+            "Get-Service -Name Spooler",
+            "",
+        )
+        .expect("newer edits must conflict");
+        assert!(conflict.contains("changed since"));
+        // Source deletion conflicts instead of recreating or failing obscurely.
+        let deleted = verify_revision_baseline(None, &baseline, action.action.shell, &action.action.command, "")
+            .expect("deletion must conflict");
+        assert!(deleted.contains("no longer exists"));
+        // Failed validation surfaces as a save failure with the original intact.
+        let mut broken = action.clone();
+        broken.action.command = "   ".to_string();
+        assert!(crate::quick_actions::validate_quick_action(&broken.action).is_err());
+        let current = crate::quick_actions::list_quick_actions(&conn).unwrap();
+        assert_eq!(current[0].action.command, "Get-Service -Name Spoolr");
+        // Explicit acceptance plus successful saving changes only reviewed
+        // fields: Group/order, user notes kept unless accepted, stoppable
+        // settings, and auto-run survive.
+        let mut accepted = action.clone();
+        accepted.action.command = "Get-Service -Name Spooler".to_string();
+        accepted.action.shell = QuickActionShell::Powershell;
+        crate::quick_actions::validate_quick_action(&accepted.action).unwrap();
+        crate::quick_actions::update_quick_action(&conn, &accepted).unwrap();
+        let reread = crate::quick_actions::list_quick_actions(&conn).unwrap();
+        assert_eq!(reread[0].action.command, "Get-Service -Name Spooler");
+        assert_eq!(reread[0].action.note, Some("operator note".to_string()), "unaccepted notes survive");
+        assert!(reread[0].action.stoppable, "stoppable settings survive");
+        assert!(!reread[0].action.auto_run, "auto-run stays off; the revision cannot enable it");
+        assert_eq!(reread[0].group_id, None, "Group membership survives");
+    }
+
+    #[test]
+    fn diagnosis_sends_only_selected_context_with_no_implicit_grants() {
+        let client = TestClient::new(vec![Scripted::Body(diagnose_body(None, "Transient RPC hiccup; retry unchanged."))]);
+        let mut input = diagnose_input(
+            QuickActionShell::Powershell,
+            "Get-Service -Name Spooler",
+            "C:\\Actions\\nightly.ps1: line 12: The RPC server is unavailable. (Get-Service C:\\Actions\\nightly.ps1)",
+        );
+        assert!(input.grants.approved_raw_fields.is_empty(), "diagnosis defaults to nothing approved");
+        let outcome = request_diagnosis(&client, &skills(), 3, &input);
+        assert!(matches!(outcome, DiagnoseOutcome::Explanation { .. }));
+        // Revoking or declining disclosure prevents a cloud request: with no
+        // grant recorded, a cloud adapter must refuse before sending the
+        // locally bound script path or the newly selected error output.
+        input.grants = RequestGrants::none();
+        assert!(input.grants.approved_raw_fields.is_empty());
+        let prompts = client.prompts();
+        assert_eq!(prompts.len(), 1);
+        assert!(prompts[0].contains("nightly.ps1"), "the selected error rides the local prompt");
     }
 
     /// The loopback HTTP adapter against fixture servers: success, unknown

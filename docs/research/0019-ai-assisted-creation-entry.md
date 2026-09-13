@@ -48,3 +48,17 @@ shape is a single dialog with an AI-first inline hero when ready (explicit
 `Insert` grammar), mandatory manual validation below, easy `Dismiss`
 (HAX G8), direct editing after apply (HAX G9, accordion behavior), and zero
 AI chrome until setup (0006 pattern 3).
+
+## Decision update — 2026-09-13 (two-view + scoped clarify; spec 181, tickets 183–185)
+
+The inline hero stacked above the manual form is superseded: one dialog
+with two exclusive views behind `AI draft | Manual` tabs (content-gated on
+`aiReady`, AI-first on Add, manual-first on Edit, instant flips preserving
+typed content). The AI view holds a single `Describe what to do` textarea
+plus Generate and outcome; `Use this draft` auto-flips to Manual for full
+review (name/shell/command/cwd/flags/files/pre-action) with applied
+feedback and a recheck hatch. Vague requests return `Clarify` with pickable
+choices plus free text (aspect-keyed one-shot grill, `draft-anyway`
+override, no executable code, no disclosure widening) rendered as radios
+reusing the find-pick row pattern. Inference above stands unchanged; only
+the hero shape moved from stacking to exclusive views.
