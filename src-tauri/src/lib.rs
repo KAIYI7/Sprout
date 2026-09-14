@@ -1894,8 +1894,11 @@ fn spawn_tracked_run(
         .or_else(|| quick_actions::new_run_log_path(&crate::db::logs_dir(), &action.action.name));
     let log_file = log_path.as_ref().and_then(|p| quick_actions::open_run_log(p));
     // The stored command runs as-is unless files staged: then the run sees
-    // the placeholder-expanded text under the same shell and directory.
-    let child = match &staged {
+    // the placeholder-expanded text under the same shell and directory. The
+    // expanded text is kept for the run log so `output.log` shows exactly
+    // what ran — the `command:` line alone still carries the `<FilesDir>`
+    // placeholder, which reads as "never replaced" on a failure.
+    let (child, expanded_log) = match &staged {
         Some((dir, names)) => {
             let expanded = match crate::windows_execution::expand_files_dir(
                 &action.action.command,
@@ -1915,14 +1918,18 @@ fn spawn_tracked_run(
                     return Err(e);
                 }
             };
-            crate::windows_execution::spawn_action(
+            let child = crate::windows_execution::spawn_action(
                 action.action.shell.as_str(),
                 &expanded,
                 quick_actions::normalized_cwd(&action.action).as_deref(),
                 log_file.as_ref(),
-            )
+            );
+            (child, Some(expanded))
         }
-        None => quick_actions::spawn_quick_action(&action.action, log_file.as_ref()),
+        None => (
+            quick_actions::spawn_quick_action(&action.action, log_file.as_ref()),
+            None,
+        ),
     };
     let child = match child {
         Ok(child) => child,
@@ -1949,6 +1956,9 @@ fn spawn_tracked_run(
                 p,
                 &format!("  files: {} attached, staged for this run", names.len()),
             );
+        }
+        if let Some(text) = &expanded_log {
+            quick_actions::append_log_line(p, &format!("  expanded: {}", text.trim()));
         }
     }
     let exited = quick_actions::ExitSignal::new();

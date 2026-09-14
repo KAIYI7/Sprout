@@ -68,6 +68,24 @@ describe("command tokenizer follows the selected shell", () => {
     }
   });
 
+  it("marks the placeholder regardless of case, keeping the author's casing", () => {
+    for (const shell of ["powershell", "cmd"] as const) {
+      expect(tokenizeQuickActionCommand("run <filesdir>\\a.txt", shell, ["a.txt"])).toEqual([
+        { text: "run", kind: "command" },
+        { text: " ", kind: "text" },
+        { text: "<filesdir>\\a.txt", kind: "placeholder" },
+      ]);
+      expect(tokenizeQuickActionCommand("run <FILESDIR>", shell, ["a.txt"])).toEqual([
+        { text: "run", kind: "command" },
+        { text: " ", kind: "text" },
+        { text: "<FILESDIR>", kind: "placeholder" },
+      ]);
+      // Character-preserving like the canonical spelling.
+      const joined = textsOf("echo prefix<filesDir> suffix", shell).join("");
+      expect(joined).toBe("echo prefix<filesDir> suffix");
+    }
+  });
+
   it("keeps every character so the overlay never drops text", () => {
     const corpus = [
       "",
@@ -249,6 +267,12 @@ describe("files autocomplete", () => {
     // No attached files means no offer, never an empty list.
     expect(filesCompletion("run <FilesDir>\\", 15, [])).toBeNull();
     expect(filesCompletion("run <FilesDir>\\zzz", 18, names)).toBeNull();
+    // The separator offer ignores the placeholder's casing like the run.
+    expect(filesCompletion("run <filesdir>\\", 15, names)).toEqual({
+      start: 15,
+      end: 15,
+      items: names,
+    });
   });
 
   it("stays closed away from a trigger", () => {
@@ -288,6 +312,9 @@ describe("files hints lifecycle", () => {
   it("asks for files exactly while the placeholder has none", () => {
     expect(filesHint("echo <FilesDir>", 0)).toBe("missing");
     expect(filesHint("echo <FilesDir>", 1)).toBeNull();
+    // Hint matching ignores the placeholder's casing like the run.
+    expect(filesHint("echo <filesdir>", 0)).toBe("missing");
+    expect(filesHint("echo <filesdir>", 1)).toBeNull();
   });
 
   it("stays quiet for a self-quoted placeholder while files are attached", () => {

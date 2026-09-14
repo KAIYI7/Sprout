@@ -28,6 +28,23 @@ export interface QuickActionToken {
 
 export type QuickActionShellKind = "powershell" | "cmd";
 
+/** The attached-files placeholder spelling; matched case-insensitively like
+ * the run-time expansion, while emitted text keeps the author's own casing. */
+const FILES_DIR = "<FilesDir>";
+
+/** Case-insensitive `<FilesDir>` search returning the match index (or -1),
+ * so every casing highlights, completes, and hints exactly like the run. */
+function findFilesDir(command: string, from: number): number {
+  return command.toLowerCase().indexOf(FILES_DIR.toLowerCase(), from);
+}
+
+/** Case-insensitive `<FilesDir>` prefix test at one offset. */
+function startsWithFilesDir(command: string, at: number): boolean {
+  return (
+    command.slice(at, at + FILES_DIR.length).toLowerCase() === FILES_DIR.toLowerCase()
+  );
+}
+
 export function tokenizeQuickActionCommand(
   command: string,
   shell: QuickActionShellKind,
@@ -104,11 +121,11 @@ function emitStringWithPlaceholders(
 ) {
   let k = start;
   while (k < end) {
-    const at = command.indexOf("<FilesDir>", k);
-    if (at === -1 || at + "<FilesDir>".length > end) break;
+    const at = findFilesDir(command, k);
+    if (at === -1 || at + FILES_DIR.length > end) break;
     if (at > k) emit(command.slice(k, at), "string");
-    emit("<FilesDir>", "placeholder");
-    k = at + "<FilesDir>".length;
+    emit(command.slice(at, at + FILES_DIR.length), "placeholder");
+    k = at + FILES_DIR.length;
     const nameLength = filesDirNameLength(command, k, filenames);
     if (nameLength > 0) {
       emit(command.slice(k, k + nameLength), "placeholder");
@@ -130,9 +147,9 @@ function tokenizePowerShellCommand(
   // chaining/block operators that open a new statement.
   let expectCommand = true;
   while (i < n) {
-    if (command.startsWith("<FilesDir>", i)) {
-      emit("<FilesDir>", "placeholder");
-      i += "<FilesDir>".length;
+    if (startsWithFilesDir(command, i)) {
+      emit(command.slice(i, i + FILES_DIR.length), "placeholder");
+      i += FILES_DIR.length;
       const nameLength = filesDirNameLength(command, i, filenames);
       if (nameLength > 0) {
         emit(command.slice(i, i + nameLength), "placeholder");
@@ -231,9 +248,9 @@ function tokenizeCmdCommand(
   const n = command.length;
   let expectCommand = true;
   while (i < n) {
-    if (command.startsWith("<FilesDir>", i)) {
-      emit("<FilesDir>", "placeholder");
-      i += "<FilesDir>".length;
+    if (startsWithFilesDir(command, i)) {
+      emit(command.slice(i, i + FILES_DIR.length), "placeholder");
+      i += FILES_DIR.length;
       const nameLength = filesDirNameLength(command, i, filenames);
       if (nameLength > 0) {
         emit(command.slice(i, i + nameLength), "placeholder");
@@ -348,7 +365,7 @@ export function filesCompletion(
 ): FilesCompletion | null {
   const safe = Math.max(0, Math.min(caret, command.length));
   const before = command.slice(0, safe);
-  const fileMatch = before.match(/<FilesDir>[\\/]([^<>\r\n]*)$/);
+  const fileMatch = before.match(/<FilesDir>[\\/]([^<>\r\n]*)$/i);
   if (fileMatch) {
     const partial = fileMatch[1];
     const items = filenames.filter((name) =>
@@ -404,7 +421,7 @@ export type FilesHint = "unused" | "missing" | null;
  * the file list fixes them.
  */
 export function filesHint(command: string, fileCount: number): FilesHint {
-  const hasPlaceholder = command.includes("<FilesDir>");
+  const hasPlaceholder = command.toLowerCase().includes(FILES_DIR.toLowerCase());
   if (hasPlaceholder && fileCount === 0) return "missing";
   if (fileCount > 0 && !hasPlaceholder) return "unused";
   return null;

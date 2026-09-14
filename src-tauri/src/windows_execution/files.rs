@@ -11,7 +11,18 @@ use std::time::{Duration, SystemTime};
 
 /// The placeholder an action command uses to reference its attached files.
 /// Expanded at run time to the staged absolute path, shell-quoted below.
+/// Matched ASCII case-insensitively: the author's casing is never load-bearing
+/// (One source of truth per Windows command keeps the single spelling here).
 pub const FILES_DIR_PLACEHOLDER: &str = "<FilesDir>";
+
+/// Every casing of the placeholder is the same byte length, so a
+/// case-insensitive match still slices the command on valid boundaries.
+fn find_placeholder(haystack: &str) -> Option<usize> {
+    haystack
+        .as_bytes()
+        .windows(FILES_DIR_PLACEHOLDER.len())
+        .position(|window| window.eq_ignore_ascii_case(FILES_DIR_PLACEHOLDER.as_bytes()))
+}
 
 /// How often the staged-dir release re-checks for surviving children, how
 /// long a drained directory lingers for a handed-off open, and how old an
@@ -23,7 +34,7 @@ const STAGED_SWEEP_MAX_AGE: Duration = Duration::from_secs(24 * 60 * 60);
 /// Whether `command` references attached files at all. Without the
 /// placeholder the files stay inert: nothing is staged and nothing fails.
 pub fn contains_files_placeholder(command: &str) -> bool {
-    command.contains(FILES_DIR_PLACEHOLDER)
+    find_placeholder(command).is_some()
 }
 
 /// Shell-quotes an absolute staged path. PowerShell takes a single-quoted
@@ -52,8 +63,11 @@ pub fn quote_staged_path(shell: &str, path: &Path) -> Result<String, String> {
 /// A `\name` or `/name` suffix stays one shell argument only when quoted with
 /// its folder: PowerShell reads `'folder'\name` as two arguments, and CMD
 /// splits `"folder"\name with spaces` the same way. Matching runs against the
-/// staged names so a spaced file still resolves; anything else consumes one
-/// token so a typo fails as one missing path instead of two stray arguments.
+/// staged names so a spaced file still resolves; anything else consumes the
+/// whole relative path behind the placeholder — every further `\` or `/`
+/// segment included — so a typo fails as one missing path instead of two
+/// stray arguments (`<FilesDir>\sub\a.txt` expands to one quoted
+/// `'<dir>\sub\a.txt'`, never `'<dir>\sub'\a.txt`).
 /// Returns the joined file name (or `None` for the folder alone) plus how many
 /// `after` bytes the reference covered.
 fn match_placeholder_suffix(after: &str, filenames: &[String]) -> (Option<String>, usize) {
@@ -65,8 +79,12 @@ fn match_placeholder_suffix(after: &str, filenames: &[String]) -> (Option<String
     let rest = &after[1..];
     let mut best: Option<&String> = None;
     for name in filenames {
+        // `get` keeps non-ASCII typing from panicking on a split boundary:
+        // a failed slice simply misses and falls through to the token below.
         if rest.len() >= name.len()
-            && rest[..name.len()].eq_ignore_ascii_case(name)
+            && rest
+                .get(..name.len())
+                .is_some_and(|head| head.eq_ignore_ascii_case(name))
             && best.is_none_or(|current: &String| name.len() > current.len())
         {
             let boundary = match rest[name.len()..].chars().next() {
@@ -81,14 +99,23 @@ fn match_placeholder_suffix(after: &str, filenames: &[String]) -> (Option<String
     if let Some(name) = best {
         return (Some(name.clone()), 1 + name.len());
     }
+    // Unknown text still joins as one relative path: separators keep
+    // consuming so `sub\a.txt` stays a single argument. Only true shell
+    // boundaries (whitespace, quotes, operators) terminate the suffix — a
+    // space still ends it, since an unquoted space always separates
+    // arguments in both shells. Trailing separators are trimmed back off so
+    // `<FilesDir>\a.txt\` keeps the lone-separator-drop below load-bearing.
     let mut token_len = 0;
     for c in rest.chars() {
-        if c.is_whitespace()
-            || "<>\"'`&|();\r\n\\/".contains(c)
-        {
+        if c.is_whitespace() || "<>\"'`&|();\r\n".contains(c) {
             break;
         }
         token_len += c.len_utf8();
+    }
+    while token_len > 0
+        && rest[..token_len].chars().next_back().is_some_and(|c| c == '\\' || c == '/')
+    {
+        token_len -= rest[..token_len].chars().next_back().map(|c| c.len_utf8()).unwrap_or(0);
     }
     if token_len == 0 {
         return (None, 0);
@@ -102,6 +129,11 @@ fn match_placeholder_suffix(after: &str, filenames: &[String]) -> (Option<String
 /// in quotes normalizes to the same single path — the owner's quoting
 /// replaces the author's adjacent pair instead of nesting inside it
 /// (One source of truth per Windows command).
+///
+/// A glued prefix (`file://<FilesDir>\a.txt`, `--in=<FilesDir>\a.txt`,
+/// `prefix<FilesDir>`) joins inside the owner's quotes as one argument
+/// (`"file://C:\...\a.txt"`), since `prefix"C:\..."` splits in CMD while the
+/// single quoted form stays one argument in both shells.
 pub fn expand_files_dir(
     command: &str,
     shell: &str,
@@ -110,10 +142,21 @@ pub fn expand_files_dir(
 ) -> Result<String, String> {
     let mut expanded = String::with_capacity(command.len() + dir.as_os_str().len());
     let mut rest = command;
-    while let Some(at) = rest.find(FILES_DIR_PLACEHOLDER) {
+    while let Some(at) = find_placeholder(rest) {
         expanded.push_str(&rest[..at]);
         let after = &rest[at + FILES_DIR_PLACEHOLDER.len()..];
         let (suffix, mut consumed) = match_placeholder_suffix(after, filenames);
+        // A glued prefix stays one argument only inside the owner's quotes:
+        // scan back past the placeholder to the last shell boundary and lift
+        // that text into the quoted path. Boundaries mirror the suffix
+        // terminators (whitespace, quotes, operators) — everything else
+        // (`file://`, `--flag=`, `prefix`) is prefix content.
+        let token_start = expanded
+            .rfind(|c: char| c.is_whitespace() || "\"'`&|();<>".contains(c))
+            .map(|i| i + expanded[i..].chars().next().map(|c| c.len_utf8()).unwrap_or(1))
+            .unwrap_or(0);
+        let prefix: String = expanded[token_start..].to_string();
+        expanded.truncate(token_start);
         // Only an immediately adjacent matching pair normalizes: a quote
         // opened earlier spans shell syntax around the reference that the
         // owner must not rewrite.
@@ -124,15 +167,53 @@ pub fn expand_files_dir(
             expanded.pop();
             consumed += quote.len_utf8();
         }
-        let quoted = match suffix {
-            Some(name) => quote_staged_path(shell, &dir.join(&name))?,
-            None => quote_staged_path(shell, dir)?,
+        // A lone separator left after the reference is a stray, not a new
+        // segment: leaving it outside the owner's quotes glues it onto the
+        // path in both shells (`...file.html\`), so a separator followed only
+        // by a boundary is dropped instead (One source of truth per Windows
+        // command keeps the quoting shape in this owner alone).
+        if let Some(sep) = after[consumed..].chars().next() {
+            if sep == '\\' || sep == '/' {
+                let tail = &after[consumed + sep.len_utf8()..];
+                let boundary = match tail.chars().next() {
+                    None => true,
+                    Some(next) => next.is_whitespace() || "<>\"'`&|();".contains(next),
+                };
+                if boundary {
+                    consumed += sep.len_utf8();
+                }
+            }
+        }
+        let staged = match &suffix {
+            Some(name) => dir.join(name),
+            None => dir.to_path_buf(),
         };
+        let full = format!("{}{}", prefix, staged.to_string_lossy());
+        let quoted = quote_full_path(shell, &full)?;
         expanded.push_str(&quoted);
         rest = &after[consumed..];
     }
     expanded.push_str(rest);
     Ok(expanded)
+}
+
+/// Quotes one already-joined `prefix + staged absolute path` for the shell.
+/// PowerShell takes a single-quoted literal (`''` escapes a quote); CMD takes
+/// a double-quoted string. Split from [`quote_staged_path`] so the prefix
+/// joins inside the same pair instead of gluing onto its opening quote.
+fn quote_full_path(shell: &str, full: &str) -> Result<String, String> {
+    match shell {
+        "powershell" => Ok(format!("'{}'", full.replace('\'', "''"))),
+        "cmd" => {
+            if full.contains('"') || full.contains('\n') || full.contains('\r') {
+                return Err("the staged files path cannot be quoted for cmd".to_string());
+            }
+            Ok(format!("\"{full}\""))
+        }
+        other => Err(format!(
+            "'{other}' is not a supported Quick Action shell — expected 'powershell' or 'cmd'"
+        )),
+    }
 }
 
 /// The staging-time name rule mirrors the stored file-name rule: basenames
@@ -401,6 +482,153 @@ mod tests {
             "echo hello"
         );
         assert!(contains_files_placeholder("echo <FilesDir>"));
+    }
+
+    #[test]
+    fn placeholder_matches_regardless_of_case() {
+        let dir = Path::new(r"C:\Temp\staged 1");
+        let names = vec!["page.html".to_string()];
+        assert!(contains_files_placeholder("run <filesdir>"));
+        assert!(contains_files_placeholder("run <FILESDIR>"));
+        assert!(contains_files_placeholder("run <Filesdir>"));
+        assert!(!contains_files_placeholder("run hello"));
+        assert_eq!(
+            expand_files_dir("Start-Process <filesdir>\\page.html", "powershell", dir, &names)
+                .unwrap(),
+            r"Start-Process 'C:\Temp\staged 1\page.html'"
+        );
+        assert_eq!(
+            expand_files_dir("echo prefix<filesdir>", "powershell", dir, &names).unwrap(),
+            r"echo 'prefixC:\Temp\staged 1'"
+        );
+        assert_eq!(
+            expand_files_dir(
+                "copy <FILESDIR>\\a.txt <FilesDir>\\b.txt",
+                "powershell",
+                dir,
+                &["a.txt".to_string(), "b.txt".to_string()]
+            )
+            .unwrap(),
+            r"copy 'C:\Temp\staged 1\a.txt' 'C:\Temp\staged 1\b.txt'"
+        );
+    }
+
+    #[test]
+    fn lone_trailing_separator_after_reference_is_dropped() {
+        let dir = Path::new(r"C:\Temp\staged 1");
+        let names = vec!["a.txt".to_string()];
+        assert_eq!(
+            expand_files_dir("dir <FilesDir>\\", "cmd", dir, &[]).unwrap(),
+            r#"dir "C:\Temp\staged 1""#
+        );
+        assert_eq!(
+            expand_files_dir("cat <FilesDir>/", "powershell", dir, &[]).unwrap(),
+            r"cat 'C:\Temp\staged 1'"
+        );
+        assert_eq!(
+            expand_files_dir("notepad <FilesDir>\\a.txt\\", "powershell", dir, &names).unwrap(),
+            r"notepad 'C:\Temp\staged 1\a.txt'"
+        );
+        assert_eq!(
+            expand_files_dir("echo <FilesDir>\\ more", "powershell", dir, &[]).unwrap(),
+            r"echo 'C:\Temp\staged 1' more"
+        );
+        // A separator with more path behind it stays one quoted argument:
+        // even an unknown subpath fails as one missing path, never as a
+        // quoted folder plus a stray `\file` outside the quotes.
+        assert_eq!(
+            expand_files_dir("type <FilesDir>\\sub\\a.txt", "powershell", dir, &names).unwrap(),
+            r"type 'C:\Temp\staged 1\sub\a.txt'"
+        );
+        assert_eq!(
+            expand_files_dir("type <FilesDir>/sub/deep/a.txt", "cmd", dir, &names).unwrap(),
+            r#"type "C:\Temp\staged 1\sub/deep/a.txt""#
+        );
+    }
+
+    #[test]
+    fn multi_segment_suffix_stays_one_quoted_argument() {
+        let dir = Path::new(r"C:\Temp\staged 1");
+        let names = vec!["a.txt".to_string()];
+        // Unknown subpaths join as one relative path: a single missing-path
+        // error downstream, never a quoted folder plus a stray segment.
+        assert_eq!(
+            expand_files_dir("type <FilesDir>\\sub\\a.txt", "powershell", dir, &names).unwrap(),
+            r"type 'C:\Temp\staged 1\sub\a.txt'"
+        );
+        // Shell operators still terminate the suffix: only path text joins.
+        assert_eq!(
+            expand_files_dir("type <FilesDir>\\sub\\a.txt&echo done", "powershell", dir, &names)
+                .unwrap(),
+            r"type 'C:\Temp\staged 1\sub\a.txt'&echo done"
+        );
+        // A known spaced file still resolves through the match, not the token.
+        let spaced = vec!["my file.txt".to_string()];
+        assert_eq!(
+            expand_files_dir("notepad <FilesDir>\\my file.txt", "cmd", dir, &spaced).unwrap(),
+            r#"notepad "C:\Temp\staged 1\my file.txt""#
+        );
+    }
+
+    #[test]
+    fn glued_prefix_joins_inside_one_quoted_argument() {
+        let dir = Path::new(r"C:\Temp\staged 1");
+        let names = vec!["index.html".to_string()];
+        // URL prefix: one argument, not `prefix"path"`.
+        assert_eq!(
+            expand_files_dir("open file://<FilesDir>\\index.html", "cmd", dir, &names).unwrap(),
+            r#"open "file://C:\Temp\staged 1\index.html""#
+        );
+        assert_eq!(
+            expand_files_dir("open file://<FilesDir>\\index.html", "powershell", dir, &names)
+                .unwrap(),
+            r"open 'file://C:\Temp\staged 1\index.html'"
+        );
+        // Flag prefix with `=`.
+        assert_eq!(
+            expand_files_dir("tool --in=<FilesDir>\\index.html", "cmd", dir, &names).unwrap(),
+            r#"tool "--in=C:\Temp\staged 1\index.html""#
+        );
+        // Bare glued word.
+        assert_eq!(
+            expand_files_dir("echo prefix<FilesDir>\\index.html", "cmd", dir, &names).unwrap(),
+            r#"echo "prefixC:\Temp\staged 1\index.html""#
+        );
+        // Author-quoted prefix normalizes to one pair, never nested quotes.
+        assert_eq!(
+            expand_files_dir("\"prefix<FilesDir>\\index.html\"", "cmd", dir, &names).unwrap(),
+            r#""prefixC:\Temp\staged 1\index.html""#
+        );
+        assert_eq!(
+            expand_files_dir("\"file://<FilesDir>\\index.html\"", "cmd", dir, &names).unwrap(),
+            r#""file://C:\Temp\staged 1\index.html""#
+        );
+        // The reported `start` shapes expand truthfully: bare placeholder
+        // quotes the path (CMD then treats it as a title — the caller's
+        // `start ""` fixes that, not the placeholder owner).
+        assert_eq!(
+            expand_files_dir("start <FilesDir>\\index.html", "cmd", dir, &names).unwrap(),
+            r#"start "C:\Temp\staged 1\index.html""#
+        );
+        assert_eq!(
+            expand_files_dir("start \"\" \"<FilesDir>\\index.html\"", "cmd", dir, &names).unwrap(),
+            r#"start "" "C:\Temp\staged 1\index.html""#
+        );
+        assert_eq!(
+            expand_files_dir("Start-Process <FilesDir>\\index.html", "powershell", dir, &names)
+                .unwrap(),
+            r"Start-Process 'C:\Temp\staged 1\index.html'"
+        );
+    }
+
+    #[test]
+    fn non_ascii_typing_never_panics_the_match() {
+        let dir = Path::new(r"C:\Temp\staged 1");
+        let names = vec!["ax".to_string()];
+        assert_eq!(
+            expand_files_dir("echo <FilesDir>\\aéx", "powershell", dir, &names).unwrap(),
+            r"echo 'C:\Temp\staged 1\aéx'"
+        );
     }
 
     #[test]
