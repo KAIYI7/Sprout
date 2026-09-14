@@ -196,6 +196,14 @@ _Avoid_: Settings toggle, separate Add-with-AI dialog
 A model question that blocks generation until the user picks or answers. A vague request returns `Clarify` with 2–4 pickable choices plus a free-text slot — each aspect asked once (answered never repeats, a distinct one still asks), `draft-anyway` ending the grill early. Carries no executable code; answering never widens disclosure.
 _Avoid_: Script draft (before answering), executed script
 
+**Prerequisite**:
+An external program, module, or capability a Script draft depends on to run, such as an executable on PATH or a language runtime. Unknown means `Not verifiable` — never guessed.
+_Avoid_: Dependency (a Plan term), package
+
+**Motion token**:
+A named design-system value for animation timing or easing that every screen reuses instead of inventing its own durations.
+_Avoid_: CSS variable (implementation), transition value
+
 **Presence activity**:
 The static Discord Rich Presence text Sprout shows while it runs: `details: "Using Sprout"`, `state` following a fixed section allowlist (default `"Composing presets"`), plus a session-start timestamp for the elapsed clock. No preset/action names, paths, counts, or run states; silent no-op when Discord is closed; cleared on actual exit. Display only; never part of Presets, backups, or exports.
 _Avoid_: User status, dynamic presence
