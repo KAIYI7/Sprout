@@ -150,7 +150,10 @@
 
   .packet.animate {
     opacity: 0;
-    animation: rise 360ms var(--ease-out) forwards;
+    /* WHY the spring: card arrivals are interruptible, so they carry the
+       restrained spring while announcements keep the plain ease-out
+       (ADR-0034); the entrance stays capped well under the large budget. */
+    animation: rise 300ms var(--ease-spring) forwards;
   }
 
   @keyframes rise {

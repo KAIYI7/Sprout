@@ -22,6 +22,7 @@ import type {
   LogLocations,
   PresetRecord,
   PreFixResult,
+  PrerequisiteVerdict,
   Product,
   ProductPresetImpact,
   QuickAction,
@@ -496,6 +497,16 @@ export function aiCheckCandidate(
   command: string
 ): Promise<AiCheckVerdict> {
   return invoke<AiCheckVerdict>("ai_check_candidate", { shell, command });
+}
+
+/** Read-only prerequisite detection: whether each named prerequisite is
+ *  installed (`present` / `not-found` / `not-verifiable` per entry), without
+ *  running draft text, without network, without changing the machine. Keys
+ *  are the closed v1 catalog (`node`, `python`, `playwright`,
+ *  `winget:<id>`, `extension:<id>`, or a PATH executable name). Timeboxed
+ *  backend-side; timeouts read as `not-verifiable`. */
+export function detectPrerequisites(names: string[]): Promise<PrerequisiteVerdict[]> {
+  return invoke<PrerequisiteVerdict[]>("detect_prerequisites", { names });
 }
 
 /** Diagnoses a selected saved script plus its error output: an explanation,

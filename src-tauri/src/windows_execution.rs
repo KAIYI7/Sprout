@@ -1,5 +1,6 @@
 //! ADR-0029 keeps process lifetime and shell invocation knowledge with their owners.
 mod files;
+mod prereqs;
 mod process;
 mod shell;
 
@@ -13,5 +14,8 @@ pub(crate) use process::{
     kill_tree, owned_process_usage, powershell_argv, powershell_output, run_timed_process, run_timed_process_in,
     spawn_action, spawn_action_stop, spawn_owned_hidden, spawn_user_command, system_memory_mb,
     OwnedProcess, ProcessRun,
+};
+pub(crate) use prereqs::{
+    detect_with, needs_winget_snapshot, NativeProbes, PrerequisiteVerdict,
 };
 pub use shell::{launch_elevated, open_external};

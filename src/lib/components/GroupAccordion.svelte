@@ -1,5 +1,8 @@
 <script lang="ts">
   import type { Snippet } from "svelte";
+  import { fly } from "svelte/transition";
+  import { cubicOut } from "svelte/easing";
+  import { animation } from "$lib/animation.svelte";
   import Badge from "./Badge.svelte";
   import Disclosure from "./Disclosure.svelte";
 
@@ -46,7 +49,14 @@
     {/if}
   </div>
   {#if open}
-    <div id={controls} class="group__rows">
+    <!-- WHY fly and not height: panels settle with opacity/transform only so
+         expansion never shifts layout, and the off switch renders the end
+         state instantly (ADR-0034; ADR-0028 off path). -->
+    <div
+      id={controls}
+      class="group__rows"
+      transition:fly={animation.mode === "on" ? { y: -6, duration: 200, easing: cubicOut } : { duration: 0 }}
+    >
       {@render children()}
     </div>
   {/if}

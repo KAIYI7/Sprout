@@ -1985,8 +1985,7 @@
     border: 1px solid var(--border-strong);
     border-radius: var(--radius);
     padding: 8px 10px;
-    transition: border-color var(--dur-fast) var(--ease-out),
-      box-shadow var(--dur-fast) var(--ease-out);
+    transition: border-color var(--dur-fast) var(--ease-out);
   }
 
   .field__cmd:focus {
@@ -2061,8 +2060,7 @@
     background: var(--bg-page);
     border: 1px solid var(--border-strong);
     border-radius: var(--radius);
-    transition: border-color var(--dur-fast) var(--ease-out),
-      box-shadow var(--dur-fast) var(--ease-out);
+    transition: border-color var(--dur-fast) var(--ease-out);
   }
 
   .cmdwrap:focus-within {

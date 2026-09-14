@@ -71,8 +71,7 @@
     border: 1px solid var(--border-strong);
     border-radius: var(--radius);
     padding: 9px 32px 9px 32px;
-    transition: border-color var(--dur-fast) var(--ease-out),
-      box-shadow var(--dur-fast) var(--ease-out);
+    transition: border-color var(--dur-fast) var(--ease-out);
   }
 
   .search__input::placeholder {

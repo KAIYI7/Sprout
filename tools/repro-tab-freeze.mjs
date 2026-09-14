@@ -1,5 +1,7 @@
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
+import fs from "node:fs";
+import os from "node:os";
 import net from "node:net";
 import path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
@@ -24,10 +26,25 @@ Options:
   --ipc-probe      time the list IPC round trips on boot, then exit
   --port P         CDP port (default: first free of 9222,9333,9444,9555,9666)
   --keep           leave the app running after the verdict (debugging only)
+  --large-plan N   seed N synthetic requirements across --large-presets presets,
+                   then time compute_plan plus the nav sweep with them present
+                   (default 0 = skip the seeded phase)
+  --large-presets K  preset split for --large-plan (default 6)
+  --large-backup N write N synthetic backup records to a temp file, then time
+                   inspect_backup on it (default 0 = skip; the file is deleted
+                   afterwards, the Library is never imported into)
+  --seed-prefix S  id prefix for seeded rows (default "repro-large"); a clash
+                   with existing rows aborts instead of touching user data
+  --attach         drive the already-running app on --port (default 9222) via
+                   its remote-debugging endpoint instead of spawning a second
+                   app; never kills the app afterwards (for a live dev stack
+                   whose vite port a fresh spawn could not bind)
+  --cleanup-only   with --attach: delete every --seed-prefix row and exit
+                   without measuring (leak recovery, no verdict)
   --help`;
 
 function parseArgs(argv) {
-  const args = { mode: "exe", reps: 1, budget: 5000, stall: 1000, delay: 400, sample: 100, port: null, target: null, targets: null, ipcProbe: false, keep: false };
+  const args = { mode: "exe", reps: 1, budget: 5000, stall: 1000, delay: 400, sample: 100, port: null, target: null, targets: null, ipcProbe: false, keep: false, largePlan: 0, largePresets: 6, largeBackup: 0, seedPrefix: "repro-large", attach: false, cleanupOnly: false };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     switch (a) {
@@ -43,6 +60,12 @@ function parseArgs(argv) {
       case "--targets": args.targets = argv[++i].split(","); break;
       case "--ipc-probe": args.ipcProbe = true; break;
       case "--port": args.port = Number(argv[++i]); break;
+      case "--large-plan": args.largePlan = Number(argv[++i]); break;
+      case "--large-presets": args.largePresets = Number(argv[++i]); break;
+      case "--large-backup": args.largeBackup = Number(argv[++i]); break;
+      case "--seed-prefix": args.seedPrefix = argv[++i]; break;
+      case "--attach": args.attach = true; break;
+      case "--cleanup-only": args.cleanupOnly = true; break;
       default: throw new Error(`unknown option: ${a}\n${USAGE}`);
     }
   }
@@ -309,20 +332,206 @@ function verdict(report, stallMs, budgetMs) {
   const bad = report.clicks.filter(
     (c) => !c.ok || c.landMs > budgetMs || c.stalls.length > 0,
   );
-  return { red: bad.length > 0, bad };
+  const heavyBad = (report.heavy ?? []).filter((h) => !h.ok || h.stalls.length > 0);
+  return { red: bad.length > 0 || heavyBad.length > 0, bad, heavyBad };
+}
+
+// WHY fixtures go through the UI-owned create/delete commands: the empty
+// first-run decision (No first-run seed) stays intact — seeded rows are
+// deliberate data like any user entry, and cleanup below removes them, so a
+// run never leaves a warm Library behind.
+function planFixture(prefix, stamp, totalReqs, presetCount) {
+  const policies = [{ kind: "latest" }, { kind: "pinned", version: "9.9.9" }, { kind: "present" }];
+  const products = [];
+  for (let i = 0; i < totalReqs; i++) {
+    products.push({
+      id: `${prefix}-prod-${i}`,
+      name: `Repro Large Product ${stamp} ${i}`,
+      winget_id: `ReproNonexistent.Vendor${i}`,
+      install_location_hint: null,
+      install_dir: null,
+      default_env: [],
+    });
+  }
+  const per = Math.ceil(totalReqs / presetCount);
+  const presets = [];
+  for (let k = 0; k < presetCount; k++) {
+    const reqs = [];
+    for (let j = k * per; j < Math.min((k + 1) * per, totalReqs); j++) {
+      const p = products[j];
+      reqs.push({
+        product: { ...p },
+        step: { type: "winget", id: p.winget_id, scope: "machine" },
+        version_policy: policies[j % policies.length],
+        depends_on: [],
+        timeout_minutes: 10,
+        env: [],
+        verify: [],
+      });
+    }
+    if (reqs.length === 0) break;
+    presets.push({
+      id: `${prefix}-preset-${k}`,
+      schema_version: 1,
+      platform: "windows",
+      name: `Repro Large Preset ${stamp} ${k}`,
+      description: "Synthetic repro fixture, removed after the run.",
+      author: "repro-tab-freeze",
+      version: "1",
+      requirements: reqs,
+      imported: false,
+    });
+  }
+  return { products, presets };
+}
+
+// WHY the version-2 kind-tagged envelope: the single backup document format
+// (One backup document format) — inspect_backup covers the read/parse/validate
+// half on the blocking pool, which is the stall-relevant half; the merge half
+// is never exercised here so the Library is untouched.
+function backupFixture(prefix, stamp, total) {
+  const nProducts = Math.floor(total * 0.4);
+  const nClips = Math.floor(total * 0.25);
+  const nLaunch = Math.floor(total * 0.15);
+  const nActions = Math.floor(total * 0.15);
+  const nPresets = Math.max(0, total - nProducts - nClips - nLaunch - nActions);
+  const products = [];
+  for (let i = 0; i < nProducts; i++) {
+    products.push({
+      id: `${prefix}-bprod-${i}`,
+      name: `Repro Large Backup Product ${stamp} ${i}`,
+      winget_id: `ReproNonexistent.Backup${i}`,
+      install_location_hint: null,
+      install_dir: null,
+      default_env: [],
+    });
+  }
+  const presets = [];
+  for (let k = 0; k < nPresets; k++) {
+    const pid = `${prefix}-bprod-${k % Math.max(1, nProducts)}`;
+    presets.push({
+      id: `${prefix}-bpreset-${k}`,
+      schema_version: 1,
+      platform: "windows",
+      name: `Repro Large Backup Preset ${stamp} ${k}`,
+      description: "Synthetic repro fixture, never imported.",
+      author: "repro-tab-freeze",
+      version: "1",
+      requirements: [
+        {
+          product: {
+            id: pid,
+            name: `Repro Large Backup Product ${stamp} ${k % Math.max(1, nProducts)}`,
+            winget_id: `ReproNonexistent.Backup${k % Math.max(1, nProducts)}`,
+            install_location_hint: null,
+            install_dir: null,
+            default_env: [],
+          },
+          step: { type: "winget", id: `ReproNonexistent.Backup${k % Math.max(1, nProducts)}`, scope: "machine" },
+          version_policy: { kind: "latest" },
+          depends_on: [],
+          timeout_minutes: 10,
+          env: [],
+          verify: [],
+        },
+      ],
+      imported: false,
+    });
+  }
+  const launch_entries = [];
+  for (let i = 0; i < nLaunch; i++) {
+    launch_entries.push({
+      name: `Repro Large Entry ${stamp} ${i}`,
+      kind: "command",
+      target: `cmd.exe /c echo repro-large-${i}`,
+      shell: "none",
+      show_window: false,
+      desktop_id: null,
+      show_in_dock: true,
+    });
+  }
+  const quick_actions = [];
+  for (let i = 0; i < nActions; i++) {
+    quick_actions.push({
+      name: `Repro Large Action ${stamp} ${i}`,
+      shell: "powershell",
+      command: `Write-Host repro-large-${i}`,
+      cwd: null,
+      stoppable: false,
+      stop_command: null,
+      auto_run: false,
+      show_in_dock: true,
+    });
+  }
+  const clips = [];
+  for (let i = 0; i < nClips; i++) {
+    clips.push({
+      name: `repro large clip ${stamp} ${i}`,
+      content: `repro-large clip body ${stamp} ${i} — synthetic fixture text`,
+      show_in_dock: true,
+    });
+  }
+  return {
+    kind: "sprout-backup",
+    version: 2,
+    exported_at: Math.floor(Date.now() / 1000),
+    products,
+    presets,
+    launch_entries,
+    quick_actions,
+    quick_action_files: [],
+    clips,
+  };
+}
+
+async function invokeInPage(cdp, cmd, payload) {
+  return cdp.eval(`(async () => {
+    const invoke = window.__TAURI_INTERNALS__.invoke;
+    return await invoke(${JSON.stringify(cmd)}, ${JSON.stringify(payload ?? {})});
+  })()`);
+}
+
+async function librarySnapshot(cdp, prefix) {
+  return cdp.eval(`(async () => {
+    const invoke = window.__TAURI_INTERNALS__.invoke;
+    const products = await invoke("list_products", { query: null });
+    const presets = await invoke("list_presets");
+    const clashes = [
+      ...products.map((p) => p.id).filter((id) => id.startsWith(${JSON.stringify(prefix)})),
+      ...presets.map((p) => p.id).filter((id) => id.startsWith(${JSON.stringify(prefix)})),
+    ];
+    return { products: products.length, presets: presets.length, clashes };
+  })()`);
+}
+
+async function timeHeavy(cdp, label, sampleMs, stallMs, probe) {
+  const sampler = startSampler(cdp, sampleMs);
+  const t0 = Date.now();
+  try {
+    const summary = await probe();
+    const stalls = stallsFrom(sampler.samples, stallMs);
+    return { label, ok: true, ms: Date.now() - t0, stalls, summary };
+  } catch (e) {
+    const stalls = stallsFrom(sampler.samples, stallMs);
+    return { label, ok: false, ms: Date.now() - t0, stalls, error: String(e && e.message ? e.message : e) };
+  } finally {
+    sampler.stop();
+  }
 }
 
 async function main() {
   const args = parseArgs(process.argv.slice(2));
-  const port = await pickFreePort(args.port);
-  const bootTimeout = args.mode === "dev" ? 600_000 : 30_000;
+  // WHY no free-port probe in attach mode: the port names someone else's live
+  // endpoint — probing "free" would pick the wrong one and drive a stranger.
+  const port = args.attach ? (args.port ?? 9222) : await pickFreePort(args.port);
+  const bootTimeout = args.attach ? 30_000 : args.mode === "dev" ? 600_000 : 30_000;
 
   console.log(
-    `repro-tab-freeze mode=${args.mode} port=${port} reps=${args.reps} budget=${args.budget}ms stall=${args.stall}ms delay=${args.delay}ms sample=${args.sample}ms`,
+    `repro-tab-freeze mode=${args.attach ? "attach" : args.mode} port=${port} reps=${args.reps} budget=${args.budget}ms stall=${args.stall}ms delay=${args.delay}ms sample=${args.sample}ms largePlan=${args.largePlan} largePresets=${args.largePresets} largeBackup=${args.largeBackup}`,
   );
 
-  const child = launch(args.mode, port);
-  const report = { clicks: [] };
+  const child = args.attach ? null : launch(args.mode, port);
+  const report = { clicks: [], heavy: [] };
   let cdp = null;
   let infraError = null;
 
@@ -352,6 +561,30 @@ async function main() {
     );
     console.log(`app ready, active tab=${settled}`);
 
+    if (args.cleanupOnly) {
+      if (!args.attach) throw new Error("--cleanup-only needs --attach (it deletes rows in a live app)");
+      const rows = await cdp.eval(`(async () => {
+        const invoke = window.__TAURI_INTERNALS__.invoke;
+        const products = await invoke("list_products", { query: null });
+        const presets = await invoke("list_presets");
+        return {
+          productIds: products.map((p) => p.id).filter((id) => id.startsWith(${JSON.stringify(args.seedPrefix)})),
+          presetIds: presets.map((p) => p.id).filter((id) => id.startsWith(${JSON.stringify(args.seedPrefix)})),
+        };
+      })()`);
+      for (const id of rows.presetIds) {
+        await invokeInPage(cdp, "delete_preset", { id });
+      }
+      for (const id of rows.productIds) {
+        await invokeInPage(cdp, "delete_product", { id });
+      }
+      console.log(`cleanup-only: removed ${rows.presetIds.length} presets, ${rows.productIds.length} products with prefix ${JSON.stringify(args.seedPrefix)}`);
+      process.exitCode = 0;
+      cdp.close();
+      await sleep(100);
+      process.exit(0);
+    }
+
     if (args.ipcProbe) {
       const names = ["list_products", "list_presets", "list_runs", "get_settings", "list_logs"];
       for (const name of names) {
@@ -363,17 +596,110 @@ async function main() {
         console.log(`ipc ${name.padEnd(16)} ${ms}ms`);
       }
     } else {
-      const sweep = args.target ? [args.target] : args.targets ? args.targets : SWEEP;
-      for (let rep = 0; rep < args.reps; rep++) {
-        for (const href of sweep) {
-          await clickTab(cdp, href, args.budget, args.stall, args.sample, args.delay, report);
+      const seed = { presetIds: [], productIds: [], backupPath: null, before: null };
+      try {
+        if (args.largePlan > 0 || args.largeBackup > 0) {
+          const stamp = Date.now().toString(36);
+          seed.before = await librarySnapshot(cdp, args.seedPrefix);
+          if (seed.before.clashes.length > 0) {
+            throw new Error(
+              `seed prefix ${JSON.stringify(args.seedPrefix)} already present (${seed.before.clashes.length} rows) — refusing to touch existing data; pick --seed-prefix`,
+            );
+          }
+          console.log(`library before seed: ${seed.before.products} products, ${seed.before.presets} presets`);
+          if (args.largePlan > 0) {
+            const fix = planFixture(args.seedPrefix, stamp, args.largePlan, Math.max(1, args.largePresets));
+            for (let i = 0; i < fix.products.length; i++) {
+              await invokeInPage(cdp, "create_product", { product: fix.products[i] });
+              if ((i + 1) % 200 === 0) console.log(`seed products ${i + 1}/${fix.products.length}`);
+            }
+            for (const preset of fix.presets) {
+              await invokeInPage(cdp, "create_preset", { preset });
+            }
+            seed.presetIds = fix.presets.map((p) => p.id);
+            seed.productIds = fix.products.map((p) => p.id);
+            console.log(`seeded plan: ${fix.products.length} products in ${fix.presets.length} presets`);
+          }
+          if (args.largeBackup > 0) {
+            const doc = backupFixture(args.seedPrefix, stamp, args.largeBackup);
+            seed.backupPath = path.join(fs.realpathSync(os.tmpdir()), `sprout-repro-backup-${stamp}.json`);
+            fs.writeFileSync(seed.backupPath, JSON.stringify(doc));
+            const bytes = fs.statSync(seed.backupPath).size;
+            const records = doc.products.length + doc.presets.length + doc.launch_entries.length + doc.quick_actions.length + doc.clips.length;
+            console.log(`backup fixture: ${records} records, ${(bytes / 1024).toFixed(0)} KiB at ${seed.backupPath}`);
+          }
+          if (seed.presetIds.length > 0) {
+            const ids = seed.presetIds;
+            report.heavy.push(await timeHeavy(cdp, `compute_plan ${args.largePlan}reqs`, args.sample, args.stall, () =>
+              cdp.eval(`(async () => {
+                const t0 = performance.now();
+                const c = await window.__TAURI_INTERNALS__.invoke("compute_plan", ${JSON.stringify({ presetIds: ids })});
+                return { ms: Math.round(performance.now() - t0), entries: c.entries.length };
+              })()`),
+            ));
+          }
+          if (seed.backupPath) {
+            const backupPath = seed.backupPath;
+            report.heavy.push(await timeHeavy(cdp, `inspect_backup`, args.sample, args.stall, () =>
+              cdp.eval(`(async () => {
+                const t0 = performance.now();
+                const counts = await window.__TAURI_INTERNALS__.invoke("inspect_backup", ${JSON.stringify({ path: backupPath })});
+                return { ms: Math.round(performance.now() - t0), counts };
+              })()`),
+            ));
+          }
+        }
+        const sweep = args.target ? [args.target] : args.targets ? args.targets : SWEEP;
+        for (let rep = 0; rep < args.reps; rep++) {
+          for (const href of sweep) {
+            await clickTab(cdp, href, args.budget, args.stall, args.sample, args.delay, report);
+          }
+        }
+      } finally {
+        // WHY best-effort reverse-order removal with a targeted leftover check:
+        // a leaked fixture row would warm every future run, so leftovers are
+        // an infra failure, never a silent pass.
+        const leftovers = [];
+        for (const id of seed.presetIds) {
+          try {
+            await invokeInPage(cdp, "delete_preset", { id });
+          } catch {
+            leftovers.push(id);
+          }
+        }
+        for (const id of seed.productIds) {
+          try {
+            await invokeInPage(cdp, "delete_product", { id });
+          } catch {
+            leftovers.push(id);
+          }
+        }
+        if (seed.backupPath) {
+          try {
+            fs.unlinkSync(seed.backupPath);
+          } catch {}
+        }
+        if (seed.before) {
+          const after = await librarySnapshot(cdp, args.seedPrefix);
+          const prefixRows = after.clashes.length;
+          console.log(`library after cleanup: ${after.products} products, ${after.presets} presets (was ${seed.before.products}/${seed.before.presets})`);
+          if (leftovers.length > 0 || prefixRows > 0) {
+            throw new Error(`seed cleanup incomplete: ${leftovers.length} delete failures, ${prefixRows} prefixed rows remain`);
+          }
         }
       }
     }
   } catch (e) {
     infraError = e;
   } finally {
-    const { red, bad } = verdict(report, args.stall, args.budget);
+    const { red, bad, heavyBad } = verdict(report, args.stall, args.budget);
+    for (const h of report.heavy) {
+      const stallNote = h.stalls.length
+        ? ` STALLS: ${h.stalls.map((s) => `${s.max}ms`).join(", ")}`
+        : "";
+      const detail = h.ok ? JSON.stringify(h.summary) : `ERROR ${h.error}`;
+      console.log(`heavy ${h.label.padEnd(24)} ${h.ok ? "ok" : "FAILED"} ${h.ms}ms ${detail}${stallNote}`);
+    }
     for (const c of report.clicks) {
       const stallNote = c.stalls.length
         ? ` STALLS: ${c.stalls.map((s) => `${s.max}ms@+${s.from - c.start}ms`).join(", ")}`
@@ -385,7 +711,7 @@ async function main() {
 
     if (infraError) {
       console.error(`INFRA ERROR: ${infraError.message}`);
-      if (child.tail) console.error(child.tail.slice(-10).join(""));
+      if (child && child.tail) console.error(child.tail.slice(-10).join(""));
       process.exitCode = 2;
     } else {
       const log = extractLog(cdp);
@@ -400,7 +726,7 @@ async function main() {
     }
 
     cdp?.close();
-    if (!args.keep) {
+    if (!args.keep && !args.attach && child) {
       killTree(child);
       await sleep(500);
     }

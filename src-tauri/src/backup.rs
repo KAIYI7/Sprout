@@ -316,18 +316,43 @@ pub fn export_quick_action(conn: &Connection, path: &str, id: i64) -> Result<Bac
 /// behind the confirmation dialog. Nothing is read from or written to the
 /// database.
 pub fn inspect_backup(path: &str) -> Result<BackupCounts, String> {
+    Ok(parse_backup_document(path)?.counts())
+}
+
+/// Reads and validates a backup file without touching the database: the
+/// blocking-pool unit behind the async `inspect_backup` / `import_backup`
+/// commands (ticket 201). File read, zip decode, JSON parse, and record
+/// validation all happen here, so the SQLite lock is never held across them.
+pub fn parse_backup_document(path: &str) -> Result<BackupDocument, String> {
     let doc = read_document(path)?;
     validate_records(&doc)?;
-    Ok(doc.counts())
+    Ok(doc)
 }
 
 /// Restores `path` into `conn`: parse → validate → transactional merge that
 /// skips identities which already exist. Returns {inserted, skipped} per
 /// collection for the summary notice.
+///
+/// WHY test-only: production composes the same two units across a lock
+/// boundary (parse on the blocking pool, merge under a short SQLite lock),
+/// so no production caller remains — the in-module suite keeps this
+/// synchronous composition as its fixture path.
+#[cfg(test)]
 pub fn import_backup(conn: &Connection, path: &str) -> Result<ImportSummary, String> {
-    let doc = read_document(path)?;
-    validate_records(&doc)?;
-    merge(conn, &doc)
+    let doc = parse_backup_document(path)?;
+    merge_backup_document(conn, &doc)
+}
+
+/// Merges an already-parsed and validated document into `conn`: the
+/// short-lock unit behind the async `import_backup` command (ticket 201).
+/// Only this transactional merge holds the SQLite lock; parsing stays on the
+/// blocking pool. Any failure rolls back everything, so a half-restored
+/// library is impossible.
+pub fn merge_backup_document(
+    conn: &Connection,
+    doc: &BackupDocument,
+) -> Result<ImportSummary, String> {
+    merge(conn, doc)
 }
 
 /// Reads and shape-checks a backup file, returning it in portable form:

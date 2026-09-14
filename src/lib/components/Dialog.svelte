@@ -1,6 +1,7 @@
 <script lang="ts">
   import type { Snippet } from "svelte";
   import { fade } from "svelte/transition";
+  import { cubicIn, cubicOut } from "svelte/easing";
   import Icon from "./Icon.svelte";
   import { dialogSubmitAction } from "$lib/dialogSubmit";
   import { animation } from "$lib/animation.svelte";
@@ -137,6 +138,9 @@
 </script>
 
 {#if open}
+  <!-- WHY split in/out: announcements arrive decelerating and leave
+       accelerating (ADR-0034 asymmetric enter/exit); off renders both ends
+       instantly through the existing switch path. -->
   <dialog
     bind:this={dialog}
     class="dialog"
@@ -147,7 +151,8 @@
     onkeydown={onKeydown}
     onpointerdown={onPointerDown}
     onclick={onBackdrop}
-    transition:fade={animation.mode === "on" ? { duration: 140 } : { duration: 0 }}
+    in:fade={animation.mode === "on" ? { duration: 200, easing: cubicOut } : { duration: 0 }}
+    out:fade={animation.mode === "on" ? { duration: 100, easing: cubicIn } : { duration: 0 }}
   >
     <header class="dialog__head">
       <h2 id={titleId} class="dialog__title">{title}</h2>

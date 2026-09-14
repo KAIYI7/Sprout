@@ -722,6 +722,23 @@ export interface BackupSelection {
   clips: boolean;
 }
 
+/** One prerequisite's install state (read-only detection): `present` (the
+ *  check ran and found it, with `version` where meaningful), `not-found`
+ *  (the check ran and did not), or `not-verifiable` (offline, timeout, or
+ *  otherwise uncertain — never a guess). `version` is null for PATH-only
+ *  presence and for every non-present verdict. */
+export type PrerequisiteStatus = "present" | "not-found" | "not-verifiable";
+
+/** One prerequisite check's answer: the echoed request key, its status, an
+ *  optional version, and a human sentence (`Not found for X` /
+ *  `Not verifiable — …`) the dialog surfaces as warn-plus-guidance. */
+export interface PrerequisiteVerdict {
+  name: string;
+  status: PrerequisiteStatus;
+  version: string | null;
+  detail: string;
+}
+
 /** The AI assistance routes (ADR-0031): off until configured, the user's own
  *  loopback service, managed local, or the later cloud slice. */
 export type AiProvider = "off" | "existing-local" | "managed" | "cloud";

@@ -284,18 +284,28 @@ fn export_backup(
 
 /// Reads a whole-app backup file and reports what a restore would write —
 /// the parsed counts behind the confirmation dialog. Nothing is written.
+/// File read, zip decode, JSON parse, and validation run on the blocking
+/// pool (ticket 201), so a large backup never stalls the window; the call
+/// signature is unchanged for existing callers.
 #[tauri::command]
-fn inspect_backup(path: String) -> Result<BackupCounts, String> {
-    backup::inspect_backup(&path)
+async fn inspect_backup(path: String) -> Result<BackupCounts, String> {
+    tauri::async_runtime::spawn_blocking(move || backup::inspect_backup(&path))
+        .await
+        .map_err(|e| format!("the backup could not be inspected: {e}"))?
 }
 
 /// Restores a whole-app backup: parse → validate → transactional merge that
 /// skips identities which already exist (never overwrites). Returns
-/// {inserted, skipped} per collection for the summary notice.
+/// {inserted, skipped} per collection for the summary notice. Parsing and
+/// validation run on the blocking pool while the SQLite lock covers only the
+/// merge (ticket 201); the call signature is unchanged for existing callers.
 #[tauri::command]
-fn import_backup(state: State<'_, AppState>, path: String) -> Result<ImportSummary, String> {
+async fn import_backup(state: State<'_, AppState>, path: String) -> Result<ImportSummary, String> {
+    let doc = tauri::async_runtime::spawn_blocking(move || backup::parse_backup_document(&path))
+        .await
+        .map_err(|e| format!("the backup could not be read: {e}"))??;
     let conn = lock(&state)?;
-    backup::import_backup(&conn, &path)
+    backup::merge_backup_document(&conn, &doc)
 }
 
 /// Writes one Quick Action to `path` as the unchanged backup document — a
@@ -325,27 +335,41 @@ fn take_pending_import(state: State<'_, AppState>) -> Result<Option<String>, Str
 /// elevation, nothing written), expected per-Requirement actions, and
 /// explicit conflicts for overlapping Products. Nothing runs from here.
 /// Requirements whose live reference is dangling (ADR-0007) are flagged in
-/// the Plan and never detected.
+/// the Plan and never detected. The SQLite lock covers only the preset
+/// snapshot; detection and composition run on the blocking pool (ticket
+/// 201), so a large composition never freezes the window. The call
+/// signature is unchanged for existing callers, and the plan page's
+/// stale-response guard keeps working untouched.
 #[tauri::command]
-fn compute_plan(state: State<'_, AppState>, preset_ids: Vec<String>) -> Result<Composition, String> {
-    let conn = lock(&state)?;
-    let mut presets = Vec::new();
-    for id in &preset_ids {
-        let record = db::get_preset(&conn, id)
-            .map_err(|e| e.to_string())?
-            .ok_or_else(|| {
-                format!("Preset '{id}' is no longer in the library — refresh and try again")
-            })?;
-        presets.push(record.preset);
-    }
+async fn compute_plan(
+    state: State<'_, AppState>,
+    preset_ids: Vec<String>,
+) -> Result<Composition, String> {
+    let (presets, engine) = {
+        let conn = lock(&state)?;
+        let mut presets = Vec::new();
+        for id in &preset_ids {
+            let record = db::get_preset(&conn, id)
+                .map_err(|e| e.to_string())?
+                .ok_or_else(|| {
+                    format!("Preset '{id}' is no longer in the library — refresh and try again")
+                })?;
+            presets.push(record.preset);
+        }
+        (presets, Arc::clone(&state.engine))
+    };
 
-    let requirements: Vec<&Requirement> = presets
-        .iter()
-        .flat_map(|preset| preset.requirements.iter())
-        .filter(|req| !req.unresolved)
-        .collect();
-    let detections = state.engine.detect_many(&requirements);
-    plan::compose(&presets, &detections)
+    tauri::async_runtime::spawn_blocking(move || {
+        let requirements: Vec<&Requirement> = presets
+            .iter()
+            .flat_map(|preset| preset.requirements.iter())
+            .filter(|req| !req.unresolved)
+            .collect();
+        let detections = engine.detect_many(&requirements);
+        plan::compose(&presets, &detections)
+    })
+    .await
+    .map_err(|e| format!("the plan could not be computed: {e}"))?
 }
 
 /// The Plan half of quick install (ticket 21): what the Plan page shows when
@@ -357,26 +381,39 @@ fn compute_plan(state: State<'_, AppState>, preset_ids: Vec<String>) -> Result<C
 /// starts through the standard `start_run` path. Nothing runs from here. A
 /// Product without a usable step is a clear error, never a silent success.
 #[tauri::command]
-fn quick_install_plan(state: State<'_, AppState>, product_id: String) -> Result<Composition, String> {
-    let conn = lock(&state)?;
-    let product = db::get_product(&conn, &product_id)
-        .map_err(|e| e.to_string())?
-        .ok_or_else(|| {
-            format!("Product '{product_id}' is no longer in the library — refresh and try again")
-        })?;
-    drop(conn);
-    let requirement = run::synthesize_quick_requirement(&product.product)?;
-    let detections = state.engine.detect_many(&[&requirement]);
-    let preset = Preset {
-        schema_version: 1,
-        platform: "windows".into(),
-        name: format!("Quick install — {}", product.product.name),
-        description: String::new(),
-        author: String::new(),
-        version: "1".into(),
-        requirements: vec![requirement],
+async fn quick_install_plan(
+    state: State<'_, AppState>,
+    product_id: String,
+) -> Result<Composition, String> {
+    // The SQLite lock covers only the product snapshot; synthesis, detection,
+    // and composition run on the blocking pool, like compute_plan above, so a
+    // quick-install preview never stalls the window. Same contract as before.
+    let (product, engine) = {
+        let conn = lock(&state)?;
+        let product = db::get_product(&conn, &product_id)
+            .map_err(|e| e.to_string())?
+            .ok_or_else(|| {
+                format!("Product '{product_id}' is no longer in the library — refresh and try again")
+            })?;
+        (product.product, Arc::clone(&state.engine))
     };
-    plan::compose(&[preset], &detections)
+
+    tauri::async_runtime::spawn_blocking(move || {
+        let requirement = run::synthesize_quick_requirement(&product)?;
+        let detections = engine.detect_many(&[&requirement]);
+        let preset = Preset {
+            schema_version: 1,
+            platform: "windows".into(),
+            name: format!("Quick install — {}", product.name),
+            description: String::new(),
+            author: String::new(),
+            version: "1".into(),
+            requirements: vec![requirement],
+        };
+        plan::compose(&[preset], &detections)
+    })
+    .await
+    .map_err(|e| format!("the quick-install plan could not be computed: {e}"))?
 }
 
 /// Starts the real run path (ADR-0003, ticket 06): the Plan is written to the
@@ -465,16 +502,23 @@ pub struct StartRun {
 
 /// Tails the worker's JSON-lines status file: returns every complete event
 /// appended since `offset` (a partial trailing line is left for the next
-/// read) plus the worker's completion marker, when there is one.
+/// read) plus the worker's completion marker, when there is one. File reads
+/// and JSON parsing run on the blocking pool (ticket 201), so tail polling
+/// during a run never stalls the window; the call signature is unchanged
+/// for existing callers.
 #[tauri::command]
-fn read_run_progress(run_id: String, offset: usize) -> Result<ProgressChunk, String> {
-    let dir = worker::run_dir(&run_id);
-    let (events, offset) = worker::read_status_events(&dir, offset);
-    Ok(ProgressChunk {
-        events,
-        offset,
-        done: worker::read_done(&dir),
+async fn read_run_progress(run_id: String, offset: usize) -> Result<ProgressChunk, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let dir = worker::run_dir(&run_id);
+        let (events, offset) = worker::read_status_events(&dir, offset);
+        ProgressChunk {
+            events,
+            offset,
+            done: worker::read_done(&dir),
+        }
     })
+    .await
+    .map_err(|e| format!("the run progress could not be read: {e}"))
 }
 
 /// Requests a stop of the running Plan: touches the worker's cancel marker.
@@ -639,10 +683,14 @@ fn set_presence_status(details: String, state: String) -> Result<(), String> {
 }
 
 /// The Logs screen's picture of where logs live and how big they are — no
-/// content, ever.
+/// content, ever. The directory walk and recursive sizing run on the
+/// blocking pool (ticket 201), so a large log history never stalls the
+/// window; the call signature is unchanged for existing callers.
 #[tauri::command]
-fn list_logs() -> Result<LogLocations, String> {
-    Ok(logs::list_log_locations())
+async fn list_logs() -> Result<LogLocations, String> {
+    tauri::async_runtime::spawn_blocking(logs::list_log_locations)
+        .await
+        .map_err(|e| format!("the log locations could not be listed: {e}"))
 }
 
 /// The answer to a self-update check (ADR-0012, ticket 73): the running
@@ -2563,6 +2611,34 @@ fn ai_disclosure_grants(session_id: u64) -> Result<Vec<ai_discovery::DisclosureG
     ai_discovery::disclosure_grants(session_id)
 }
 
+/// Read-only prerequisite detection behind the AI clarify UX: whether each
+/// named prerequisite is installed, without running draft text, without
+/// network, without changing the machine (ADR-0030, ADR-0031). Every probe is
+/// a fixed app-owned argv through the process/shell invocation owner
+/// (ADR-0029); winget state comes from the existing read-only snapshot, never
+/// a second winget call site. Runs on the blocking pool under a per-probe box
+/// plus a total budget — timeouts read as not-verifiable, and the frontend may
+/// abandon the promise safely since probes self-kill at their box.
+#[tauri::command]
+async fn detect_prerequisites(
+    names: Vec<String>,
+) -> Result<Vec<windows_execution::PrerequisiteVerdict>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let snapshot = if windows_execution::needs_winget_snapshot(&names) {
+            winget::snapshot()
+        } else {
+            None
+        };
+        windows_execution::detect_with(
+            &names,
+            snapshot.as_ref(),
+            &windows_execution::NativeProbes,
+        )
+    })
+    .await
+    .map_err(|error| format!("prerequisite detection worker failed: {error}"))?
+}
+
 /// The Quick Launch window's × button (tickets 52, 53 & 56): destroys the
 /// window — the only way the floating palette closes, since blur is a no-op
 /// (ticket 56) — and the tray's left-click reopens it at its fixed centered
@@ -3559,6 +3635,7 @@ pub fn run() {
             ai_bind_target,
             ai_approve_disclosure,
             ai_disclosure_grants,
+            detect_prerequisites,
             list_clips,
             create_clip,
             update_clip,
