@@ -144,8 +144,14 @@
   }
 
   .packet:hover {
-    transform: translateY(-2px);
+    transform: translateY(-3px);
     border-color: var(--border-strong);
+  }
+
+  /* WHY the press: cards are buttons, so the click lands physically before
+     the action runs — the Discord press-in, transform-only. */
+  .packet:active {
+    transform: translateY(-1px) scale(0.99);
   }
 
   .packet.animate {

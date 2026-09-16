@@ -70,7 +70,10 @@
   .field {
     display: flex;
     flex-direction: column;
-    gap: var(--space-1);
+    /* Discord field rhythm in Ledger tokens (research 0021 spacing round):
+       8px label → control → hint inside the field; the 24px form stack gap
+       owns field → field. */
+    gap: var(--space-2);
     min-width: 0;
   }
 
@@ -100,11 +103,25 @@
     font-family: var(--font-body);
     font-size: var(--text-base);
     color: var(--text);
-    background: var(--bg-page);
-    border: 1px solid var(--border-strong);
-    border-radius: var(--radius);
+    /* The shared filled frame (research 0021, ticket 204): a sunken rest
+       with a hairline edge — the Discord staging in Ledger neutrals —
+       instead of the old page-fill/strong-border outer line. */
+    background: var(--bg-sunken);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
     padding: 8px 10px;
-    transition: border-color var(--dur-fast) var(--ease-out);
+    /* WHY three properties: the frame rests quiet, washes faintly on hover
+       (anticipation), and glows on focus (commitment) — the Discord
+       focus-glow in Ledger neutrals, accent spent at focus only (research
+       0006 pattern 6, 0004 rule 2). Paint-only; layout never animates. */
+    transition: border-color var(--dur-fast) var(--ease-out),
+      background-color var(--dur-fast) var(--ease-out),
+      box-shadow var(--dur-fast) var(--ease-out);
+  }
+
+  .field__input:hover {
+    background-color: var(--bg-hover);
+    border-color: var(--border-strong);
   }
 
   .field__input::placeholder {
@@ -121,6 +138,7 @@
   .field__hint {
     margin: 0;
     font-size: var(--text-xs);
+    line-height: var(--leading-tight);
     color: var(--text-muted);
   }
 </style>

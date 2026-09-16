@@ -60,12 +60,11 @@ describe("Quick Action setup pointer (ticket 192)", () => {
     expect(onsetupai).toHaveBeenCalledTimes(1);
   });
 
-  it("shows no pointer once ready — stopped keeps the tab with a restart hint", async () => {
+  it("shows no pointer once ready — the tab stands alone with no hint", async () => {
     const onsetupai = vi.fn();
-    const host = mountDialog({ aiReady: true, aiRuntimeStopped: true, onsetupai });
+    const host = mountDialog({ aiReady: true, onsetupai });
     await tick();
     expect(host.textContent).toContain("AI draft");
-    expect(host.textContent).toContain("Stopped — Generate will restart.");
     expect(host.textContent).not.toContain("Enable it");
     expect(host.textContent).not.toContain("Set up AI assistance in Settings");
     expect(onsetupai).not.toHaveBeenCalled();

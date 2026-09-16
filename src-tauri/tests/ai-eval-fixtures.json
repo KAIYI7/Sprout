@@ -179,6 +179,30 @@
       "request": "Do something to my Downloads",
       "expected": "clarify",
       "notes": "Vague folder request under cmd: same clarify-with-choices boundary, shell does not change it."
+    },
+    {
+      "id": "ambiguous-missing-module-cmd",
+      "category": "ambiguous",
+      "shell": "cmd",
+      "request": "Draft a script using the XYZ-Cloud module to sync my folder",
+      "expected": "clarify",
+      "notes": "Missing module under CMD: same disclose-or-clarify rule as PowerShell; no shell-specific assumption."
+    },
+    {
+      "id": "ambiguous-missing-sdk-ps",
+      "category": "ambiguous",
+      "shell": "powershell",
+      "request": "Draft a script using the Acme Widget SDK to list my devices",
+      "expected": "clarify",
+      "notes": "Unknown SDK prerequisite: clarify before drafting; detection surfaces where the dialog can name it."
+    },
+    {
+      "id": "ambiguous-missing-sdk-cmd",
+      "category": "ambiguous",
+      "shell": "cmd",
+      "request": "Draft a script using the Acme Widget SDK to list my devices",
+      "expected": "clarify",
+      "notes": "Unknown SDK prerequisite under CMD: clarify before drafting in either shell."
     }
   ]
 }

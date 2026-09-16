@@ -423,10 +423,11 @@
                 value={row.action}
                 aria-label={`Env wiring ${i + 1} action`}
                 onchange={(v) => setEnv(i, { action: v as EnvAction })}
-              >
-                <option value="set">set</option>
-                <option value="prepend">prepend</option>
-              </Select>
+                options={[
+                  { value: "set", label: "set" },
+                  { value: "prepend", label: "prepend" },
+                ]}
+              />
               <input
                 class="env__name"
                 type="text"
@@ -477,14 +478,16 @@
   .form {
     display: flex;
     flex-direction: column;
-    gap: var(--space-4);
+    /* Discord field rhythm in Ledger tokens (research 0021 spacing round):
+       24px field → field; 8px owns label → control → hint inside a field. */
+    gap: var(--space-5);
     min-width: 0;
   }
 
   .field {
     display: flex;
     flex-direction: column;
-    gap: var(--space-1);
+    gap: var(--space-2);
     min-width: 0;
   }
 
@@ -509,6 +512,11 @@
     display: inline-flex;
     color: var(--text-muted);
     pointer-events: none;
+    transition: color var(--dur-fast) var(--ease-out);
+  }
+
+  .search:focus-within .search__icon {
+    color: var(--accent);
   }
 
   .search__input {
@@ -517,11 +525,21 @@
     font-family: var(--font-mono);
     font-size: var(--text-sm);
     color: var(--text);
-    background: var(--bg-page);
-    border: 1px solid var(--border-strong);
-    border-radius: var(--radius);
+    /* The shared filled frame (research 0021, ticket 204). */
+    background: var(--bg-sunken);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
     padding: 8px 32px 8px 32px;
-    transition: border-color var(--dur-fast) var(--ease-out);
+    /* WHY three properties: the shared progressive input frame — quiet rest,
+       hover wash, glowing focus (research 0020 enhancement). */
+    transition: border-color var(--dur-fast) var(--ease-out),
+      background-color var(--dur-fast) var(--ease-out),
+      box-shadow var(--dur-fast) var(--ease-out);
+  }
+
+  .search__input:hover {
+    background-color: var(--bg-hover);
+    border-color: var(--border-strong);
   }
 
   .search__input::placeholder {
@@ -542,6 +560,7 @@
   .field__hint {
     margin: 0;
     font-size: var(--text-xs);
+    line-height: var(--leading-tight);
     color: var(--text-muted);
   }
 
@@ -691,12 +710,15 @@
   .advanced {
     display: flex;
     flex-direction: column;
+    /* Section standoff (research 0021 spacing round): the Advanced chevron
+       stands off the previous field even when closed. */
+    margin-top: var(--space-1);
   }
 
   .advanced__body {
     display: flex;
     flex-direction: column;
-    gap: var(--space-4);
+    gap: var(--space-5);
     padding-top: var(--space-3);
     border-top: 1px dashed var(--border);
   }
@@ -736,10 +758,23 @@
     font-family: var(--font-mono);
     font-size: var(--text-xs);
     color: var(--text);
-    background: var(--bg-page);
-    border: 1px solid var(--border-strong);
+    /* Compact density keeps radius-sm; the filled staging matches the
+       shared frame (research 0021, ticket 204). */
+    background: var(--bg-sunken);
+    border: 1px solid var(--border);
     border-radius: var(--radius-sm);
     padding: 6px 8px;
+    /* WHY three properties: the shared progressive input frame — quiet rest,
+       hover wash, glowing focus (research 0020 enhancement). */
+    transition: border-color var(--dur-fast) var(--ease-out),
+      background-color var(--dur-fast) var(--ease-out),
+      box-shadow var(--dur-fast) var(--ease-out);
+  }
+
+  .env__name:hover,
+  .env__value:hover {
+    background-color: var(--bg-hover);
+    border-color: var(--border-strong);
   }
 
   .env__name:focus,

@@ -172,19 +172,22 @@
                   const product = products.find((p) => p.id === v);
                   if (product) composer.setProduct(i, product);
                 }}
-              >
-                <option value="" disabled>Choose a product…</option>
-                {#each products.filter((p) => p.winget_id) as p (p.id)}
-                  <option value={p.id}>{p.name}</option>
-                {/each}
-                {#if products.some((p) => !p.winget_id)}
-                  <optgroup label="No winget id — custom install steps aren't supported yet">
-                    {#each products.filter((p) => !p.winget_id) as p (p.id)}
-                      <option value={p.id} disabled>{p.name}</option>
-                    {/each}
-                  </optgroup>
-                {/if}
-              </Select>
+                options={[
+                  { value: "", label: "Choose a product…", disabled: true },
+                  ...products
+                    .filter((p) => p.winget_id)
+                    .map((p) => ({ value: p.id, label: p.name })),
+                  ...products
+                    .filter((p) => !p.winget_id)
+                    .map((p) => ({
+                      value: p.id,
+                      label: p.name,
+                      disabled: true,
+                      title:
+                        "No winget id — custom install steps aren't supported yet",
+                    })),
+                ]}
+              />
             {:else}
               <div class="app__name">
                 <span class="app__product">{req.product.name || req.product.id}</span>
@@ -201,11 +204,24 @@
                   variant="small"
                   value={req.version_policy.kind}
                   onchange={(v) => composer.setPolicy(i, v as never)}
-                >
-                  <option value="latest" title="Upgrade to the newest version">latest</option>
-                  <option value="pinned" title="Exactly this version">pinned</option>
-                  <option value="present" title="Installed, never upgraded">present</option>
-                </Select>
+                  options={[
+                    {
+                      value: "latest",
+                      label: "latest",
+                      title: "Upgrade to the newest version",
+                    },
+                    {
+                      value: "pinned",
+                      label: "pinned",
+                      title: "Exactly this version",
+                    },
+                    {
+                      value: "present",
+                      label: "present",
+                      title: "Installed, never upgraded",
+                    },
+                  ]}
+                />
               </label>
               {#if req.version_policy.kind === "pinned"}
                 <input
@@ -307,10 +323,11 @@
                       aria-label={`Application ${i + 1} env wiring ${j + 1} action`}
                       value={row.action}
                       onchange={(v) => composer.setEnv(i, j, { action: v as EnvAction })}
-                    >
-                      <option value="set">set</option>
-                      <option value="prepend">prepend</option>
-                    </Select>
+                      options={[
+                        { value: "set", label: "set" },
+                        { value: "prepend", label: "prepend" },
+                      ]}
+                    />
                     <input
                       class="rows__input"
                       type="text"
@@ -421,13 +438,14 @@
   .form {
     display: flex;
     flex-direction: column;
-    gap: var(--space-4);
+    /* Discord field rhythm in Ledger tokens (research 0021 spacing round). */
+    gap: var(--space-5);
   }
 
   .meta {
     display: flex;
     flex-direction: column;
-    gap: var(--space-3);
+    gap: var(--space-5);
   }
 
   .meta__row {
@@ -546,10 +564,26 @@
     font-family: var(--font-mono);
     font-size: var(--text-xs);
     color: var(--text);
-    background: var(--bg-page);
-    border: 1px solid var(--border-strong);
+    /* Compact density keeps radius-sm; the filled staging matches the
+       shared frame (research 0021, ticket 204). */
+    background: var(--bg-sunken);
+    border: 1px solid var(--border);
     border-radius: var(--radius-sm);
     padding: 6px 8px;
+    /* WHY three properties: the shared progressive input frame - quiet rest,
+       hover wash, glowing focus (research 0020 enhancement). */
+    transition: border-color var(--dur-fast) var(--ease-out),
+      background-color var(--dur-fast) var(--ease-out),
+      box-shadow var(--dur-fast) var(--ease-out);
+  }
+
+  .app__pinned:hover {
+    background-color: var(--bg-hover);
+    border-color: var(--border-strong);
+  }
+
+  .app__pinned:hover {
+    background-color: var(--bg-hover);
   }
 
   .app__pinned:focus {
@@ -636,7 +670,7 @@
   .field {
     display: flex;
     flex-direction: column;
-    gap: var(--space-1);
+    gap: var(--space-2);
     min-width: 0;
   }
 
@@ -654,10 +688,21 @@
     font-family: var(--font-body);
     font-size: var(--text-base);
     color: var(--text);
-    background: var(--bg-page);
-    border: 1px solid var(--border-strong);
-    border-radius: var(--radius);
+    /* The shared filled frame (research 0021, ticket 204). */
+    background: var(--bg-sunken);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
     padding: 8px 10px;
+    /* WHY three properties: the shared progressive input frame — quiet rest,
+       hover wash, glowing focus (research 0020 enhancement). */
+    transition: border-color var(--dur-fast) var(--ease-out),
+      background-color var(--dur-fast) var(--ease-out),
+      box-shadow var(--dur-fast) var(--ease-out);
+  }
+
+  .field__input:hover {
+    background-color: var(--bg-hover);
+    border-color: var(--border-strong);
   }
 
   .field__input:focus {
@@ -712,11 +757,27 @@
     font-family: var(--font-mono);
     font-size: var(--text-xs);
     color: var(--text);
-    background: var(--bg-page);
-    border: 1px solid var(--border-strong);
+    /* Compact density keeps radius-sm; the filled staging matches the
+       shared frame (research 0021, ticket 204). */
+    background: var(--bg-sunken);
+    border: 1px solid var(--border);
     border-radius: var(--radius-sm);
     padding: 6px 8px;
     min-width: 0;
+    /* WHY three properties: the shared progressive input frame - quiet rest,
+       hover wash, glowing focus (research 0020 enhancement). */
+    transition: border-color var(--dur-fast) var(--ease-out),
+      background-color var(--dur-fast) var(--ease-out),
+      box-shadow var(--dur-fast) var(--ease-out);
+  }
+
+  .rows__input:hover {
+    background-color: var(--bg-hover);
+    border-color: var(--border-strong);
+  }
+
+  .rows__input:hover {
+    background-color: var(--bg-hover);
   }
 
   .rows__input:focus {

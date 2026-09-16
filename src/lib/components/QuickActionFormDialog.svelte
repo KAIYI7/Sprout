@@ -1,6 +1,6 @@
 <script lang="ts">
-  import { tick } from "svelte";
-  import type { Group, LaunchCommandTest, QuickAction, QuickActionShell } from "$lib/types";
+import { tick, untrack } from "svelte";
+import type { Group, LaunchCommandTest, QuickAction, QuickActionShell } from "$lib/types";
   import type {
     AiApprovedRoot,
     AiBoundTarget,
@@ -27,6 +27,7 @@
     attachQuickActionFile,
     createGroup,
     createQuickAction,
+    detectPrerequisites,
     formatActionFileBytes,
     listQuickActionFiles,
     QUICK_ACTION_FILE_MAX_BYTES,
@@ -42,9 +43,15 @@
     filesHint,
     tokenizeQuickActionCommand,
   } from "$lib/quickActionEditor";
+  import {
+    extractPrereqKeys,
+    prereqLines as toPrereqLines,
+    type PrereqLine,
+  } from "$lib/prereqGuidance";
   import { open as openFolderPicker } from "@tauri-apps/plugin-dialog";
   import Dialog from "./Dialog.svelte";
   import Button from "./Button.svelte";
+  import Checkbox from "./Checkbox.svelte";
   import TextInput from "./TextInput.svelte";
   import Disclosure from "./Disclosure.svelte";
   import InfoTip from "./InfoTip.svelte";
@@ -59,7 +66,6 @@
     groupsEnabled = false,
     aiReady = false,
     aiSetupKind = "generic",
-    aiRuntimeStopped = false,
     onsave,
     oncancel,
     onsetupai,
@@ -86,10 +92,6 @@
      *  stopped managed route, anything else offers generic setup. Rendered
      *  only while unready — at most one plain-text line, never tabs or hero. */
     aiSetupKind?: "managed" | "generic";
-    /** Stopped-with-config (ticket 192): ready but the owned runtime is down.
-     *  The AI tab still shows with a plain restart hint — never the enable
-     *  line, which is unready-only. */
-    aiRuntimeStopped?: boolean;
     onsave: (message: string) => void | Promise<void>;
     oncancel: () => void;
     /** Ticket 192: routes the unready pointer to Settings (expand the AI
@@ -162,6 +164,46 @@
   );
   const aiRefusal = $derived(aiOutcome?.kind === "refused" ? aiOutcome.message : null);
   const aiFailure = $derived(aiOutcome?.kind === "failed" ? aiOutcome.message : null);
+  // Prerequisite surfacing (ticket 200): the dialog verifies what the draft
+  // assumes through the read-only detect command and warns beside the draft —
+  // saving, testing, and running stay untouched. `prereqSeq` drops late
+  // verdicts the same way `aiSeq` drops late drafts.
+  let prereqRows = $state<PrereqLine[]>([]);
+  let prereqsChecking = $state(false);
+  let prereqSeq = 0;
+
+  $effect(() => {
+    const outcome = aiOutcome;
+    // WHY untrack: the request text is a snapshot of what produced this
+    // outcome — subscribing to it would re-detect on every keystroke.
+    const requestText = untrack(() => aiRequest);
+    const narrowed = untrack(() => lastNarrowed);
+    prereqSeq += 1;
+    const mine = prereqSeq;
+    prereqRows = [];
+    prereqsChecking = false;
+    if (!outcome) return;
+    const texts =
+      outcome.kind === "draft"
+        ? outcome.draft.assumptions
+        : outcome.kind === "clarify" && aiClarifyAspect === "unknown-prerequisite"
+          ? [requestText, narrowed ?? ""]
+          : [];
+    const keys = extractPrereqKeys(texts);
+    if (keys.length === 0) return;
+    prereqsChecking = true;
+    void detectPrerequisites(keys).then(
+      (verdicts) => {
+        if (mine !== prereqSeq) return;
+        prereqRows = toPrereqLines(verdicts);
+        prereqsChecking = false;
+      },
+      () => {
+        if (mine !== prereqSeq) return;
+        prereqsChecking = false;
+      }
+    );
+  });
   const aiAppliedCurrent = $derived(
     aiDraft !== null &&
       aiApplied !== null &&
@@ -1232,6 +1274,10 @@
            picker, no find/roots chrome up front — the shell lives in Manual,
            discovery appears only when a clarification needs it. -->
       <div id="panel-ai" role="tabpanel" aria-labelledby="tab-ai" class="ai">
+        <!-- Describe block: one field owns label → textarea → status →
+             Generate (8px internal gap). The button belongs to the textarea
+             directly — siblings under .ai would each add the 24px field-stack
+             gap and strand it 48px below (research 0023). -->
         <div class="field">
           <div class="field__label-row">
             <label class="field__label" for="qa-ai-request">Describe what to do</label>
@@ -1252,28 +1298,20 @@
             oninput={(e) => (aiRequest = (e.target as HTMLTextAreaElement).value)}
             onkeydown={aiKeydown}
           ></textarea>
-        </div>
-
-        {#if aiRuntimeStopped}
-          <!-- Ticket 192: stopped-with-config keeps the AI tab with a plain
-               restart hint — never the enable line, which is unready-only. -->
-          <p class="ai__status" role="status">Stopped — Generate will restart.</p>
-        {/if}
-
-        <div class="ai__actions">
-          {#if aiPending}
-            <p class="ai__status" role="status">Drafting…</p>
-            <Button type="button" variant="ghost" onclick={cancelDraft}>Cancel</Button>
-          {:else}
-            <Button type="button" variant="secondary" onclick={() => void generateDraft()}>
-              Generate draft
-            </Button>
+          <div class="ai__actions">
+            {#if aiPending}
+              <p class="ai__status" role="status">Drafting…</p>
+              <Button type="button" variant="ghost" onclick={cancelDraft}>Cancel</Button>
+            {:else}
+              <Button type="button" variant="secondary" onclick={() => void generateDraft()}>
+                Generate draft
+              </Button>
+            {/if}
+          </div>
+          {#if aiNotice}
+            <p class="field__hint" role="status">{aiNotice}</p>
           {/if}
         </div>
-
-        {#if aiNotice}
-          <p class="ai__status" role="status">{aiNotice}</p>
-        {/if}
 
         {#if aiOutcome}
           <div id="ai-outcome" tabindex="-1" class="ai__outcome">
@@ -1290,6 +1328,16 @@
               {#if aiDraft.explanation}
                 <p class="ai__explanation">{aiDraft.explanation}</p>
               {/if}
+              {#if prereqsChecking}
+                <p class="ai__status" role="status">Checking prerequisites…</p>
+              {/if}
+              {#each prereqRows as line (line.key)}
+                {#if line.status === "present"}
+                  <p class="ai__meta">{line.text}</p>
+                {:else}
+                  <Notice tone="warn">{line.text}</Notice>
+                {/if}
+              {/each}
               <div class="ai__actions">
                 {#if aiAppliedCurrent}
                   <p class="ai__status" role="status">Applied — review and save in Manual.</p>
@@ -1320,6 +1368,18 @@
                     </label>
                   {/each}
                 </div>
+                {#if aiClarifyAspect === "unknown-prerequisite"}
+                  {#if prereqsChecking}
+                    <p class="ai__status" role="status">Checking prerequisites…</p>
+                  {/if}
+                  {#each prereqRows as line (line.key)}
+                    {#if line.status === "present"}
+                      <p class="ai__meta">{line.text}</p>
+                    {:else}
+                      <Notice tone="warn">{line.text}</Notice>
+                    {/if}
+                  {/each}
+                {/if}
                 <div class="field">
                   <div class="field__label-row">
                     <label class="field__label" for="qa-clarify-free">Or describe it yourself</label>
@@ -1369,7 +1429,8 @@
           <!-- Diagnosis (ticket 153): edit-only. Sends the current script
                plus pasted error output; returns an explanation or a
                separately reviewed revision. Nothing runs, and accepting
-               applies only the reviewed fields. -->
+               applies only the reviewed fields. Owns its status + Diagnose
+               the same way Describe owns Generate (research 0023). -->
           <div class="field">
             <div class="field__label-row">
               <label class="field__label" for="qa-diag-error">Diagnose a failure</label>
@@ -1390,26 +1451,23 @@
               oninput={(e) => (diagError = (e.target as HTMLTextAreaElement).value)}
               onkeydown={diagKeydown}
             ></textarea>
-          </div>
-
-          <div class="ai__actions">
-            {#if diagPending}
-              <p class="ai__status" role="status">Diagnosing…</p>
-              <Button type="button" variant="ghost" onclick={cancelDiagnose}>Cancel</Button>
-            {:else}
-              <Button type="button" variant="secondary" onclick={() => void diagnose()}>
-                Diagnose
-              </Button>
+            <div class="ai__actions">
+              {#if diagPending}
+                <p class="ai__status" role="status">Diagnosing…</p>
+                <Button type="button" variant="ghost" onclick={cancelDiagnose}>Cancel</Button>
+              {:else}
+                <Button type="button" variant="secondary" onclick={() => void diagnose()}>
+                  Diagnose
+                </Button>
+              {/if}
+            </div>
+            {#if diagNotice}
+              <p class="field__hint" role="status">{diagNotice}</p>
+            {/if}
+            {#if diagConflict}
+              <Notice tone="warn">{diagConflict}</Notice>
             {/if}
           </div>
-
-          {#if diagNotice}
-            <p class="ai__status" role="status">{diagNotice}</p>
-          {/if}
-
-          {#if diagConflict}
-            <Notice tone="warn">{diagConflict}</Notice>
-          {/if}
 
           {#if diagOutcome}
             <div id="diag-outcome" tabindex="-1" class="ai__outcome">
@@ -1490,6 +1548,7 @@
         id={aiReady ? "panel-manual" : undefined}
         role={aiReady ? "tabpanel" : undefined}
         aria-labelledby={aiReady ? "tab-manual" : undefined}
+        class="manual"
       >
       {#if !aiReady}
         <!-- Ticket 192: one plain-text pointer from the unready view to
@@ -1540,14 +1599,15 @@
         id="qa-shell"
         value={shell}
         onchange={(v) => (shell = v as QuickActionShell)}
-      >
-        <option value="powershell">{quickActionShellLabel.powershell}</option>
-        <option value="cmd">{quickActionShellLabel.cmd}</option>
-      </Select>
+        options={[
+          { value: "powershell", label: quickActionShellLabel.powershell },
+          { value: "cmd", label: quickActionShellLabel.cmd },
+        ]}
+      />
       <p class="field__hint">
         {shell === "powershell"
-          ? "PowerShell runs with -NoProfile -NonInteractive. Multi-line is fine."
-          : "cmd runs as: cmd /c {command}."}
+          ? "Runs with -NoProfile -NonInteractive."
+          : "Runs as: cmd /c {command}."}
       </p>
     </div>
 
@@ -1721,13 +1781,15 @@
               id="qa-group"
               value={groupPick}
               onchange={(v) => (groupPick = v)}
-            >
-              <option value="">Ungrouped</option>
-              {#each groups as group (group.id)}
-                <option value={String(group.id)}>{group.name}</option>
-              {/each}
-              <option value={NEW_GROUP}>New group…</option>
-            </Select>
+              options={[
+                { value: "", label: "Ungrouped" },
+                ...groups.map((group) => ({
+                  value: String(group.id),
+                  label: group.name,
+                })),
+                { value: NEW_GROUP, label: "New group…" },
+              ]}
+            />
             {#if groupPick === NEW_GROUP}
               <TextInput
                 id="qa-new-group"
@@ -1760,23 +1822,12 @@
           ></textarea>
         </div>
 
-        <label class="stoppable">
-          <input
-            type="checkbox"
-            class="stoppable__check"
-            checked={stoppable}
-            onchange={(e) => (stoppable = (e.target as HTMLInputElement).checked)}
-          />
-          <span class="stoppable__title">Show Stop button</span>
-          <InfoTip label="What the Stop button does">
-            <p>
-              While the command runs, its Run button becomes Stop. Tracking covers
-              foreground commands only — detached commands (e.g.
-              <span class="mono">docker compose up -d</span>) report as not running
-              because the process exits while the service continues.
-            </p>
-          </InfoTip>
-        </label>
+        <Checkbox
+          checked={stoppable}
+          onchange={(v) => (stoppable = v)}
+          title="Show Stop button"
+          hint="Run becomes Stop while the command runs."
+        />
 
         {#if stoppable}
           <div class="field">
@@ -1799,33 +1850,22 @@
           </div>
         {/if}
 
-        <label class="stoppable">
-          <input
-            type="checkbox"
-            class="stoppable__check"
-            checked={autoRun}
-            onchange={(e) => (autoRun = (e.target as HTMLInputElement).checked)}
-          />
-          <span class="stoppable__title">Run at Sprout start</span>
-          <InfoTip label="What running at start does">
-            <p>Runs once each time Sprout starts, in list order, as if Run were clicked.</p>
-          </InfoTip>
-        </label>
+        <Checkbox
+          checked={autoRun}
+          onchange={(v) => (autoRun = v)}
+          title="Run at Sprout start"
+          hint="Runs once at startup, in list order."
+        />
 
         <!-- Dock visibility: the control lives on its object — hiding is
-             per-item, not a feature switch. -->
-        <label class="stoppable">
-          <input
-            type="checkbox"
-            class="stoppable__check"
-            checked={showInDock}
-            onchange={(e) => (showInDock = (e.target as HTMLInputElement).checked)}
-          />
-          <span class="stoppable__title">Show in dock</span>
-          <InfoTip label="What showing in the dock does">
-            <p>Uncheck to hide this action from the Quick Launch dock. It stays here and stays runnable.</p>
-          </InfoTip>
-        </label>
+             per-item, not a feature switch. All three flags keep a short
+             inline consequence only, no InfoTip, so the rows stay consistent. -->
+        <Checkbox
+          checked={showInDock}
+          onchange={(v) => (showInDock = v)}
+          title="Show in dock"
+          hint="Uncheck to keep it in the main app only."
+        />
 
         <!-- Pre-action gate: an optional check that runs first on every Run,
              plus the fix offered only when the check blocks one. Collapsed
@@ -1946,14 +1986,29 @@
   .form {
     display: flex;
     flex-direction: column;
-    gap: var(--space-4);
+    /* Discord field rhythm in Ledger tokens (research 0021 spacing round):
+       24px field → field; the 8px field-internal gap owns label → control
+       → hint. */
+    gap: var(--space-5);
     min-width: 0;
   }
 
   .field {
     display: flex;
     flex-direction: column;
-    gap: var(--space-1);
+    gap: var(--space-2);
+    min-width: 0;
+  }
+
+  /* Manual tab panel: the fields are NOT direct children of .form (the
+     panel wrapper sits between), so the form stack gap never reached them
+     and Name stitched straight into the Shell eyebrow with 0px. The panel
+     owns the same 24px field → field rhythm (research 0021 spacing round,
+     0005 rule 6). */
+  .manual {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-5);
     min-width: 0;
   }
 
@@ -1981,11 +2036,23 @@
     font-size: var(--text-sm);
     line-height: var(--leading-normal);
     color: var(--text);
-    background: var(--bg-page);
-    border: 1px solid var(--border-strong);
-    border-radius: var(--radius);
+    /* The shared filled frame (research 0021, ticket 204). */
+    background: var(--bg-sunken);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
     padding: 8px 10px;
-    transition: border-color var(--dur-fast) var(--ease-out);
+    /* WHY three properties: the shared progressive input frame — quiet rest,
+       hover wash, glowing focus (research 0020 enhancement). The highlight
+       overlay textarea stays out of the wash so the single chrome never
+       doubles (see .cmdwrap below). */
+    transition: border-color var(--dur-fast) var(--ease-out),
+      background-color var(--dur-fast) var(--ease-out),
+      box-shadow var(--dur-fast) var(--ease-out);
+  }
+
+  .field__cmd:not(.cmdwrap__input):hover {
+    background-color: var(--bg-hover);
+    border-color: var(--border-strong);
   }
 
   .field__cmd:focus {
@@ -2011,26 +2078,6 @@
     color: var(--text-muted);
   }
 
-  .stoppable {
-    display: flex;
-    align-items: center;
-    gap: var(--space-2);
-    cursor: pointer;
-  }
-
-  .stoppable__check {
-    margin: 0;
-    accent-color: var(--accent);
-    width: 14px;
-    height: 14px;
-  }
-
-  .stoppable__title {
-    font-size: var(--text-sm);
-    font-weight: 600;
-    color: var(--text);
-  }
-
   /* Details-collapsed rare options: the same flat disclosure treatment as
      the product form's Advanced — no frame, body separated by a dashed rule.
      `hidden` needs its own rule or the flex display above keeps the panel
@@ -2038,12 +2085,16 @@
   .advanced {
     display: flex;
     flex-direction: column;
+    /* The Details chevron is a section, not a field (research 0021 spacing
+       round): one extra token over the form stack gap so it stands off the
+       previous field even when closed. */
+    margin-top: var(--space-1);
   }
 
   .advanced__body {
     display: flex;
     flex-direction: column;
-    gap: var(--space-4);
+    gap: var(--space-5);
     padding-top: var(--space-3);
     border-top: 1px dashed var(--border);
   }
@@ -2057,10 +2108,18 @@
      is block-level, so no inline baseline gap lingers under its bottom edge. */
   .cmdwrap {
     position: relative;
-    background: var(--bg-page);
-    border: 1px solid var(--border-strong);
-    border-radius: var(--radius);
-    transition: border-color var(--dur-fast) var(--ease-out);
+    /* The shared filled frame (research 0021, ticket 204). */
+    background: var(--bg-sunken);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    transition: border-color var(--dur-fast) var(--ease-out),
+      background-color var(--dur-fast) var(--ease-out),
+      box-shadow var(--dur-fast) var(--ease-out);
+  }
+
+  .cmdwrap:hover {
+    background-color: var(--bg-hover);
+    border-color: var(--border-strong);
   }
 
   .cmdwrap:focus-within {
@@ -2079,7 +2138,7 @@
     color: var(--text);
     background: transparent;
     border: 0;
-    border-radius: var(--radius);
+    border-radius: var(--radius-lg);
     padding: 8px 10px;
     white-space: pre-wrap;
     overflow-wrap: break-word;
@@ -2229,7 +2288,7 @@
   .preaction__body {
     display: flex;
     flex-direction: column;
-    gap: var(--space-4);
+    gap: var(--space-5);
     padding-top: var(--space-3);
     border-top: 1px dashed var(--border);
   }
@@ -2278,7 +2337,7 @@
   .ai {
     display: flex;
     flex-direction: column;
-    gap: var(--space-4);
+    gap: var(--space-5);
   }
 
   .ai__actions {

@@ -4,8 +4,8 @@
   import { clipTitle } from "$lib/format";
   import Dialog from "./Dialog.svelte";
   import Button from "./Button.svelte";
+  import Checkbox from "./Checkbox.svelte";
   import TextInput from "./TextInput.svelte";
-  import InfoTip from "./InfoTip.svelte";
 
   let {
     open,
@@ -116,18 +116,14 @@
       {/snippet}
     </TextInput>
 
-    <label class="dockvis">
-      <input
-        type="checkbox"
-        class="dockvis__check"
-        checked={showInDock}
-        onchange={(e) => (showInDock = (e.target as HTMLInputElement).checked)}
-      />
-      <span class="dockvis__title">Show in dock</span>
-      <InfoTip label="What showing in the dock does">
-        <p>Uncheck to hide this clip from the Quick Launch dock. It stays here and stays copyable.</p>
-      </InfoTip>
-    </label>
+    <!-- Short dock consequence stays inline like Command's dock flag
+         (research 0023) — same shared Checkbox, same one-line voice. -->
+    <Checkbox
+      checked={showInDock}
+      onchange={(v) => (showInDock = v)}
+      title="Show in dock"
+      hint="Uncheck to keep it in the main app only."
+    />
 
     {#if error}
       <p class="form__error" role="alert">{error}</p>
@@ -154,14 +150,15 @@
   .form {
     display: flex;
     flex-direction: column;
-    gap: var(--space-4);
+    /* Discord field rhythm in Ledger tokens (research 0021 spacing round). */
+    gap: var(--space-5);
     min-width: 0;
   }
 
   .field {
     display: flex;
     flex-direction: column;
-    gap: var(--space-1);
+    gap: var(--space-2);
     min-width: 0;
   }
 
@@ -189,11 +186,21 @@
     font-size: var(--text-sm);
     line-height: var(--leading-normal);
     color: var(--text);
-    background: var(--bg-page);
-    border: 1px solid var(--border-strong);
-    border-radius: var(--radius);
+    /* The shared filled frame (research 0021, ticket 204). */
+    background: var(--bg-sunken);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
     padding: 8px 10px;
-    transition: border-color var(--dur-fast) var(--ease-out);
+    /* WHY three properties: the shared progressive input frame — quiet rest,
+       hover wash, glowing focus (research 0020 enhancement). */
+    transition: border-color var(--dur-fast) var(--ease-out),
+      background-color var(--dur-fast) var(--ease-out),
+      box-shadow var(--dur-fast) var(--ease-out);
+  }
+
+  .field__text:hover {
+    background-color: var(--bg-hover);
+    border-color: var(--border-strong);
   }
 
   .field__text:focus {
@@ -212,26 +219,6 @@
     font-size: var(--text-sm);
     color: var(--danger-text);
     overflow-wrap: anywhere;
-  }
-
-  .dockvis {
-    display: flex;
-    align-items: center;
-    gap: var(--space-2);
-    cursor: pointer;
-  }
-
-  .dockvis__check {
-    margin: 0;
-    accent-color: var(--accent);
-    width: 14px;
-    height: 14px;
-  }
-
-  .dockvis__title {
-    font-size: var(--text-sm);
-    font-weight: 600;
-    color: var(--text);
   }
 
   .form__actions {

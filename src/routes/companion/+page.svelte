@@ -337,10 +337,11 @@
       variant="small"
       value={uaDraft}
       onchange={(v) => (uaDraft = v === "desktop" ? "desktop" : "mobile")}
-    >
-      <option value="mobile">Mobile — narrow-dock layout</option>
-      <option value="desktop">Desktop — desktop-only sites</option>
-    </Select>
+      options={[
+        { value: "mobile", label: "Mobile — narrow-dock layout" },
+        { value: "desktop", label: "Desktop — desktop-only sites" },
+      ]}
+    />
     <p class="site-form__hint">Desktop-only sites (e.g. Teams for Web) need the Desktop identity; everything else stays Mobile.</p>
     <div class="site-form__actions">
       <Button variant="ghost" type="button" onclick={cancelEdit}>Cancel</Button>
@@ -386,6 +387,7 @@
   .site-form__hint {
     margin: 0;
     font-size: var(--text-xs);
+    line-height: var(--leading-tight);
     color: var(--text-muted);
   }
   .site-form__input {
@@ -393,12 +395,22 @@
     font-family: var(--font-mono);
     font-size: var(--text-base);
     color: var(--text);
-    background: var(--bg-page);
-    border: 1px solid var(--border-strong);
-    border-radius: var(--radius);
+    /* The shared filled frame (research 0021, ticket 204). */
+    background: var(--bg-sunken);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
     padding: var(--space-2) var(--space-3);
     text-align: left;
     font-variant-ligatures: none;
+    /* WHY three properties: the shared progressive input frame — quiet rest,
+       hover wash, glowing focus (research 0020 enhancement). */
+    transition: border-color var(--dur-fast) var(--ease-out),
+      background-color var(--dur-fast) var(--ease-out),
+      box-shadow var(--dur-fast) var(--ease-out);
+  }
+  .site-form__input:hover {
+    background-color: var(--bg-hover);
+    border-color: var(--border-strong);
   }
   .site-form__input:focus-visible {
     outline: none;
@@ -473,7 +485,13 @@
   .site-form {
     display: flex;
     flex-direction: column;
-    gap: var(--space-3);
+    /* Discord field rhythm without markup churn (research 0021 spacing
+       round): 8px owns label → control → hint; each label after the first
+       stands 24px off the previous hint (8px gap + 16px margin). */
+    gap: var(--space-2);
+  }
+  .site-form__label:not(:first-child) {
+    margin-top: var(--space-4);
   }
   .site-form__actions {
     display: flex;

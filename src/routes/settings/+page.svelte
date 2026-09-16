@@ -35,9 +35,14 @@
   import Dialog from "$lib/components/Dialog.svelte";
   import Button from "$lib/components/Button.svelte";
   import ConfirmDialog from "$lib/components/ConfirmDialog.svelte";
+  import ContextMenu, {
+    type ContextMenuItem,
+    type ContextMenuState,
+  } from "$lib/components/ContextMenu.svelte";
   import Disclosure from "$lib/components/Disclosure.svelte";
   import EmptyState from "$lib/components/EmptyState.svelte";
   import GroupAccordion from "$lib/components/GroupAccordion.svelte";
+  import IconButton from "$lib/components/IconButton.svelte";
   import Notice from "$lib/components/Notice.svelte";
   import PageHeader from "$lib/components/PageHeader.svelte";
   import SearchInput from "$lib/components/SearchInput.svelte";
@@ -704,6 +709,47 @@
     managedConfirmRemoveId = null;
     reviewManaged(modelId);
     managedConfirmRemoveId = modelId;
+  }
+
+  /** One ⋯ menu per installed model, shared by the Active list and the
+   *  downloads list (0005 rule 5 — same rows, same treatment). Details
+   *  first, Remove danger-last behind a separator (0006 pattern 10);
+   *  controls sit at their object (0006 pattern 4). */
+  let modelMenu: (ContextMenuState & { modelId?: string }) | null =
+    $state(null);
+
+  function openModelMenu(
+    modelId: string,
+    anchor: HTMLButtonElement,
+    viaKeyboard: boolean
+  ) {
+    if (modelMenu?.modelId === modelId) {
+      modelMenu = null;
+      return;
+    }
+    const items: ContextMenuItem[] = [
+      {
+        label: "Model details",
+        icon: "info",
+        onselect: () => reviewManaged(modelId),
+      },
+      { label: "", separator: true, onselect: () => {} },
+      {
+        label: "Remove…",
+        icon: "trash",
+        danger: true,
+        onselect: () => askRemoveManaged(modelId),
+      },
+    ];
+    modelMenu = {
+      modelId,
+      open: true,
+      label: `Actions for ${modelId}`,
+      anchor,
+      focusFirst: viaKeyboard,
+      returnTo: anchor,
+      items,
+    };
   }
 
   /** Moment-of-use preview for removal: the owned targets plus the space
@@ -1970,11 +2016,8 @@
             variant="small"
             value={animation.mode}
             onchange={(v) => pickAnimation(validAnimation(v))}
-          >
-            {#each animationOptions as option (option.value)}
-              <option value={option.value}>{option.label}</option>
-            {/each}
-          </Select>
+            options={animationOptions}
+          />
         </div>
       </article>
 
@@ -2021,11 +2064,8 @@
             variant="small"
             value={autostart}
             onchange={(v) => pickAutostart(v)}
-          >
-            {#each autostartOptions as option (option.value)}
-              <option value={option.value}>{option.label}</option>
-            {/each}
-          </Select>
+            options={autostartOptions}
+          />
         </div>
       </article>
 
@@ -2129,11 +2169,8 @@
             variant="small"
             value={dockState}
             onchange={(v) => (dockState = v)}
-          >
-            {#each dockStateOptions as option (option.value)}
-              <option value={option.value}>{option.label}</option>
-            {/each}
-          </Select>
+            options={dockStateOptions}
+          />
         </div>
       </article>
 
@@ -2147,11 +2184,7 @@
           </p>
         </div>
         <div class="knob__input">
-          <Select id="dock-mode" variant="small" value={dockMode} onchange={(v) => changeDockMode(v)}>
-            {#each dockModeOptions as option (option.value)}
-              <option value={option.value}>{option.label}</option>
-            {/each}
-          </Select>
+          <Select id="dock-mode" variant="small" value={dockMode} onchange={(v) => changeDockMode(v)} options={dockModeOptions} />
         </div>
       </article>
 
@@ -2164,11 +2197,7 @@
           </p>
         </div>
         <div class="knob__input">
-          <Select id="dock-edge" variant="small" value={dockEdge} onchange={(v) => (dockEdge = v)}>
-            {#each dockEdgeOptions as option (option.value)}
-              <option value={option.value}>{option.label}</option>
-            {/each}
-          </Select>
+          <Select id="dock-edge" variant="small" value={dockEdge} onchange={(v) => (dockEdge = v)} options={dockEdgeOptions} />
         </div>
       </article>
 
@@ -2214,11 +2243,7 @@
           </p>
         </div>
         <div class="knob__input">
-          <Select id="dock-density" variant="small" value={dockDensity} onchange={(v) => (dockDensity = v)}>
-            {#each dockDensityOptions as option (option.value)}
-              <option value={option.value}>{option.label}</option>
-            {/each}
-          </Select>
+          <Select id="dock-density" variant="small" value={dockDensity} onchange={(v) => (dockDensity = v)} options={dockDensityOptions} />
         </div>
       </article>
 
@@ -2259,20 +2284,22 @@
                   onchange={(v) => changeDisplayEdge(d.device_name, v)}
                   aria-label={`Dock edge on ${d.label}`}
                   aria-describedby={hasSeam ? reasonId : undefined}
-                >
-                  <option value="left" disabled={!d.left_eligible}>Left</option>
-                  <option value="right" disabled={!d.right_eligible}>Right</option>
-                </Select>
+                  options={[
+                    { value: "left", label: "Left", disabled: !d.left_eligible },
+                    { value: "right", label: "Right", disabled: !d.right_eligible },
+                  ]}
+                />
                 <Select
                   id={modeId}
                   variant="small"
                   value={displayModes[d.device_name] ?? dockMode}
                   onchange={(v) => changeDisplayMode(d.device_name, v)}
                   aria-label={`Dock mode on ${d.label}`}
-                >
-                  <option value="auto-hide">Auto-hide</option>
-                  <option value="fixed">Fixed</option>
-                </Select>
+                  options={[
+                    { value: "auto-hide", label: "Auto-hide" },
+                    { value: "fixed", label: "Fixed" },
+                  ]}
+                />
               </div>
               <div class="knob__input knob__input--wide">
                 <label class="knob__unit knob__unit--auto" for={widthId}>
@@ -2379,12 +2406,14 @@
                   companionUrlTouched = true;
                   companionUrl = v ? v : null;
                 }}
-              >
-                <option value="">Off</option>
-                {#each companionUrlList as site (site.url)}
-                  <option value={site.url}>{companionDisplayName(site)}</option>
-                {/each}
-              </Select>
+                options={[
+                  { value: "", label: "Off" },
+                  ...companionUrlList.map((site) => ({
+                    value: site.url,
+                    label: companionDisplayName(site),
+                  })),
+                ]}
+              />
             </div>
           </article>
 
@@ -2542,59 +2571,44 @@
             variant="small"
             value={aiProvider}
             onchange={(v) => (aiProvider = v as AiProvider)}
-          >
-            {#each aiProviderOptions as option (option.value)}
-              <option value={option.value}>{option.label}</option>
-            {/each}
-          </Select>
+            options={aiProviderOptions}
+          />
         </div>
       </article>
 
       {#if aiProvider === "managed"}
-        <article class="knob" hidden={!knobVisible("ai-model")}>
-          <div class="knob__body">
-            <p class="knob__label">Managed local model</p>
-            {#if managedCatalog && activeManagedId}
-              <!-- Ticket 189: live Running/Stopped indicator — process
-                   liveness, never config readiness. State left, verb right
-                   (the knob's own body/input grammar at status scale); the
-                   same control morphs Start↔Stop (primary↔danger); full model
-                   identity stays in the Model details dialog. Static dot, no pulse. -->
-              <div class="managed__statusrow">
-                <p class="knob__status managed__status" role="status">
-                  <span
-                    class="managed__dot"
-                    class:managed__dot--running={runtimeRunning}
-                    aria-hidden="true"
-                  ></span>
-                  {#if runtimeRunning}
-                    <span class="managed__running">
-                      Running — {managedTierLabel(runtimeActiveId ?? activeManagedId)}{runtimeUptimeSecs !==
-                      null
-                        ? ` · ${formatManagedUptime(runtimeUptimeSecs)}`
-                        : ""}
-                    </span>
-                  {:else}
-                    <span class="managed__stopped">Stopped</span>
-                  {/if}
-                </p>
-                <div class="managed__actions managed__statusactions">
-                  <Button
-                    type="button"
-                    variant={stopApplies || stopBusy ? "danger" : "primary"}
-                    disabled={stopBusy || (startBusy && !runtimeRunning)}
-                    onclick={() => void (stopApplies ? stopManaged() : startApplies ? startManaged() : undefined)}
-                  >
-                    {stopBusy
-                      ? "Stopping…"
-                      : startBusy && !runtimeRunning
-                        ? "Starting…"
-                        : stopApplies
-                          ? "Stop"
-                          : "Start"}
-                  </Button>
-                </div>
-              </div>
+        <!-- Managed local model: separate standard knobs, not one mega-card
+             (0005 rules 5/6 — rhythm owned by the shared knob, never
+             re-declared; 0014 flat rows, never nested cards). Status follows
+             the row grammar (state left, the one verb right — 0005 rule 2,
+             0006 pattern 6); the pick and install lists are full-width list
+             knobs gated on content (0004 rule 2, 0006 patterns 2/11). -->
+        {#if managedCatalog && activeManagedId}
+          <!-- Ticket 189: live Running/Stopped indicator — process liveness,
+               never config readiness. The same control morphs Start↔Stop
+               (primary↔danger); full model identity stays in the Model
+               details dialog. Static dot, no pulse. -->
+          <article class="knob" hidden={!knobVisible("ai-model")}>
+            <div class="knob__body">
+              <span class="knob__label">Managed local model</span>
+              <p class="knob__status managed__status" role="status">
+                <span
+                  class="managed__dot"
+                  class:managed__dot--running={runtimeRunning}
+                  aria-hidden="true"
+                ></span>
+                {#if runtimeRunning}
+                  <span class="managed__running">
+                    Running — {managedTierLabel(runtimeActiveId ?? activeManagedId)}{runtimeUptimeSecs !==
+                    null
+                      ? ` · ${formatManagedUptime(runtimeUptimeSecs)}`
+                      : ""}
+                  </span>
+                {:else}
+                  <span class="managed__stopped">Stopped</span>
+                {/if}
+              </p>
+              <p class="knob__hint">Stays on this PC. Generate starts it when needed.</p>
               {#if runtimeError}
                 <Notice tone="error">{runtimeError}</Notice>
               {/if}
@@ -2633,174 +2647,223 @@
                     {/if}
                   </div>
                 {/if}
-                </div>
-            {/if}
+              </div>
+            </div>
+            <div class="knob__input">
+              <Button
+                type="button"
+                variant={stopApplies || stopBusy ? "danger" : "primary"}
+                disabled={stopBusy || (startBusy && !runtimeRunning)}
+                onclick={() => void (stopApplies ? stopManaged() : startApplies ? startManaged() : undefined)}
+              >
+                {stopBusy
+                  ? "Stopping…"
+                  : startBusy && !runtimeRunning
+                    ? "Starting…"
+                    : stopApplies
+                      ? "Stop"
+                      : "Start"}
+              </Button>
+            </div>
+          </article>
+        {/if}
             {#if managedInstalled.length > 0}
-              <!-- Ticket 191: the explicit Active model. Installed entries
-                   only, as flat option rows in the shared find-row idiom —
-                   never nested cards (0014 keeps Settings rows flat).
-                   Save-deferred like the provider (picking drafts `aiModel`).
-                   Tier-first names choose by cost; the full artifact identity
-                   stays one level down in the Details dialog. -->
-              <fieldset class="managed__active">
-                <legend class="knob__label">Active model</legend>
-                {#each managedInstalled as model (model.id)}
-                  <div class="managed__option">
-                    <input
-                      id={"active-managed-" + model.id}
-                      type="radio"
-                      name="active-managed-model"
-                      value={model.id}
-                      checked={aiModel.trim() === model.id}
-                      onchange={() => (aiModel = model.id)}
-                    />
-                    <div class="managed__optionbody">
-                      <label class="managed__pick" for={"active-managed-" + model.id}>
-                        <span class="managed__name"
-                          >{managedTierLabel(model.id)} — {managedModelParams(model.id)}</span
-                        >
-                        <span class="managed__meta"
-                          >{model.download_size_bytes !== null
-                            ? formatManagedBytes(model.download_size_bytes)
-                            : "size pending"} · {formatManagedRam(model.memory_needs_mb)}</span
-                        >
+              <!-- Ticket 191: the explicit Active model — installed entries
+                   only, as flat option rows (0014 flat rows, never nested
+                   cards). Radios stay visible: the pick is mutually exclusive
+                   (NN/g + 0022 verdict 1) and choosing is frequent (0004
+                   rule 2); per-model verbs move into the row's own ⋯ menu
+                   (0006 patterns 4/10 — near their object, destruction last).
+                   The wrapping label is the single hit target
+                   (web-design-guidelines); the menu trigger stays a sibling
+                   so opening it never toggles the pick. Save-deferred like
+                   the provider (picking drafts `aiModel`). Tier-first names
+                   choose by cost; the full artifact identity stays one level
+                   down in the Details dialog. -->
+              <article class="knob knob--stack" hidden={!knobVisible("ai-model")}>
+                <div class="knob__body">
+                  <span class="knob__label">Active model</span>
+                  <p class="knob__hint">
+                    Which installed model Generate uses. Picking drafts the choice — Save keeps it.
+                  </p>
+                </div>
+                <fieldset class="managed__active managed__list">
+                  <legend class="sr-only">Installed models</legend>
+                  {#each managedInstalled as model (model.id)}
+                    <div class="managed__option">
+                      <label class="managed__pick">
+                        <input
+                          id={"active-managed-" + model.id}
+                          type="radio"
+                          name="active-managed-model"
+                          value={model.id}
+                          checked={aiModel.trim() === model.id}
+                          onchange={() => (aiModel = model.id)}
+                        />
+                        <span class="managed__texts">
+                          <span class="managed__name"
+                            >{managedTierLabel(model.id)} — {managedModelParams(model.id)}</span
+                          >
+                          <span class="managed__meta"
+                            >{model.download_size_bytes !== null
+                              ? formatManagedBytes(model.download_size_bytes)
+                              : "size pending"} · {formatManagedRam(model.memory_needs_mb)}</span
+                          >
+                        </span>
                       </label>
-                      <div class="managed__actions">
-                        <Button
-                          type="button"
-                          variant="secondary"
-                          disabled={managedBusy || installInFlight}
-                          onclick={() => reviewManaged(model.id)}
-                        >
-                          Model details
-                        </Button>
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          disabled={managedBusy || installInFlight}
-                          onclick={() => askRemoveManaged(model.id)}
-                        >
-                          Remove…
-                        </Button>
-                      </div>
+                      <IconButton
+                        icon="dots"
+                        label={`Actions for ${model.id}`}
+                        quiet
+                        data-ctx-trigger
+                        disabled={managedBusy || installInFlight}
+                        onclick={(e) =>
+                          openModelMenu(
+                            model.id,
+                            e.currentTarget as HTMLButtonElement,
+                            e.detail === 0
+                          )}
+                      />
                     </div>
-                  </div>
-                {/each}
-              </fieldset>
+                  {/each}
+                </fieldset>
+                {#if managedBusy}
+                  <p class="knob__status" role="status">Removing managed model…</p>
+                {/if}
+                {#if managedNotice}
+                  <p class="knob__status" role="status">{managedNotice}</p>
+                {/if}
+              </article>
             {/if}
             {#if managedCatalog}
               {#if managedChoices.length === 0}
-                <p class="knob__hint">Managed setup is unavailable in this build. Model and runtime verification is unfinished; your hardware has not been assessed.</p>
-                <div class="managed__actions">
-                  <Button type="button" variant="secondary" onclick={useExistingLocal}>Use existing local service</Button>
-                  <Button type="button" variant="ghost" onclick={() => reviewManaged()}>Why unavailable?</Button>
-                </div>
-              {:else}
-                <p class="knob__label">Available to install</p>
-                {#each managedAvailable as model (model.id)}
-                  <div class="managed__choice">
-                    <p class="managed__name">{managedTierLabel(model.id)} — {managedModelParams(model.id)}</p>
-                    <p class="managed__meta">{managedSize(model.download_size_bytes)} download</p>
-                    {#if installInFlight && managedInstall.modelId === model.id}
-                      <!-- Ticket 193: row-level compact bar + Cancel. The same
-                           flight renders in the dialog — one store, both
-                           places, surviving tab switches. -->
-                      <div class="managed__progress" role="status" aria-label="Install progress">
-                        <div class="managed__bar">
-                          <div class="managed__fill" style="width: {installPercent ?? 0}%"></div>
-                        </div>
-                        <p class="knob__hint">{installProgressLine()}</p>
-                        <div class="managed__actions">
-                          <Button type="button" variant="secondary" onclick={cancelManagedInstall}>
-                            Cancel install
-                          </Button>
-                        </div>
-                      </div>
-                    {/if}
+                <article class="knob" hidden={!knobVisible("ai-model")}>
+                  <div class="knob__body">
+                    <span class="knob__label">Managed setup</span>
+                    <p class="knob__hint">Managed setup is unavailable in this build. Model and runtime verification is unfinished; your hardware has not been assessed.</p>
                     <div class="managed__actions">
-                      <Button type="button" variant="secondary" disabled={managedBusy || installInFlight} onclick={() => reviewManaged(model.id)}>
-                        Review & install…
-                      </Button>
+                      <Button type="button" variant="secondary" onclick={useExistingLocal}>Use existing local service</Button>
+                      <Button type="button" variant="ghost" onclick={() => reviewManaged()}>Why unavailable?</Button>
                     </div>
                   </div>
-                {/each}
-              {/if}
-              {#if managedBusy}
-                <div class="managed__actions">
-                  <p class="knob__status" role="status">Removing managed model…</p>
-                </div>
-              {/if}
-              {#if backgroundInstall}
-                <Notice tone="warn">
-                  A managed installation started before the last reload is still
-                  running in the background — wait for it to land, or cancel it
-                  and retry.
-                </Notice>
-                <div class="managed__actions">
-                  <Button type="button" variant="secondary" onclick={cancelManagedInstall}>
-                    Cancel install
-                  </Button>
-                </div>
-              {/if}
-              {#if installGuardHit}
-                <!-- Ticket 193 guard-hit recovery: explicit remove-and-retry
-                     for that revision, or keep the files. Never auto-deletes. -->
-                <Notice tone="error">{managedInstall.error}</Notice>
-                <div class="managed__actions">
-                  <Button
-                    type="button"
-                    variant="secondary"
-                    disabled={managedBusy}
-                    onclick={() => managedInstall.modelId && void retryAfterRemove(managedInstall.modelId)}
-                  >
-                    Remove that revision and retry
-                  </Button>
-                  <Button type="button" variant="ghost" onclick={keepInstallFiles}>
-                    Keep files
-                  </Button>
-                </div>
-              {:else if managedInstall.status === "interrupted"}
-                <Notice tone="warn">{managedInstall.error}</Notice>
-                <div class="managed__actions">
-                  <Button type="button" variant="secondary" onclick={retryManagedInstall}>
-                    Retry install
-                  </Button>
-                  <Button type="button" variant="ghost" onclick={keepInstallFiles}>
-                    Dismiss
-                  </Button>
-                </div>
-              {:else if managedInstall.status === "error" && managedInstall.error}
-                <!-- Any failed install retries in one click — the guard-hit
-                     branch above keeps its own remove-and-retry, so this never
-                     loops a revision the backend refused to overwrite. -->
-                <div class="managed__actions">
-                  <Button type="button" variant="secondary" onclick={retryManagedInstall}>
-                    Retry install
-                  </Button>
-                  <Button type="button" variant="ghost" onclick={keepInstallFiles}>
-                    Dismiss
-                  </Button>
-                </div>
-              {/if}
-              {#if managedInstall.status === "done" && managedInstall.notice}
-                <p class="knob__status" role="status">{managedInstall.notice}</p>
-              {/if}
-              {#if managedNotice}
-                <p class="knob__status" role="status">{managedNotice}</p>
+                </article>
+              {:else if managedAvailable.length > 0}
+                <!-- Available installs: content-gated (0004 rule 2, 0006
+                     patterns 2/11) — zero installable models render no
+                     section at all, not even the header. One explicit action
+                     per row keeps scent for the rare install (0008 rule 3);
+                     progress stays inline at its row (ticket 193). -->
+                <article class="knob knob--stack" hidden={!knobVisible("ai-model")}>
+                  <div class="knob__body">
+                    <span class="knob__label">Available to install</span>
+                    <p class="knob__hint">Review shows size, source, and license before anything downloads.</p>
+                  </div>
+                  <div class="managed__list">
+                    {#each managedAvailable as model (model.id)}
+                      <div class="managed__choice">
+                      <p class="managed__name">{managedTierLabel(model.id)} — {managedModelParams(model.id)}</p>
+                      <p class="managed__meta">{managedSize(model.download_size_bytes)} download</p>
+                      {#if installInFlight && managedInstall.modelId === model.id}
+                        <!-- Ticket 193: row-level compact bar + Cancel. The same
+                             flight renders in the dialog — one store, both
+                             places, surviving tab switches. -->
+                        <div class="managed__progress" role="status" aria-label="Install progress">
+                          <div class="managed__bar">
+                            <div class="managed__fill" style="width: {installPercent ?? 0}%"></div>
+                          </div>
+                          <p class="knob__hint">{installProgressLine()}</p>
+                          <div class="managed__actions">
+                            <Button type="button" variant="secondary" onclick={cancelManagedInstall}>
+                              Cancel install
+                            </Button>
+                          </div>
+                        </div>
+                      {/if}
+                      <div class="managed__actions">
+                        <Button type="button" variant="secondary" disabled={managedBusy || installInFlight} onclick={() => reviewManaged(model.id)}>
+                          Review & install…
+                        </Button>
+                      </div>
+                    </div>
+                  {/each}
+                  </div>
+                  {#if backgroundInstall}
+                    <Notice tone="warn">
+                      A managed installation started before the last reload is still
+                      running in the background — wait for it to land, or cancel it
+                      and retry.
+                    </Notice>
+                    <div class="managed__actions">
+                      <Button type="button" variant="secondary" onclick={cancelManagedInstall}>
+                        Cancel install
+                      </Button>
+                    </div>
+                  {/if}
+                  {#if installGuardHit}
+                    <!-- Ticket 193 guard-hit recovery: explicit remove-and-retry
+                         for that revision, or keep the files. Never auto-deletes. -->
+                    <Notice tone="error">{managedInstall.error}</Notice>
+                    <div class="managed__actions">
+                      <Button
+                        type="button"
+                        variant="secondary"
+                        disabled={managedBusy}
+                        onclick={() => managedInstall.modelId && void retryAfterRemove(managedInstall.modelId)}
+                      >
+                        Remove that revision and retry
+                      </Button>
+                      <Button type="button" variant="ghost" onclick={keepInstallFiles}>
+                        Keep files
+                      </Button>
+                    </div>
+                  {:else if managedInstall.status === "interrupted"}
+                    <Notice tone="warn">{managedInstall.error}</Notice>
+                    <div class="managed__actions">
+                      <Button type="button" variant="secondary" onclick={retryManagedInstall}>
+                        Retry install
+                      </Button>
+                      <Button type="button" variant="ghost" onclick={keepInstallFiles}>
+                        Dismiss
+                      </Button>
+                    </div>
+                  {:else if managedInstall.status === "error" && managedInstall.error}
+                    <!-- Any failed install retries in one click — the guard-hit
+                         branch above keeps its own remove-and-retry, so this never
+                         loops a revision the backend refused to overwrite. -->
+                    <div class="managed__actions">
+                      <Button type="button" variant="secondary" onclick={retryManagedInstall}>
+                        Retry install
+                      </Button>
+                      <Button type="button" variant="ghost" onclick={keepInstallFiles}>
+                        Dismiss
+                      </Button>
+                    </div>
+                  {/if}
+                  {#if managedInstall.status === "done" && managedInstall.notice}
+                    <p class="knob__status" role="status">{managedInstall.notice}</p>
+                  {/if}
+                </article>
               {/if}
             {:else if !managedError}
-              <p class="knob__status" role="status">Reading bundled recommendation…</p>
+              <article class="knob" hidden={!knobVisible("ai-model")}>
+                <div class="knob__body">
+                  <p class="knob__status" role="status">Reading bundled recommendation…</p>
+                </div>
+              </article>
             {/if}
             {#if managedError}
-              <Notice tone="error">{managedError}</Notice>
-              {#if !managedCatalog}
-                <div class="managed__actions">
-                  <Button type="button" variant="secondary" onclick={() => void loadManagedCatalog()}>Retry</Button>
+              <article class="knob" hidden={!knobVisible("ai-model")}>
+                <div class="knob__body">
+                  <span class="knob__label">Managed setup</span>
+                  <Notice tone="error">{managedError}</Notice>
+                  {#if !managedCatalog}
+                    <div class="managed__actions">
+                      <Button type="button" variant="secondary" onclick={() => void loadManagedCatalog()}>Retry</Button>
+                    </div>
+                  {/if}
                 </div>
-              {/if}
+              </article>
             {/if}
-          </div>
-        </article>
       {/if}
 
       {#if aiProvider === "existing-local"}
@@ -2871,38 +2934,52 @@
         <!-- Ticket 186: Off keeps downloads for later reuse — and keeps their
              deliberate removal reachable. Without this the managed section
              above unmounts on Off and stranded files have no UI. -->
-        <article class="knob" hidden={!knobVisible("ai-model")}>
+        <article class="knob knob--stack" hidden={!knobVisible("ai-model")}>
           <div class="knob__body">
-            <p class="knob__label">Managed downloads on this PC</p>
+            <span class="knob__label">Managed downloads on this PC</span>
             <p class="knob__hint">
               AI assistance is off — downloads stay for later reuse. Removing is
               deliberate and keeps your saved Quick Actions.
             </p>
+          </div>
+          <div class="managed__list">
             {#each managedInstalled as model (model.id)}
-              <div class="managed__choice">
-                <p class="knob__hint">{model.artifact} · Installed · {managedSize(model.download_size_bytes)}</p>
-                <div class="managed__actions">
-                  <Button type="button" variant="secondary" disabled={managedBusy} onclick={() => reviewManaged(model.id)}>
-                    Model details
-                  </Button>
-                  <Button type="button" variant="ghost" disabled={managedBusy} onclick={() => askRemoveManaged(model.id)}>
-                    Remove…
-                  </Button>
+              <div class="managed__option">
+                <div class="managed__texts">
+                  <p class="managed__name">{managedTierLabel(model.id)} — {managedModelParams(model.id)}</p>
+                  <p class="managed__meta">Installed · {managedSize(model.download_size_bytes)}</p>
                 </div>
+                <IconButton
+                  icon="dots"
+                  label={`Actions for ${model.id}`}
+                  quiet
+                  data-ctx-trigger
+                  disabled={managedBusy}
+                  onclick={(e) =>
+                    openModelMenu(
+                      model.id,
+                      e.currentTarget as HTMLButtonElement,
+                      e.detail === 0
+                    )}
+                />
               </div>
             {/each}
-            {#if managedBusy}
-              <p class="knob__status" role="status">Removing managed model…</p>
-            {/if}
-            {#if managedNotice}
-              <p class="knob__status" role="status">{managedNotice}</p>
-            {/if}
           </div>
+          {#if managedBusy}
+            <p class="knob__status" role="status">Removing managed model…</p>
+          {/if}
+          {#if managedNotice}
+            <p class="knob__status" role="status">{managedNotice}</p>
+          {/if}
         </article>
       {/if}
         </GroupAccordion>
       {/if}
     </form>
+    <!-- Per-model ⋯ menu host: page-root so collapsing the AI group can never
+         unmount an open menu from under keyboard focus (0006 pattern 4 — the
+         trigger stays at its object, the overlay lives once at the page). -->
+    <ContextMenu ctx={modelMenu} onclose={() => (modelMenu = null)} />
     {/if}
     {#if isDirty}
       <!-- Ticket 115: fixed bottom bar — warning text + Save/Discard, pinned
@@ -3129,6 +3206,27 @@
 </ConfirmDialog>
 
 <style>
+  /* Managed list knobs: the default .knob is a body/input row; a pick list
+     needs full width, so the stack variant flows vertically while every
+     other knob keeps the shared row rhythm (0005 rules 5/6). Tokens only.
+     WHY the chained selector: .knob--stack alone ties .knob at 0-1-0, and
+     .knob sits ~300 lines later — so align-items:center,
+     justify-content:space-between and gap:space-5 silently won, centering
+     every child and spreading them apart. .knob.knob--stack (0-2-0) wins
+     regardless of order; never "simplify" it back to one class. */
+  .knob.knob--stack {
+    flex-direction: column;
+    align-items: stretch;
+    justify-content: flex-start;
+    /* List-grade rhythm (0005 rule 6 — owned here, the one place a vertical
+       knob exists): 16px between sections, 8px inside divided rows. */
+    gap: var(--space-4);
+  }
+
+  .knob.knob--stack > .knob__body {
+    flex: 1 1 auto;
+  }
+
   .managed__actions {
     display: flex;
     flex-wrap: wrap;
@@ -3151,20 +3249,7 @@
   /* Tickets 189/193: static Running/Stopped dot (no pulse — stillness is
      the honest state for a status) plus the install progress bar. Tokens
      only; no transition, so the Animation switch and reduced-motion have
-     nothing to gate — the fill jumps to each reported percent. The status
-     row splits state left / verb right like the knob itself. */
-  .managed__statusrow {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: var(--space-2);
-  }
-
-  .managed__statusactions {
-    margin-top: 0;
-    flex-shrink: 0;
-  }
-
+     nothing to gate — the fill jumps to each reported percent. */
   .managed__status {
     display: flex;
     align-items: center;
@@ -3213,23 +3298,51 @@
   }
 
   .managed__choice {
-    padding-block: var(--space-2);
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
+    min-width: 0;
+  }
+
+  /* Sibling rows divide with the shared hairline so each list scans as one
+     flat grammar (0014 flat rows; 0004:2 frequency split — installed picks
+     first, installs second). Tokens only. */
+  .managed__option + .managed__option,
+  .managed__choice + .managed__choice {
+    border-top: 1px solid var(--border);
+    padding-top: var(--space-2);
   }
 
   /* Ticket 191: the explicit Active-model radio. Native fieldset + radios in
      the shared find-row idiom (flat stacked option rows — 0014 keeps
      Settings rows flat, never nested cards). The radio itself carries state;
      the focus ring is the only highlight, no transition, so the Animation
-     switch and reduced-motion have nothing to gate. */
-  .managed__active {
-    border: none;
-    padding: 0;
-    margin: var(--space-2) 0 0;
+     switch and reduced-motion have nothing to gate. 16px box matches the
+     shared Checkbox control scale (0022 verdict 3). The fieldset needs
+     min-width:0 or flex shrinks it past its radios (web-design-guidelines:
+     flex children need min-w-0). */
+  /* One list grammar for every model list in every provider mode
+     (0005 rule 5 — Active picks, Available installs, and kept downloads
+     share row rhythm): 8px rows, hairline dividers, 8px under each line. */
+  .managed__list {
     display: flex;
     flex-direction: column;
     gap: var(--space-2);
+    min-width: 0;
   }
 
+  .managed__active {
+    border: none;
+    padding: 0;
+    margin: 0;
+    min-width: 0;
+  }
+
+  /* One row: pick label left, ⋯ trigger right. The wrapping label is the
+     single hit target for box + texts (web-design-guidelines: no dead
+     zones); the menu trigger stays a sibling so opening it never toggles
+     the pick — the same split the shared Checkbox uses for its InfoTip. */
   .managed__option {
     display: flex;
     align-items: flex-start;
@@ -3237,35 +3350,36 @@
     min-width: 0;
   }
 
-  .managed__option > input {
+  .managed__pick {
+    display: flex;
+    align-items: flex-start;
+    gap: var(--space-2);
+    flex: 1;
+    min-width: 0;
+    cursor: pointer;
+  }
+
+  .managed__pick > input {
     margin: 0;
     margin-top: 2px;
     accent-color: var(--accent);
     flex: none;
-    width: 14px;
-    height: 14px;
+    width: 16px;
+    height: 16px;
+    cursor: pointer;
   }
 
-  .managed__option > input:focus-visible {
+  .managed__pick > input:focus-visible {
     outline: 2px solid var(--ring);
     outline-offset: 2px;
   }
 
-  /* Option body stacks the label over its actions (0006 pattern 9: child
-     content aligns with its control's text start, never the card edge). */
-  .managed__optionbody {
+  .managed__texts {
     display: flex;
     flex-direction: column;
-    gap: var(--space-1);
+    gap: 1px;
     min-width: 0;
     flex: 1;
-  }
-
-  .managed__pick {
-    display: flex;
-    flex-direction: column;
-    min-width: 0;
-    cursor: pointer;
   }
 
   .managed__name {
@@ -3456,14 +3570,16 @@
   .per-monitor__header {
     display: flex;
     flex-direction: column;
-    gap: var(--space-1);
+    gap: var(--space-2);
     padding: 0 var(--space-1);
   }
 
   .knob__body {
     display: flex;
     flex-direction: column;
-    gap: var(--space-1);
+    /* Hint sits below the label (research 0021 spacing round): 8px owns
+       the label → hint step, matching dialog field rhythm. */
+    gap: var(--space-2);
     min-width: 0;
   }
 
@@ -3479,6 +3595,7 @@
   .knob__hint {
     margin: 0;
     font-size: var(--text-xs);
+    line-height: var(--leading-tight);
     color: var(--text-muted);
   }
 
@@ -3546,11 +3663,22 @@
     font-family: var(--font-mono);
     font-size: var(--text-base);
     color: var(--text);
-    background: var(--bg-page);
-    border: 1px solid var(--border-strong);
-    border-radius: var(--radius);
+    /* The shared filled frame (research 0021, ticket 204). */
+    background: var(--bg-sunken);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
     padding: var(--space-2) var(--space-3);
     text-align: right;
+    /* WHY three properties: the shared progressive input frame — quiet rest,
+       hover wash, glowing focus (research 0020 enhancement). */
+    transition: border-color var(--dur-fast) var(--ease-out),
+      background-color var(--dur-fast) var(--ease-out),
+      box-shadow var(--dur-fast) var(--ease-out);
+  }
+
+  .field__input:hover {
+    background-color: var(--bg-hover);
+    border-color: var(--border-strong);
   }
 
   .field__input:focus {

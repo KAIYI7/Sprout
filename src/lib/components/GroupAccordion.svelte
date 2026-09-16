@@ -51,11 +51,12 @@
   {#if open}
     <!-- WHY fly and not height: panels settle with opacity/transform only so
          expansion never shifts layout, and the off switch renders the end
-         state instantly (ADR-0034; ADR-0028 off path). -->
+         state instantly (ADR-0034; ADR-0028 off path). The 8px travel reads
+         the 200ms settle at the system's expressive level. -->
     <div
       id={controls}
       class="group__rows"
-      transition:fly={animation.mode === "on" ? { y: -6, duration: 200, easing: cubicOut } : { duration: 0 }}
+      transition:fly={animation.mode === "on" ? { y: -8, duration: 200, easing: cubicOut } : { duration: 0 }}
     >
       {@render children()}
     </div>

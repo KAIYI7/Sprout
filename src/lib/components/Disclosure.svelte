@@ -65,7 +65,10 @@
   }
 
   .disclosure :global(svg) {
-    transition: transform var(--dur-fast) var(--ease-out);
+    /* WHY the spring: chevron toggles are interruptible arrivals, so the
+       rotation settles with the restrained overshoot while announcements
+       keep the plain ease-out (ADR-0034). Transform-only, as before. */
+    transition: transform var(--dur-fast) var(--ease-spring);
   }
 
   .disclosure.open :global(svg) {

@@ -107,23 +107,20 @@ describe("QuickActionFormDialog two-view dialog", () => {
     expect(body).toContain("Generate draft");
     expect(body).not.toContain("Enable it");
     expect(body).not.toContain("Set up AI assistance in Settings");
-    expect(body).not.toContain("Stopped — Generate will restart.");
   });
 
-  it("shows stopped-with-config as tab plus restart hint, never the pointer (ticket 192)", () => {
+  it("shows ready with no pointer and no restart hint (ticket 192)", () => {
     const { body } = render(QuickActionFormDialog, {
       props: {
         open: true,
         action: null,
         aiReady: true,
-        aiRuntimeStopped: true,
         onsave: vi.fn(),
         oncancel: vi.fn(),
       },
     });
     expect(body).toContain("AI draft");
     expect(body).toContain("qa-ai-request");
-    expect(body).toContain("Stopped — Generate will restart.");
     expect(body).not.toContain("Enable it");
     expect(body).not.toContain("Set up AI assistance in Settings");
   });

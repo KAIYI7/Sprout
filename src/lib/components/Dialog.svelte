@@ -140,7 +140,11 @@
 {#if open}
   <!-- WHY split in/out: announcements arrive decelerating and leave
        accelerating (ADR-0034 asymmetric enter/exit); off renders both ends
-       instantly through the existing switch path. -->
+       instantly through the existing switch path. A scale+rise entrance was
+       tried here and reverted: the custom WAAPI-backed transition aborted
+       loudly (unhandled AbortError) under component-teardown timing where
+       the equivalent fade stays silent — unexplained at the Svelte/happy-dom
+       seam, so the bare fade stands. -->
   <dialog
     bind:this={dialog}
     class="dialog"

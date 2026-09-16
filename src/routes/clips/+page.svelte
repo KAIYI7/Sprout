@@ -32,6 +32,7 @@
   } from "$lib/dockVisibility";
   import { clipTitle, formatBytes } from "$lib/format";
   import Button from "$lib/components/Button.svelte";
+  import Checkbox from "$lib/components/Checkbox.svelte";
   import Dialog from "$lib/components/Dialog.svelte";
   import TextInput from "$lib/components/TextInput.svelte";
   import InfoTip from "$lib/components/InfoTip.svelte";
@@ -883,19 +884,12 @@
       {/snippet}
     </TextInput>
 
-    <label class="imgform__dockvis">
-      <input
-        type="checkbox"
-        class="imgform__dockvis-check"
-        checked={imgShowInDock}
-        onchange={(e) =>
-          (imgShowInDock = (e.target as HTMLInputElement).checked)}
-      />
-      <span class="imgform__dockvis-title">Show in dock</span>
-      <InfoTip label="What showing in the dock does">
-        <p>Uncheck to hide this clip from the Quick Launch dock. It stays here and stays copyable.</p>
-      </InfoTip>
-    </label>
+    <Checkbox
+      checked={imgShowInDock}
+      onchange={(v) => (imgShowInDock = v)}
+      title="Show in dock"
+      hint="Uncheck to keep it in the main app only."
+    />
 
     {#if imgError}
       <p class="imgform__error" role="alert">{imgError}</p>
@@ -1146,26 +1140,6 @@
     font-family: var(--font-mono);
     font-size: var(--text-xs);
     color: var(--text-muted);
-  }
-
-  .imgform__dockvis {
-    display: flex;
-    align-items: center;
-    gap: var(--space-2);
-    cursor: pointer;
-  }
-
-  .imgform__dockvis-check {
-    margin: 0;
-    accent-color: var(--accent);
-    width: 14px;
-    height: 14px;
-  }
-
-  .imgform__dockvis-title {
-    font-size: var(--text-sm);
-    font-weight: 600;
-    color: var(--text);
   }
 
   .imgform__error {

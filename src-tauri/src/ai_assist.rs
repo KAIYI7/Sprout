@@ -1759,6 +1759,16 @@ mod tests {
                 "Draft a script using the XYZ-Cloud module to sync my folder",
                 "unknown-prerequisite",
             ),
+            (
+                "cmd",
+                "Draft a script using the XYZ-Cloud module to sync my folder",
+                "unknown-prerequisite",
+            ),
+            (
+                "cmd",
+                "Draft a script using the Acme Widget SDK to list my devices",
+                "unknown-prerequisite",
+            ),
         ] {
             let outcome = outcome_for(
                 &serde_json::json!({"shell": shell, "request": request}),

@@ -59,3 +59,15 @@ find-pick row pattern (183 owns the view). Fixture battery green
 packaging check holds (installed app serves pinned skills without checkout).
 Original plus 2026-09-06/12/13 text untouched; broader qualification
 (146/150–152/155) stays open.
+
+## Amendment — 2026-09-15 (prerequisite surfacing; ticket 200)
+
+The pinned `create-quick-action` skill gains one appended Prerequisites
+section: unknown prerequisites are disclosed or detected, never invented —
+`present` / `not-found for X` / `not-verifiable` results surface where
+available, offline or uncertain checks read `Not verifiable`, every
+dependency is recorded in `assumptions`, and the dialog warns with install
+guidance without ever blocking saving or auto-installing. Existing sections
+are byte-identical, NOTICES are retained, and `include_str!` packaging is
+unchanged. Detection stays read-only under its existing owner (ticket 199);
+no custom, editable, or remote skills (ADR-0030/0031 unchanged).

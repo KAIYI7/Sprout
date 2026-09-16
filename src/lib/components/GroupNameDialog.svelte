@@ -71,7 +71,8 @@
   .name-form {
     display: flex;
     flex-direction: column;
-    gap: var(--space-4);
+    /* Discord field rhythm in Ledger tokens (research 0021 spacing round). */
+    gap: var(--space-5);
   }
 
   .name-form__buttons {

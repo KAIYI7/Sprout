@@ -45,3 +45,51 @@ Primary sources agree (userinterface.wiki `to-spring-or-not-to-spring`; Apple HI
 - Android AEP physics-based-motion guideline (2026-08-26); Fluent 2 motion (curves/durations); Carbon motion (`cubic-bezier(0.2,0,0.38,0.9)` productive etc.); richtabor easing tokens; bendc `easing.css`; MDN `cubic-bezier`.
 - OpenDesign Discord `DESIGN.md` (server-avatar morph); Carbon/Fluent duration recipes.
 - Sprout source: `tokens.css:95-98,326-349`, `Dialog.svelte:150`, `Disclosure.svelte:67-73`, `PacketCard.svelte:86,153`, `ContextMenu.svelte:459`, `animation.svelte.ts`, ADR-0019, ADR-0028.
+
+## Evidence update — 2026-09-15: expressive Discord motion + the progressive frame
+
+Ticket 202's first rollout read as too subtle, so the Discord direction was
+re-researched against primary, fetchable sources (no Discord-official curve
+numbers exist — direction, not a spec, per the note above).
+
+- **Discord FluidUI** (`Nightwielder23/discord-fluidui`, real shipped CSS):
+  GPU-only motion (transform/opacity everywhere, highlights in neutral white
+  washes so they layer over any theme); entrances everywhere (context menus
+  slide in, popouts/modals scale up with soft overshoot, pickers rise,
+  dropdowns slide down, tooltips pop); hover micro-interactions (server icons
+  spring-scale, rows gain scale + background wash, buttons grow on hover and
+  press in on click); **focus glow** (message-input and search bars glow when
+  focused); reduced-motion collapses everything to near-zero.
+- **OpenDesign Discord tokens** (`open-design.ai/plugins/design-system-discord`):
+  `--motion-fast 80ms`, `--motion-base 200ms`,
+  `--ease-standard cubic-bezier(0.2,0,0,1)`, focus ring
+  `0 0 0 3px rgba(88,101,242,0.3)`; server avatars morph rounded-square →
+  circle on hover — expressiveness from shape/state change, not duration.
+- **Micro-interaction references** (Rune Hub 2026-06-28; dylantarre
+  `animation-principles`; christophacham `agent-skills-library`): hover 100ms,
+  toggle 150–200ms spring, press `scale(0.97–0.98)`, button hover
+  `translateY(-1px)` + shadow, input focus = border-color + soft ring
+  transitioned together, error shake 3–5px; reduced-motion keeps opacity fades
+  only.
+
+### What Sprout adopts (enhancement, still token-only)
+
+- **Announcements gain entrances, not durations**: dialogs fade + rise +
+  settle-scale (200ms out-decelerate / 100ms accelerate, ease-out — the
+  asymmetric recipe stands); menus slide + settle-scale in 120ms. New
+  durations: none. New easings: none (spring stays chevron/accordion/toast —
+  the chevron now actually uses it).
+- **Hover is anticipation, focus is commitment** (0004 rule 2's frequency
+  split applied to chrome): input frames rest quiet, wash faintly on hover,
+  and glow on focus with the ring transitioned alongside the border — the
+  Discord focus-glow in Ledger neutrals, accent spent at focus only (0006
+  pattern 6). Press-in (`translateY(-1px)` scale) lands on packet cards only.
+- **The frame fits the Ledger by staging, not recoloring**: rest keeps the
+  neutral 1px frame, hover adds the wash every row/card/menu already uses
+  (`--bg-hover`; 0005 rule 5 same-kind treatment), focus keeps accent + glow.
+  No new tokens, no ad-hoc colors.
+- **Property audit stays paint-only**: transform/opacity + border-color /
+  background-color / color / box-shadow; layout properties and
+  `transition: all` remain banned. The input list grows from border-color-only
+  to border + wash + glow continuity — recorded as the ticket-202 deviation
+  with this evidence, not a silent widening.

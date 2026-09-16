@@ -4,6 +4,7 @@
   import { createLaunchEntry, testLaunchCommand } from "$lib/api";
   import Dialog from "./Dialog.svelte";
   import Button from "./Button.svelte";
+  import Checkbox from "./Checkbox.svelte";
   import TextInput from "./TextInput.svelte";
   import Select from "./Select.svelte";
   import TestResult from "./TestResult.svelte";
@@ -132,11 +133,12 @@
         id="command-shell"
         value={shell}
         onchange={(v) => (shell = v as LaunchShell)}
-      >
-        <option value="powershell">{launchShellLabel.powershell}</option>
-        <option value="cmd">{launchShellLabel.cmd}</option>
-        <option value="none">{launchShellLabel.none}</option>
-      </Select>
+        options={[
+          { value: "powershell", label: launchShellLabel.powershell },
+          { value: "cmd", label: launchShellLabel.cmd },
+          { value: "none", label: launchShellLabel.none },
+        ]}
+      />
     </div>
 
     <div class="field">
@@ -162,35 +164,19 @@
         onclick={() => (detailsOpen = !detailsOpen)}
       />
       <div id="command-details-body" class="advanced__body" hidden={!detailsOpen}>
-        <label class="showwin">
-          <input
-            type="checkbox"
-            class="showwin__check"
-            checked={showWindow}
-            onchange={(e) => (showWindow = (e.target as HTMLInputElement).checked)}
-          />
-          <span class="showwin__body">
-            <span class="showwin__title">Show a window</span>
-            <span class="showwin__hint">
-              Commands run without a console window by default.
-            </span>
-          </span>
-        </label>
+        <Checkbox
+          checked={showWindow}
+          onchange={(v) => (showWindow = v)}
+          title="Show a window"
+          hint="Commands run without a console window by default."
+        />
 
-        <label class="showwin">
-          <input
-            type="checkbox"
-            class="showwin__check"
-            checked={showInDock}
-            onchange={(e) => (showInDock = (e.target as HTMLInputElement).checked)}
-          />
-          <span class="showwin__body">
-            <span class="showwin__title">Show in dock</span>
-            <span class="showwin__hint">
-              Uncheck to keep it in the main app only.
-            </span>
-          </span>
-        </label>
+        <Checkbox
+          checked={showInDock}
+          onchange={(v) => (showInDock = v)}
+          title="Show in dock"
+          hint="Uncheck to keep it in the main app only."
+        />
 
         <TestResult
           {open}
@@ -221,14 +207,16 @@
   .form {
     display: flex;
     flex-direction: column;
-    gap: var(--space-4);
+    /* Discord field rhythm in Ledger tokens (research 0021 spacing round):
+       24px field → field; 8px owns label → control → hint inside a field. */
+    gap: var(--space-5);
     min-width: 0;
   }
 
   .field {
     display: flex;
     flex-direction: column;
-    gap: var(--space-1);
+    gap: var(--space-2);
     min-width: 0;
   }
 
@@ -250,12 +238,15 @@
   .advanced {
     display: flex;
     flex-direction: column;
+    /* Section standoff (research 0021 spacing round): the Details chevron
+       stands off the previous field even when closed. */
+    margin-top: var(--space-1);
   }
 
   .advanced__body {
     display: flex;
     flex-direction: column;
-    gap: var(--space-4);
+    gap: var(--space-5);
     padding-top: var(--space-3);
     border-top: 1px dashed var(--border);
   }
@@ -272,11 +263,21 @@
     font-size: var(--text-sm);
     line-height: var(--leading-normal);
     color: var(--text);
-    background: var(--bg-page);
-    border: 1px solid var(--border-strong);
-    border-radius: var(--radius);
+    /* The shared filled frame (research 0021, ticket 204). */
+    background: var(--bg-sunken);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
     padding: 8px 10px;
-    transition: border-color var(--dur-fast) var(--ease-out);
+    /* WHY three properties: the shared progressive input frame — quiet rest,
+       hover wash, glowing focus (research 0020 enhancement). */
+    transition: border-color var(--dur-fast) var(--ease-out),
+      background-color var(--dur-fast) var(--ease-out),
+      box-shadow var(--dur-fast) var(--ease-out);
+  }
+
+  .field__cmd:hover {
+    background-color: var(--bg-hover);
+    border-color: var(--border-strong);
   }
 
   .field__cmd:focus {
@@ -288,37 +289,6 @@
   .field__cmd::placeholder {
     color: var(--text-muted);
     opacity: 0.75;
-  }
-
-  .showwin {
-    display: flex;
-    align-items: flex-start;
-    gap: var(--space-2);
-    cursor: pointer;
-  }
-
-  .showwin__check {
-    margin: 2px 0 0;
-    accent-color: var(--accent);
-    width: 14px;
-    height: 14px;
-  }
-
-  .showwin__body {
-    display: flex;
-    flex-direction: column;
-    gap: 1px;
-  }
-
-  .showwin__title {
-    font-size: var(--text-sm);
-    font-weight: 600;
-    color: var(--text);
-  }
-
-  .showwin__hint {
-    font-size: var(--text-xs);
-    color: var(--text-muted);
   }
 
   .form__error {

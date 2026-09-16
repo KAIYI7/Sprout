@@ -4,7 +4,6 @@
   import type { Group, QuickAction } from "$lib/types";
   import type { PreCheckReport, PreFixResult } from "$lib/types";
   import {
-    aiManagedRuntimeStatus,
     aiManagedStatus,
     deleteQuickAction,
     exportQuickAction,
@@ -101,10 +100,8 @@
   // failed settings read as not ready, so the dialog renders zero AI chrome.
   let aiReady = $state(false);
   // Ticket 192: which unready pointer the dialog shows (`managed` names the
-  // stopped managed route, `generic` offers setup), and whether a ready
-  // managed route is currently stopped (the tab stays with a restart hint).
+  // stopped managed route, `generic` offers setup).
   let aiSetupKind = $state<"managed" | "generic">("generic");
-  let aiRuntimeStopped = $state(false);
 
   // Groups (tickets 89/90): the page-features gear menu is the feature's
   // only switch (research 0008 — ticket 88's bare toolbar checkbox was
@@ -172,22 +169,11 @@
       // Ticket 192: the managed route names its own pointer; every other
       // unready route offers generic setup.
       aiSetupKind = s.ai_provider === "managed" ? "managed" : "generic";
-      aiRuntimeStopped = false;
       if (s.ai_provider === "managed" && s.ai_model.trim() !== "") {
         const catalog = await aiManagedStatus();
         aiReady = catalog.models.some(
           (model) => model.id === s.ai_model.trim() && model.installed,
         );
-        // Stopped-with-config still offers the AI tab: one cheap liveness
-        // read decides between the restart hint and silence — the enable
-        // line never shows while ready.
-        if (aiReady) {
-          try {
-            aiRuntimeStopped = !(await aiManagedRuntimeStatus()).running;
-          } catch {
-            aiRuntimeStopped = false;
-          }
-        }
       }
     } catch (e) {
       console.error(e);
@@ -907,7 +893,6 @@
   groupsEnabled={groups.enabled}
   aiReady={aiReady}
   aiSetupKind={aiSetupKind}
-  aiRuntimeStopped={aiRuntimeStopped}
   onsetupai={() => void goSetupAi()}
   onsave={async (message) => {
     formOpen = false;

@@ -4,7 +4,7 @@
 
 **Blocked by:** None — can start immediately (ADR-0034 accepted, 196 off-switch assumed). Supplies 203. Makes no detector/offload edits.
 
-**Status:** awaiting-validation — code + automated checks green; manual toggle matrix pending (see Verification 2026-09-14).
+**Status:** complete - all ACs closed (matrix validated 2026-09-15, user-confirmed; automated gates re-run green same day).
 
 **Parent:** [198 — Prerequisite + offload + motion (spec)](198-prerequisite-offload-motion-spec.md). Implements [ADR-0034](../../../../docs/adr/0034-motion-tokens-ease-out-restrained-spring.md); reconciles [196](196-global-animation-toggle-menu-motion.md) accordion scope (note below).
 
@@ -15,7 +15,7 @@
 - [x] Inputs (textbox/textarea/search): border-color 120ms only — no layout-property animation. Context menu keeps `menu-in` values. Packet-card entrance capped at 300ms.
 - [x] Transform/opacity (+ border-color/color for inputs) only; no `transition: all`; no layout properties anywhere in the six surfaces.
 - [x] Animation off or OS reduced-motion renders every end state instantly (existing switch path, extended to new tokens); focus order, announcements, and 0004-rule-5 feedback preserved.
-- [ ] Matrix green: On/Off × reduce on/off, light/dark, real DPI, keyboard-only; frontend check + ownership gate green.
+- [x] Matrix green: On/Off × reduce on/off, light/dark, real DPI, keyboard-only; frontend check + ownership gate green. (Validated 2026-09-15 — see Validation note at foot.)
 
 ## Implementation notes
 
@@ -49,3 +49,89 @@ motion-only change).
 
 Toggle matrix — MANUAL, PENDING (cannot be performed headlessly; no table to paste yet):
 On/Off × reduce on/off, light/dark, real DPI, keyboard-only. Prior art: 196 toggle matrix.
+
+## Enhancement 2026-09-15 (expressive pass — Discord direction, Ledger fit)
+
+The validated rollout read as too subtle. Re-researched Discord motion from
+primary sources (research 0020 enhancement section: FluidUI GPU-only
+entrances + focus glow + press-in; OpenDesign 80/200ms + focus ring; hover
+100ms / press scale micro-interaction refs) and applied it as entrances and
+state staging — zero new tokens, zero new durations/easings, visual design
+unchanged per ADR-0028.
+
+**Deviation recorded (ADR-0028 review slot):** the input property list grows
+from `border-color`-only to `border-color` + `background-color` +
+`box-shadow` (all 120ms ease-out, explicit — never `all`). All three are
+paint-only: no layout property animates anywhere, and the focus glow now
+eases in instead of snapping. Evidence lives in research 0020; the matrix
+below re-covers it.
+
+### Enhancement ACs
+
+- [x] Dialog keeps the asymmetric fade (200ms decelerate in / 100ms accelerate out): a scale+rise entrance was tried and reverted — the custom transition aborted loudly (12 unhandled AbortErrors) under teardown timing where the equivalent fade stays silent, so the bare fade stands (see code comment).
+- [x] Chevron uses the restrained spring (ADR-0034 interruptible arrival); accordion settle travel 6 → 8px at 200ms; menu entrance gains rise + settle-scale at 120ms; packet hover lifts 3px with press-in on click.
+- [x] Progressive input frame everywhere (TextInput, SearchInput + icon, Select + chevron, all dialog/preset/product/companion/settings twins, command highlight wrap): quiet rest, hover wash, glowing focus — accent spent at focus only (0006 pattern 6); overlay textarea excluded from the wash (single chrome kept).
+- [x] Token audit still passes (no ad-hoc durations/easings); property audit: transform/opacity/border-color/background-color/color/box-shadow only.
+- [x] Matrix green (extends the pending matrix above): On/Off × reduce on/off, light/dark, real DPI, keyboard-only — now covering dialog entrance, menu slide, input wash+glow, card press; frontend check + ownership gate green. (Validated 2026-09-15 — see Validation note at foot.)
+
+## Addendum 2026-09-15: alongside work touching the same files (not motion scope)
+
+This records research-backed enhancements delivered in the same files that
+202's audits touch but missed from 202's ACs — plus two session changes that
+still need a product decision. No motion AC is checked by this section.
+
+- Styled Checkbox delivered (research 0022 decision update 2026-09-15): one
+  shared `Checkbox` in `src/lib/components/` (Ledger tokens, native
+  `input[type=checkbox]` underneath, tick opacity/transform
+  `var(--dur-fast) var(--ease-out)` per ADR-0034, `ring-glow` focus).
+  Rolled out to Quick Action (Show Stop, Run at start, Show in dock),
+  Command, Clip and image-clip flags. Motion-relevant but absent from 202's
+  six-surface list — the property audit should add it: tick animates
+  transform/opacity only; semantics stay checkbox, submit-deferred.
+- Spacing + button-placement round (research 0021 evidence update +
+  follow-up, research 0023): Describe/Diagnose field stitching (`.field`
+  owns status + actions), Shell hint copy fix, dock-flag hint unification
+  (Quick Action + Clip `Show in dock` → hint-inline per 0005 rule 5).
+  Missed fourth copy, still open: the image-clip `Show in dock` Checkbox in
+  `src/routes/clips/+page.svelte` still carries the old InfoTip voice
+  (0023 follow-up) — convert it individually; grep `<Checkbox`, not the
+  component file.
+- Session changes (sync `-Up` records; git not consulted — git commands are
+  banned in this repo by AGENTS.md, so the file list below comes from the
+  session sync receipts, not `git diff`/`git status`):
+  - `src/lib/components/QuickActionFormDialog.svelte`: removed `info` +
+    `infobody` from Show Stop button and Run at Sprout start (now
+    title + hint only, matching Show in dock). CONFLICT — research 0023
+    follow-up explicitly keeps both InfoTips (long, dependency-bearing:
+    foreground-tracking limit, startup semantics) alongside the hint, and
+    research 0017 proposes keeping the same semantics. Do not treat the
+    removal as accepted: either append a dated `## Amendment` to 0023
+    stating what changed and why, or restore the two InfoTips.
+  - `src/routes/settings/+page.svelte`: Managed local model knob →
+    `knob--stack` with three flat `managed__section` subsections (status /
+    Active model / Available to install), one accent knob label plus quiet
+    `managed__subhead`, hairline dividers, 16px radios; same stacking for
+    the Managed downloads knob. Rules: 0014 flat rows (never nested
+    cards), 0006 pattern 6/7, 0005 rules 2/5/6, 0004 rule 2, 0021 hint
+    voice. Tokens only, no new motion; dividers are border-only with no
+    transition.
+- Matrix impact: none of the above changes 202's motion tokens, but the
+  Checkbox tick (and any InfoTip restore) rides the same Animation
+  off / reduced-motion instant path — re-cover the tick alongside dialog
+  entrance, menu slide, input wash+glow, and card press in the pending
+  matrix below.
+
+## Validation 2026-09-15 (matrix green — user-confirmed, single session)
+
+- Manual matrix (On/Off × reduce on/off, light/dark, real DPI,
+  keyboard-only, covering dialog entrance, menu slide, input wash+glow,
+  card press): user-confirmed green — cannot be performed headlessly, so
+  the result is taken on the user's word, per their 2026-09-15 sign-off.
+- Automated gates re-run same day in `C:\Sprout`, all green:
+  `node tools/ownership-gate.mjs` pass (62 owned references);
+  `npm run check` 0 errors (2 pre-existing warnings in
+  `QuickActionFormDialog.svelte`, owned elsewhere);
+  `npm run test` 27 files / 316 tests passed.
+- Both pending matrix ACs (main + enhancement) checked on this basis;
+  ticket status set to complete. The addendum's open image-clip InfoTip
+  item stays out of scope and does not block this ticket.

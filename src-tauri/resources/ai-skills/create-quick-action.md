@@ -74,3 +74,16 @@ draft for the user to review and explicitly save. Never executes.
   repeated, while a second distinct unknown still asks back — the exchange
   ends when no question remains open, when the user drafts anyway with what
   they have, or never for unsafe content, which is refused instead.
+
+## Prerequisites
+
+- Unknown prerequisites are disclosed or detected, never invented: when the
+  presence of a runtime, module, executable, or path is unknown, disclose it
+  in Assumptions or ask for clarification (above), and surface a verified
+  detection result (`present` / `not-found for X` / `not-verifiable`) where
+  one is available. An offline or uncertain check reads `Not verifiable` —
+  never a fabricated version or path.
+- Record every prerequisite the draft depends on in `assumptions`, one per
+  entry, naming the exact target for Windows PowerShell 5.1 or Windows CMD.
+  The dialog verifies these and warns with install guidance — saving is
+  never blocked and nothing auto-installs.

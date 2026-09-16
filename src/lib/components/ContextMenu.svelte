@@ -5,6 +5,9 @@
     label: string;
     icon?: string;
     danger?: boolean;
+    /** Native option-title parity for select popouts (ticket 204): a hover
+     *  tooltip naming the choice's consequence (e.g. version policies). */
+    title?: string;
     /** A disabled item (e.g. Move up on the first row) renders greyed and
      *  is skipped by keyboard navigation. */
     disabled?: boolean;
@@ -352,6 +355,7 @@
           class:danger={item.danger}
           role={item.checked === undefined ? "menuitem" : "menuitemradio"}
           aria-checked={item.checked}
+          title={item.title}
           tabindex={activeIndex === i ? 0 : -1}
           disabled={item.disabled}
           aria-haspopup={item.children ? "true" : undefined}
@@ -417,6 +421,7 @@
                   class:danger={child.danger}
                   role={child.checked === undefined ? "menuitem" : "menuitemradio"}
                   aria-checked={child.checked}
+                  title={child.title}
                   tabindex={childActiveIndex === ci ? 0 : -1}
                   disabled={child.disabled}
                   onclick={() => select(child)}
@@ -447,22 +452,28 @@
     display: flex;
     flex-direction: column;
     min-width: 168px;
+    /* Ticket-204 deviation (ADR-0028 review slot, research 0021): long
+       option lists scroll inside the popout instead of overflowing the
+       window. Pure cap — short menus render exactly as before. */
+    max-height: min(320px, calc(100vh - 16px));
+    overflow-y: auto;
     padding: 4px;
     background: var(--bg-surface);
     border: 1px solid var(--border-strong);
     border-radius: var(--radius);
     box-shadow: var(--shadow-dialog);
-    /* Mount fade: menus appear from nowhere, so a short opacity/scale
-       entrance keeps them from flashing in. Pure CSS on the motion tokens,
-       so the Animation off hook and the OS reduced-motion rule collapse it
-       with everything else. */
+    /* Mount entrance: menus arrive from nowhere, so a short rise with a
+       settle-scale keeps them from flashing in — the dropdown/drop-down
+       grammar, on the fast token. Pure CSS on the motion tokens, so the
+       Animation off hook and the OS reduced-motion rule collapse it with
+       everything else. */
     animation: menu-in var(--dur-fast) var(--ease-out);
   }
 
   @keyframes menu-in {
     from {
       opacity: 0;
-      transform: scale(0.98);
+      transform: translateY(-6px) scale(0.97);
     }
   }
 

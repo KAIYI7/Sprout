@@ -1164,12 +1164,19 @@
     font-family: var(--font-mono);
     font-size: var(--text-sm);
     color: var(--text);
-    background: var(--bg-surface);
-    border: 1px solid var(--border-strong);
-    border-radius: var(--radius);
+    /* The shared filled frame (research 0021, ticket 204). */
+    background: var(--bg-sunken);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
     padding: 9px 32px 9px 32px;
     transition: border-color var(--dur-fast) var(--ease-out),
+      background-color var(--dur-fast) var(--ease-out),
       box-shadow var(--dur-fast) var(--ease-out);
+  }
+
+  .add-panel__search-input:hover {
+    background-color: var(--bg-hover);
+    border-color: var(--border-strong);
   }
 
   .add-panel__search-input::placeholder {
@@ -1181,6 +1188,10 @@
     outline: none;
     border-color: var(--accent);
     box-shadow: var(--ring-glow);
+  }
+
+  .add-panel__search:focus-within .add-panel__search-icon {
+    color: var(--accent);
   }
 
   .add-panel__search-input::-webkit-search-cancel-button {

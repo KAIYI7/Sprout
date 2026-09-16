@@ -74,6 +74,22 @@ function button(host: HTMLElement, label: string) {
   return [...host.querySelectorAll("button")].find((item) => item.textContent?.trim() === label);
 }
 
+// Per-model verbs live in the row's own ⋯ menu — open it before picking.
+async function openModelMenu(host: HTMLElement, modelId: string) {
+  const trigger = host.querySelector(
+    `[aria-label="Actions for ${modelId}"]`,
+  ) as HTMLButtonElement | null;
+  expect(trigger).not.toBeNull();
+  trigger!.click();
+  await tick();
+}
+
+// The AI provider Select renders a trigger button (ticket 204) — its
+// current value reads from the data-value readout, not a native select.
+function providerValue(host: HTMLElement) {
+  return (host.querySelector("#ai-provider") as HTMLButtonElement | null)?.dataset.value;
+}
+
 let capturedProgress: ((event: { payload: unknown }) => void) | null = null;
 
 describe("Managed setup disclosure", () => {
@@ -107,7 +123,7 @@ describe("Managed setup disclosure", () => {
     const host = await openSettings();
     button(host, "Use existing local service")!.click();
     await tick();
-    expect((host.querySelector("#ai-provider") as HTMLSelectElement).value).toBe("existing-local");
+    expect(providerValue(host)).toBe("existing-local");
     expect(document.activeElement?.id).toBe("ai-base-url");
     expect(host.textContent).toContain("Unsaved changes");
     expect(aiInstallManaged).not.toHaveBeenCalled();
@@ -160,6 +176,7 @@ describe("Managed setup disclosure", () => {
     vi.mocked(aiManagedStatus).mockResolvedValueOnce(installed).mockResolvedValue(emptied);
     vi.mocked(aiRemoveManaged).mockResolvedValue({ model_id: modelId, removed: true, remaining_installed: 0, message: "Removed the managed model." });
     const host = await openSettings();
+    await openModelMenu(host, modelId);
     button(host, "Remove…")!.click();
     await tick();
     const dialog = [...host.querySelectorAll("dialog")].find((item) => item.textContent?.includes("Managed model details"));
@@ -168,7 +185,7 @@ describe("Managed setup disclosure", () => {
     expect(aiRemoveManaged).not.toHaveBeenCalled();
     button(host, "Confirm remove")!.click();
     await vi.waitFor(() => expect(aiRemoveManaged).toHaveBeenCalledExactlyOnceWith(modelId));
-    await vi.waitFor(() => expect((host.querySelector("#ai-provider") as HTMLSelectElement).value).toBe("off"));
+    await vi.waitFor(() => expect(providerValue(host)).toBe("off"));
     expect(host.textContent).toContain("set to Off");
     expect(host.textContent).toContain("Unsaved changes");
     expect(updateSettings).not.toHaveBeenCalled();
@@ -197,12 +214,13 @@ describe("Managed setup disclosure", () => {
     vi.mocked(aiManagedStatus).mockResolvedValueOnce(before).mockResolvedValue(after);
     vi.mocked(aiRemoveManaged).mockResolvedValue({ model_id: "alpha", removed: true, remaining_installed: 1, message: "Removed alpha." });
     const host = await openSettings();
+    await openModelMenu(host, "alpha");
     button(host, "Remove…")!.click();
     await tick();
     button(host, "Confirm remove")!.click();
     await vi.waitFor(() => expect(aiRemoveManaged).toHaveBeenCalledExactlyOnceWith("alpha"));
     await vi.waitFor(() => expect(host.textContent).toContain("Removed alpha."));
-    expect((host.querySelector("#ai-provider") as HTMLSelectElement).value).toBe("managed");
+    expect(providerValue(host)).toBe("managed");
     // No silent switch: the draft still names the removed entry, so the
     // Active radio lists only the survivor with nothing checked — picking it
     // is an explicit, Save-deferred edit.
@@ -223,6 +241,7 @@ describe("Managed setup disclosure", () => {
     };
     vi.mocked(aiManagedStatus).mockResolvedValue(installed);
     const host = await openSettings();
+    await openModelMenu(host, installed.models[0].id);
     button(host, "Model details")!.click();
     await tick();
     button(host, "Remove model…")!.click();
@@ -270,7 +289,7 @@ describe("Managed Start/Stop + status (ticket 189)", () => {
     button(host, "Start")!.click();
     await vi.waitFor(() => expect(aiStartManagedRuntime).toHaveBeenCalledExactlyOnceWith(modelId));
     expect(updateSettings).not.toHaveBeenCalled();
-    expect((host.querySelector("#ai-provider") as HTMLSelectElement).value).toBe("managed");
+    expect(providerValue(host)).toBe("managed");
     expect(aiStopManagedRuntime).not.toHaveBeenCalled();
   });
 
@@ -287,7 +306,7 @@ describe("Managed Start/Stop + status (ticket 189)", () => {
     button(host, "Stop")!.click();
     await vi.waitFor(() => expect(aiStopManagedRuntime).toHaveBeenCalledTimes(1));
     expect(updateSettings).not.toHaveBeenCalled();
-    expect((host.querySelector("#ai-provider") as HTMLSelectElement).value).toBe("managed");
+    expect(providerValue(host)).toBe("managed");
     expect(aiStartManagedRuntime).not.toHaveBeenCalled();
   });
 
@@ -398,6 +417,7 @@ describe("Active managed model radio (ticket 191)", () => {
     expect(host.querySelectorAll(".managed__option").length).toBe(1);
     expect(host.textContent).not.toContain(lite.artifact);
     // …while the full artifact identity stays one level down in Details.
+    await openModelMenu(host, modelId);
     button(host, "Model details")!.click();
     await tick();
     const dialog = [...host.querySelectorAll("dialog")].find((item) => item.textContent?.includes("Managed model details"));
@@ -497,7 +517,7 @@ describe("Active managed model radio (ticket 191)", () => {
     await vi.waitFor(() => expect(host.textContent).toContain("serving an active request"));
     // No silent switch: the draft and the provider stand exactly as authored.
     expect(checkedRadio(host)).toBe("beta");
-    expect((host.querySelector("#ai-provider") as HTMLSelectElement).value).toBe("managed");
+    expect(providerValue(host)).toBe("managed");
     expect(updateSettings).not.toHaveBeenCalled();
   });
 });
@@ -778,6 +798,7 @@ describe("Managed install folder (manual deletion)", () => {
     Object.defineProperty(navigator, "clipboard", { value: { writeText }, configurable: true });
     try {
       const host = await openSettings();
+      await openModelMenu(host, installed.models[0].id);
       button(host, "Model details")!.click();
       await tick();
       expect(host.textContent).toContain("Installed at:");

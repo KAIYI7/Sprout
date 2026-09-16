@@ -60,6 +60,11 @@
     display: inline-flex;
     color: var(--text-muted);
     pointer-events: none;
+    transition: color var(--dur-fast) var(--ease-out);
+  }
+
+  .search:focus-within .search__icon {
+    color: var(--accent);
   }
 
   .search__input {
@@ -67,11 +72,22 @@
     font-family: var(--font-mono);
     font-size: var(--text-sm);
     color: var(--text);
-    background: var(--bg-surface);
-    border: 1px solid var(--border-strong);
-    border-radius: var(--radius);
+    /* The shared filled frame (research 0021, ticket 204): sunken rest,
+       hairline edge, wash on hover, glow on focus. */
+    background: var(--bg-sunken);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
     padding: 9px 32px 9px 32px;
-    transition: border-color var(--dur-fast) var(--ease-out);
+    /* WHY three properties: same progressive frame as the text inputs —
+       quiet rest, hover wash, glowing focus (research 0020 enhancement). */
+    transition: border-color var(--dur-fast) var(--ease-out),
+      background-color var(--dur-fast) var(--ease-out),
+      box-shadow var(--dur-fast) var(--ease-out);
+  }
+
+  .search__input:hover {
+    background-color: var(--bg-hover);
+    border-color: var(--border-strong);
   }
 
   .search__input::placeholder {
