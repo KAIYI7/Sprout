@@ -108,6 +108,10 @@ pub const DEFAULT_COMPANION_MUTED: bool = false;
 /// AI assistance is off until deliberately configured: enabling it alone
 /// never downloads weights or a runtime (ADR-0031).
 pub const DEFAULT_AI_PROVIDER: &str = "off";
+/// The main window's frame: "off" draws Sprout's unified header over a
+/// frameless window, "on" restores the native OS titlebar as a fallback for
+/// display setups the custom header misbehaves on.
+pub const DEFAULT_NATIVE_FRAME: &str = "off";
 /// The loopback address most local inference services print on startup.
 pub const DEFAULT_AI_BASE_URL: &str = "http://127.0.0.1:11434";
 
@@ -135,6 +139,7 @@ const KEY_COMPANION_MUTED: &str = "settings.companion_muted";
 const KEY_AI_PROVIDER: &str = "ai.provider";
 const KEY_AI_BASE_URL: &str = "ai.base_url";
 const KEY_AI_MODEL: &str = "ai.model";
+const KEY_NATIVE_FRAME: &str = "settings.native_frame";
 
 /// One Companion saved site: its https URL plus the user's display name for
 /// it. A blank name renders as the URL everywhere — nothing ever renders
@@ -320,6 +325,16 @@ pub struct Settings {
     /// substitutes another one.
     #[serde(default)]
     pub ai_model: String,
+    /// The main window's frame: "off" (default) draws the unified header over
+    /// a frameless window, "on" restores the native OS titlebar.
+    #[serde(default = "default_native_frame")]
+    pub native_frame: String,
+}
+
+/// Missing frame switch reads as custom — older saves predate the knob and
+/// the unified header is today's rendering.
+fn default_native_frame() -> String {
+    DEFAULT_NATIVE_FRAME.to_string()
 }
 
 /// Missing motion switch reads as on — older saves predate the knob and
@@ -365,7 +380,16 @@ impl Default for Settings {
             ai_provider: DEFAULT_AI_PROVIDER.to_string(),
             ai_base_url: DEFAULT_AI_BASE_URL.to_string(),
             ai_model: String::new(),
+            native_frame: DEFAULT_NATIVE_FRAME.to_string(),
         }
+    }
+}
+
+/// Accepts only the two frame states the Settings screen offers.
+pub fn validate_native_frame(value: &str) -> std::result::Result<(), String> {
+    match value {
+        "on" | "off" => Ok(()),
+        _ => Err("Window frame must be \"on\" or \"off\"".into()),
     }
 }
 
@@ -670,6 +694,7 @@ impl Settings {
         validate_companion_height_ratio(self.companion_height_ratio)?;
         validate_companion_url_list(&self.companion_url_list)?;
         crate::ai_assist::validate_ai_settings(&self.ai_provider, &self.ai_base_url, &self.ai_model)?;
+        validate_native_frame(&self.native_frame)?;
         Ok(())
     }
 }
@@ -781,6 +806,8 @@ pub fn load(conn: &Connection) -> Settings {
         ai_provider,
         ai_base_url,
         ai_model,
+        native_frame: validated(conn, KEY_NATIVE_FRAME, validate_native_frame)
+            .unwrap_or_else(|| DEFAULT_NATIVE_FRAME.to_string()),
     }
 }
 
@@ -828,6 +855,7 @@ pub fn save(conn: &Connection, settings: &Settings) -> std::result::Result<(), S
     upsert_meta(&tx, KEY_AI_PROVIDER, &settings.ai_provider).map_err(|e| e.to_string())?;
     upsert_meta(&tx, KEY_AI_BASE_URL, &settings.ai_base_url).map_err(|e| e.to_string())?;
     upsert_meta(&tx, KEY_AI_MODEL, &settings.ai_model).map_err(|e| e.to_string())?;
+    upsert_meta(&tx, KEY_NATIVE_FRAME, &settings.native_frame).map_err(|e| e.to_string())?;
     tx.commit().map_err(|e| e.to_string())
 }
 
@@ -843,6 +871,15 @@ pub fn save_theme(conn: &Connection, theme: &str) -> std::result::Result<(), Str
 pub fn save_animation(conn: &Connection, value: &str) -> std::result::Result<(), String> {
     validate_animation(value)?;
     upsert_meta(conn, KEY_ANIMATION, value).map_err(|e| e.to_string())
+}
+
+/// Persists only the window-frame switch — the Settings screen applies it the
+/// moment it is picked, without touching the other knobs, like the motion
+/// switch. "on" restores the native OS titlebar, "off" keeps the unified
+/// header over a frameless window.
+pub fn save_native_frame(conn: &Connection, value: &str) -> std::result::Result<(), String> {
+    validate_native_frame(value)?;
+    upsert_meta(conn, KEY_NATIVE_FRAME, value).map_err(|e| e.to_string())
 }
 
 /// Persists only the dock state (ticket 57) — the in-window dock/undock
@@ -1004,6 +1041,7 @@ mod tests {
             ai_provider: "existing-local".to_string(),
             ai_base_url: "http://127.0.0.1:11434".to_string(),
             ai_model: "test-model".to_string(),
+            native_frame: "on".to_string(),
         };
         {
             let conn = crate::db::init_at(&dir).unwrap();
@@ -1407,6 +1445,44 @@ mod tests {
     }
 
     #[test]
+    fn native_frame_roundtrips_on_its_own() {
+        let dir = clean_dir();
+        {
+            let conn = crate::db::init_at(&dir).unwrap();
+            save_native_frame(&conn, "on").unwrap();
+            assert_eq!(load(&conn).native_frame, "on");
+        }
+        // Re-open: the switch survives the connection.
+        let conn = crate::db::init_at(&dir).unwrap();
+        assert_eq!(load(&conn).native_frame, "on");
+    }
+
+    #[test]
+    fn save_native_frame_rejects_unknown_values_and_keeps_the_old_one() {
+        let conn = conn();
+        assert!(save_native_frame(&conn, "frameless").is_err());
+        // Nothing was persisted.
+        assert_eq!(load(&conn).native_frame, DEFAULT_NATIVE_FRAME);
+    }
+
+    #[test]
+    fn invalid_stored_native_frame_falls_back_to_default() {
+        let conn = conn();
+        // A broken value must never freeze the UI — it reads back as custom.
+        upsert_meta(&conn, KEY_NATIVE_FRAME, "sometimes").unwrap();
+        assert_eq!(load(&conn).native_frame, DEFAULT_NATIVE_FRAME);
+        upsert_meta(&conn, KEY_NATIVE_FRAME, "").unwrap();
+        assert_eq!(load(&conn).native_frame, DEFAULT_NATIVE_FRAME);
+        // Every offered state persists through the ordinary save path.
+        let mut s = Settings::default();
+        for state in ["on", "off"] {
+            s.native_frame = state.to_string();
+            save(&conn, &s).unwrap();
+            assert_eq!(load(&conn).native_frame, state);
+        }
+    }
+
+    #[test]
     fn autostart_roundtrips_on_its_own() {
         let dir = clean_dir();
         {
@@ -1458,6 +1534,7 @@ mod tests {
             ai_provider: DEFAULT_AI_PROVIDER.to_string(),
             ai_base_url: DEFAULT_AI_BASE_URL.to_string(),
             ai_model: String::new(),
+            native_frame: DEFAULT_NATIVE_FRAME.to_string(),
         };
         assert!(save(&conn, &bad).is_err());
         // Nothing was persisted.

@@ -329,6 +329,10 @@ export interface Settings {
   ai_base_url: string;
   /** The exact model name the local service exposes. Never substituted. */
   ai_model: string;
+  /** The main window's frame: "on" restores the native OS titlebar (fallback
+   *  for display setups the custom header misbehaves on), "off" (default)
+   *  draws Sprout's unified header over a frameless window. */
+  native_frame: string;
 }
 
 /** One Companion saved site: its https URL plus the user's display name for

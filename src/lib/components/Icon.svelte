@@ -49,6 +49,11 @@
       '<rect x="3" y="4" width="15" height="16" rx="2"/><rect x="18" y="4" width="3" height="16" rx="1.5"/>',
     undock:
       '<rect x="6" y="4" width="14" height="16" rx="2"/><path d="M4 9h16"/>',
+    // Unified header window buttons — native ─ □ ✕ idiom, same stroke
+    // treatment as every other glyph (tokens only, no new colors).
+    square: '<rect x="5.5" y="5.5" width="13" height="13" rx="1.5"/>',
+    restore:
+      '<path d="M9 5.5h9.5v9.5"/><rect x="4.5" y="9" width="11" height="10.5" rx="1.5"/>',
     "chevron-left": '<path d="m15 6-6 6 6 6"/>',
     "chevron-right": '<path d="m9 6 6 6-6 6"/>',
     warn:

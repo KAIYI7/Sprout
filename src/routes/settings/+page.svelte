@@ -53,6 +53,13 @@
   import { animation, restoreAnimation, selectAnimation } from "$lib/animation.svelte";
   import type { AnimationMode } from "$lib/animation.svelte";
   import {
+    nativeFrame,
+    restoreNativeFrame,
+    selectNativeFrame,
+  } from "$lib/nativeFrame.svelte";
+  import type { NativeFrameMode } from "$lib/windowChrome";
+  import { parseNativeFrame } from "$lib/windowChrome";
+  import {
     checkForUpdates,
     installNow,
     updateState,
@@ -122,6 +129,11 @@
   const animationOptions: { value: AnimationMode; label: string }[] = [
     { value: "on", label: "On" },
     { value: "off", label: "Off" },
+  ];
+
+  const nativeFrameOptions: { value: NativeFrameMode; label: string }[] = [
+    { value: "off", label: "Modern" },
+    { value: "on", label: "Native" },
   ];
 
   const aiProviderOptions: { value: AiProvider; label: string }[] = [
@@ -934,6 +946,8 @@
       themeLabel: themeOptions.find((o) => o.mode === theme.mode)?.label ?? "System",
       animation: animation.mode,
       animationLabel: animationOptions.find((o) => o.value === animation.mode)?.label ?? "On",
+      nativeFrame: nativeFrame.mode,
+      nativeFrameLabel: nativeFrameOptions.find((o) => o.value === nativeFrame.mode)?.label ?? "Modern",
       installDir,
       autostart,
       timeoutMinutes: clampTimeout(timeout),
@@ -1200,6 +1214,7 @@
         if (persisted !== theme.mode) restoreTheme(persisted);
       }
       restoreAnimation(validAnimation(loaded.animation));
+      restoreNativeFrame(parseNativeFrame(loaded.native_frame));
       baseline = {
         timeout: loaded.default_timeout_minutes,
         retention: loaded.log_retention_days,
@@ -1392,6 +1407,19 @@
     }
   }
 
+  async function pickNativeFrame(value: NativeFrameMode) {
+    const previous = nativeFrame.mode;
+    saved = "";
+    error = "";
+    try {
+      await selectNativeFrame(value);
+    } catch {
+      // The switch never landed — put it back so it tells the truth.
+      restoreNativeFrame(previous);
+      error = "Couldn't save the window frame — it applies for now, but won't survive a restart.";
+    }
+  }
+
   async function pickAutostart(value: string) {
     const previous = autostart;
     autostart = value;
@@ -1536,6 +1564,9 @@
         // The motion switch saves on its own like the theme — the bulk save
         // only carries it through so a save never resets it.
         animation: animation.mode,
+        // The frame switch saves on its own too — carried through for the
+        // same reason.
+        native_frame: nativeFrame.mode,
         install_dir: installDir.trim(),
         launch_concurrency: Math.min(50, Math.max(1, Math.floor(launchConcurrency) || 1)),
         dock_mode: dockMode,
@@ -1970,7 +2001,7 @@
       }}
     >
       {#if groupVisible("general")}
-        <!-- General: theme, animation, install directory, auto-start, and run defaults. -->
+        <!-- General: theme, animation, window frame, install directory, auto-start, and run defaults. -->
         <GroupAccordion
           open={groupEffectiveOpen("general")}
           controls="group-general-body"
@@ -2017,6 +2048,27 @@
             value={animation.mode}
             onchange={(v) => pickAnimation(validAnimation(v))}
             options={animationOptions}
+          />
+        </div>
+      </article>
+
+      <article class="knob" hidden={!knobVisible("native-frame")}>
+        <div class="knob__body">
+          <span class="knob__label">Window frame</span>
+          <p class="knob__hint">
+            Modern draws Sprout's own bar with built-in window buttons.
+            Native restores the Windows titlebar instead — turn it on if
+            the custom header misbehaves on your setup. Applies immediately; no
+            save needed.
+          </p>
+        </div>
+        <div class="knob__input">
+          <Select
+            id="native-frame"
+            variant="small"
+            value={nativeFrame.mode}
+            onchange={(v) => pickNativeFrame(parseNativeFrame(v))}
+            options={nativeFrameOptions}
           />
         </div>
       </article>

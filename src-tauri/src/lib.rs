@@ -674,6 +674,64 @@ fn destroy_main_window(app: AppHandle) -> Result<(), String> {
     Ok(())
 }
 
+/// Minimizes the main window — one of the unified header's window buttons.
+/// Lives beside `destroy_main_window`: the main window is this module's
+/// window to own (ADR-0029), so its controls never scatter across modules.
+#[tauri::command]
+fn minimize_main_window(app: AppHandle) -> Result<(), String> {
+    if let Some(window) = app.get_webview_window("main") {
+        window.minimize().map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
+/// Toggles the main window between maximized and restored — the unified
+/// header's maximize button and its double-click grammar share this path.
+#[tauri::command]
+fn toggle_main_window_maximize(app: AppHandle) -> Result<(), String> {
+    if let Some(window) = app.get_webview_window("main") {
+        let maximized = window.is_maximized().map_err(|e| e.to_string())?;
+        if maximized {
+            window.unmaximize().map_err(|e| e.to_string())?;
+        } else {
+            window.maximize().map_err(|e| e.to_string())?;
+        }
+    }
+    Ok(())
+}
+
+/// Whether the main window is currently maximized — the header reflects this
+/// (square vs restore glyph, maximized padding) instead of tracking it
+/// itself. A missing window reads as restored, never an error.
+#[tauri::command]
+fn main_window_is_maximized(app: AppHandle) -> Result<bool, String> {
+    if let Some(window) = app.get_webview_window("main") {
+        return window.is_maximized().map_err(|e| e.to_string());
+    }
+    Ok(false)
+}
+
+/// Persists the window-frame switch on its own and applies it to the live
+/// main window when one is open — the Settings screen applies it the moment
+/// it is picked, like the theme and motion switches. A closed window simply
+/// picks the flag up at its next build.
+#[tauri::command]
+fn update_native_frame(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    native_frame: String,
+) -> Result<(), String> {
+    let conn = lock(&state)?;
+    settings::save_native_frame(&conn, &native_frame)?;
+    drop(conn);
+    if let Some(window) = app.get_webview_window("main") {
+        window
+            .set_decorations(native_frame == "on")
+            .map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
 /// The UI's section report for Discord presence: validated fixed text only —
 /// the session clock stays untouched, so the elapsed timer never resets when
 /// the message changes (ADR-0033). Discord absent is a silent no-op.
@@ -1215,8 +1273,20 @@ pub(crate) fn open_main_window(app: &AppHandle) -> tauri::Result<tauri::WebviewW
         if let Some(state) = app.try_state::<AppState>() {
             state.main_window_loading.store(true, Ordering::SeqCst);
         }
+        // WHY read the persisted frame switch here instead of defaulting to
+        // frameless: a user who fell back to the native titlebar must get it
+        // on every fresh window, not just until the next reopen — this window
+        // is destroyed and rebuilt across the tray-resident lifecycle.
+        let native_frame = match app.try_state::<AppState>() {
+            Some(state) => match state.db.lock() {
+                Ok(conn) => settings::load(&conn).native_frame == "on",
+                Err(_) => false,
+            },
+            None => false,
+        };
         let build = tauri::WebviewWindowBuilder::new(app, "main", tauri::WebviewUrl::default())
             .title("Sprout")
+            .decorations(native_frame)
             .visible(true)
             .transparent(true)
             .background_color(tauri::window::Color(0, 0, 0, 0))
@@ -3683,6 +3753,10 @@ pub fn run() {
             ensure_companion_history_hook,
             set_settings_dirty,
             destroy_main_window,
+            minimize_main_window,
+            toggle_main_window_maximize,
+            main_window_is_maximized,
+            update_native_frame,
             set_presence_status,
         ])
         .build(tauri::generate_context!())

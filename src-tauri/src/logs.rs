@@ -640,6 +640,7 @@ mod tests {
                 ai_provider: settings::DEFAULT_AI_PROVIDER.to_string(),
                 ai_base_url: settings::DEFAULT_AI_BASE_URL.to_string(),
                 ai_model: String::new(),
+                native_frame: settings::DEFAULT_NATIVE_FRAME.to_string(),
             },
         )
         .unwrap();

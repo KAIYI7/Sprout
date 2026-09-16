@@ -860,6 +860,36 @@ export function mainWindowReady(): Promise<void> {
   return invoke<void>("main_window_ready");
 }
 
+/** Minimizes the main window — the unified header's minimize button. */
+export function minimizeMainWindow(): Promise<void> {
+  return invoke<void>("minimize_main_window");
+}
+
+/** Toggles the main window between maximized and restored — the unified
+ *  header's maximize button and its double-click grammar share this path. */
+export function toggleMainWindowMaximize(): Promise<void> {
+  return invoke<void>("toggle_main_window_maximize");
+}
+
+/** Whether the main window is currently maximized — the unified header
+ *  reflects this instead of tracking it itself. */
+export function mainWindowIsMaximized(): Promise<boolean> {
+  return invoke<boolean>("main_window_is_maximized");
+}
+
+/** Closes the main window through the existing destroy path — the tray stays
+ *  resident, so this is hide-to-tray in effect, never quit. */
+export function closeMainWindow(): Promise<void> {
+  return invoke<void>("destroy_main_window");
+}
+
+/** Persists the window-frame switch on its own ("on" = native OS titlebar,
+ *  "off" = unified header over a frameless window) and applies it to the
+ *  live main window when one is open. */
+export function updateNativeFrame(nativeFrame: string): Promise<void> {
+  return invoke<void>("update_native_frame", { nativeFrame });
+}
+
 /** Reports the current section for Discord presence (ADR-0033): fixed text
  * only, session clock untouched. Discord absent is a silent no-op — callers
  * never surface its outcome. */

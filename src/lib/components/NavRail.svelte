@@ -1,6 +1,5 @@
 <script lang="ts">
   import { page } from "$app/state";
-  import SproutMark from "./SproutMark.svelte";
   import ConfirmDialog from "./ConfirmDialog.svelte";
   import Notice from "./Notice.svelte";
   import { installNow, updateState } from "$lib/updateState.svelte";
@@ -56,11 +55,6 @@
 </script>
 
 <nav class="rail" aria-label="Sprout sections">
-  <div class="rail__brand">
-    <span class="rail__logo" aria-hidden="true"><SproutMark size={18} /></span>
-    <span class="rail__wordmark">Sprout</span>
-  </div>
-
   <ul class="rail__list">
     {#each clusters as cluster, ci}
       {#if ci > 0}
@@ -124,27 +118,10 @@
     flex-direction: column;
     width: 200px;
     flex-shrink: 0;
-    background: var(--bg-page);
-    border-right: 1px solid var(--border);
+    /* One continuous surface with the header (research 0025): no hairline of
+       its own — the surface change against the page carries the structure. */
+    background: var(--bg-surface);
     padding: var(--space-5) var(--space-3) var(--space-4);
-  }
-
-  .rail__brand {
-    display: flex;
-    align-items: center;
-    gap: var(--space-2);
-    padding: 0 var(--space-2) var(--space-5);
-  }
-
-  .rail__logo {
-    display: inline-flex;
-  }
-
-  .rail__wordmark {
-    font-family: var(--font-display);
-    font-size: 1.125rem;
-    font-weight: 600;
-    letter-spacing: var(--tracking-display);
   }
 
   .rail__list {

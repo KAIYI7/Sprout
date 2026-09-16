@@ -7,7 +7,21 @@
   import { listen } from "@tauri-apps/api/event";
   import NavRail from "$lib/components/NavRail.svelte";
   import RunBanner from "$lib/components/RunBanner.svelte";
-  import { mainWindowReady, setPresenceStatus, takePendingImport } from "$lib/api";
+  import UnifiedHeader from "$lib/components/UnifiedHeader.svelte";
+  import {
+    closeMainWindow,
+    mainWindowIsMaximized,
+    mainWindowReady,
+    minimizeMainWindow,
+    setPresenceStatus,
+    takePendingImport,
+    toggleMainWindowMaximize,
+  } from "$lib/api";
+  import { nativeFrame, startNativeFrame } from "$lib/nativeFrame.svelte";
+  import {
+    SECTION_LABEL_BY_ROUTE,
+    sectionLabelForRoute,
+  } from "$lib/windowChrome";
   import { launchImport } from "$lib/launchImport.svelte";
   import { startRunAwareness } from "$lib/runAwareness.svelte";
   import { startTheme } from "$lib/theme.svelte";
@@ -37,6 +51,7 @@
   $effect(() => {
     startTheme();
     startAnimation();
+    startNativeFrame();
   });
 
   // The run-awareness poller (ticket 18) lives at the layout level, so the
@@ -67,28 +82,62 @@
       .catch(() => {});
   });
 
-  // The Discord section report (ADR-0033): the main window's current section
-  // maps to fixed state text — never user content — so the message follows
-  // navigation while the session clock stands still. One fire per section;
-  // Discord absent fails silently by contract.
-  const PRESENCE_STATE_BY_ROUTE: Record<string, string> = {
-    "/": "Launching apps",
-    "/products": "Browsing products",
-    "/presets": "Composing presets",
-    "/plan": "Reviewing a plan",
-    "/history": "Reviewing history",
-    "/logs": "Reading logs",
-    "/settings": "Tuning settings",
-    "/clips": "Managing clips",
-    "/quick-actions": "Editing quick actions",
-  };
+  // The Discord section report (ADR-0033) reads the shared route map — the
+  // same labels the unified header breadcrumbs, so presence and chrome can
+  // never disagree. Fixed state text only, session clock untouched.
   let lastPresenceState = "";
   $effect(() => {
     if (isQuickLaunchWindow) return;
-    const state = PRESENCE_STATE_BY_ROUTE[page.route.id ?? "/"] ?? "Composing presets";
+    const state =
+      SECTION_LABEL_BY_ROUTE[page.route.id ?? "/"] ?? "Composing presets";
     if (state === lastPresenceState) return;
     lastPresenceState = state;
     setPresenceStatus("Using Sprout", state).catch(() => {});
+  });
+
+  // The unified header reflects the live maximized state instead of tracking
+  // it — refreshed on mount, after every toggle, and whenever the window
+  // regains focus (an OS shortcut may have changed it behind our back).
+  let maximized = $state(false);
+  async function refreshMaximized() {
+    try {
+      maximized = await mainWindowIsMaximized();
+    } catch (error) {
+      console.error(error);
+    }
+  }
+  async function minimizeMain() {
+    try {
+      await minimizeMainWindow();
+    } catch (error) {
+      console.error(error);
+    }
+  }
+  async function toggleMaximize() {
+    try {
+      await toggleMainWindowMaximize();
+      await refreshMaximized();
+    } catch (error) {
+      console.error(error);
+    }
+  }
+  // Close reuses the existing destroy path — the tray stays resident, so
+  // this is hide-to-tray in effect, never quit (ADR-0010/0013 unchanged).
+  async function closeMain() {
+    try {
+      await closeMainWindow();
+    } catch (error) {
+      console.error(error);
+    }
+  }
+  $effect(() => {
+    if (isQuickLaunchWindow) return;
+    void refreshMaximized();
+    const onFocus = () => {
+      void refreshMaximized();
+    };
+    window.addEventListener("focus", onFocus);
+    return () => window.removeEventListener("focus", onFocus);
   });
 
   // A .sprout.json double-clicked while Sprout is already running arrives as
@@ -110,14 +159,29 @@
     {@render children()}
   </div>
 {:else}
-  <div class="shell">
-    <a class="skip-link" href="#main">Skip to content</a>
-    <NavRail />
-    <div class="stage">
-      <RunBanner />
-      <main id="main" class="main" tabindex="-1">
-        {@render children()}
-      </main>
+  <div
+    class="app"
+    class:app--framed={nativeFrame.mode === "off"}
+    class:app--maximized={maximized}
+  >
+    {#if nativeFrame.mode === "off"}
+      <UnifiedHeader
+        section={sectionLabelForRoute(page.route.id)}
+        {maximized}
+        onMinimize={minimizeMain}
+        onToggleMaximize={toggleMaximize}
+        onClose={closeMain}
+      />
+    {/if}
+    <div class="shell">
+      <a class="skip-link" href="#main">Skip to content</a>
+      <NavRail />
+      <div class="stage">
+        <RunBanner />
+        <main id="main" class="main" tabindex="-1">
+          {@render children()}
+        </main>
+      </div>
     </div>
   </div>
 {/if}
@@ -142,8 +206,19 @@
 
   .shell {
     display: flex;
+    flex: 1;
+    min-height: 0;
+    overflow: hidden;
+  }
+
+  .app {
+    display: flex;
+    flex-direction: column;
     height: 100vh;
     overflow: hidden;
+    /* The chrome surface behind everything (research 0025): rail + header
+       paint it, the content panel sits on it. */
+    background: var(--bg-surface);
   }
 
   .stage {
@@ -151,6 +226,23 @@
     min-width: 0;
     display: flex;
     flex-direction: column;
+    /* The content always paints the page surface — including under the
+       native frame, where no header covers the chrome behind it. */
+    background: var(--bg-page);
+  }
+
+  /* The content panel (research 0025): rounded top corners over the chrome
+     surface in the frameless mode — Discord's panel grammar in Ledger
+     tokens, no ad-hoc radius. Maximized windows meet the screen edge
+     square, like every native window. */
+  .app--framed .stage {
+    border-top-left-radius: var(--radius-lg);
+    border-top-right-radius: var(--radius-lg);
+    overflow: hidden;
+  }
+
+  .app--maximized .stage {
+    border-radius: 0;
   }
 
   .main {

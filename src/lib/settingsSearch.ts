@@ -17,7 +17,7 @@ export const SETTINGS_GROUPS: { key: SettingsGroupKey; label: string }[] = [
 
 /// Knob ids per group, backing the section count badges and the resolver.
 export const SETTINGS_GROUP_KNOBS: Record<SettingsGroupKey, string[]> = {
-  general: ["theme", "animation", "install-dir", "autostart", "default-timeout", "log-retention", "launch-concurrency"],
+  general: ["theme", "animation", "native-frame", "install-dir", "autostart", "default-timeout", "log-retention", "launch-concurrency"],
   dock: ["dock-state", "dock-mode", "dock-edge", "dock-width", "dock-density", "per-monitor", "reveal-dwell", "reveal-sensitivity"],
   companion: ["companion-active", "companion-height", "companion-sites"],
   backup: ["backup", "updates"],
@@ -43,6 +43,8 @@ export interface SettingsSearchSnapshot {
   themeLabel: string;
   animation: string;
   animationLabel: string;
+  nativeFrame: string;
+  nativeFrameLabel: string;
   installDir: string;
   autostart: string;
   timeoutMinutes: number;
@@ -77,7 +79,7 @@ export function buildSettingsSearchIndex(snap: SettingsSearchSnapshot): Settings
       label: "General",
       synonyms: ["settings", "defaults"],
       values: [],
-      description: "Theme, animation, install directory, auto-start, and run defaults.",
+      description: "Theme, animation, window frame, install directory, auto-start, and run defaults.",
     },
     {
       group: "general",
@@ -94,6 +96,14 @@ export function buildSettingsSearchIndex(snap: SettingsSearchSnapshot): Settings
       synonyms: ["motion", "movement", "transitions", "effects", "fade", "pulses", "still"],
       values: [snap.animation, snap.animationLabel],
       description: "Plays every menu, dialog, and pulse transition, or renders each end state at once. Applies immediately.",
+    },
+    {
+      group: "general",
+      id: "native-frame",
+      label: "Window frame",
+      synonyms: ["titlebar", "title bar", "frame", "frameless", "native", "unified header", "window buttons", "minimize", "maximize", "close"],
+      values: [snap.nativeFrame, snap.nativeFrameLabel],
+      description: "Modern header over a frameless window, or the native OS titlebar. Applies immediately.",
     },
     {
       group: "general",

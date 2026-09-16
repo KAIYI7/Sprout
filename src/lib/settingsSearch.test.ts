@@ -17,6 +17,8 @@ const SNAPSHOT: SettingsSearchSnapshot = {
   themeLabel: "System",
   animation: "on",
   animationLabel: "On",
+  nativeFrame: "off",
+  nativeFrameLabel: "Modern",
   installDir: "",
   autostart: "on",
   timeoutMinutes: 10,
@@ -57,6 +59,15 @@ describe("settings search index", () => {
     }
     for (const query of ["theme", "light", "dark"]) {
       expect(matchedIds(query)).not.toContain("animation");
+    }
+  });
+
+  it("surfaces the window-frame knob for titlebar words without stealing theme queries", () => {
+    for (const query of ["titlebar", "window frame", "frameless"]) {
+      expect(matchedIds(query)).toContain("native-frame");
+    }
+    for (const query of ["theme", "light", "dark"]) {
+      expect(matchedIds(query)).not.toContain("native-frame");
     }
   });
 

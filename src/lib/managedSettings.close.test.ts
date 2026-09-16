@@ -170,7 +170,7 @@ describe("Managed setup disclosure", () => {
       ai_base_url: "http://127.0.0.1:11434", companion_url_list: [],
       launch_groups: "off", action_groups: "off", clip_groups: "off",
       reveal_dwell_ms: 200, reveal_sensitivity_px: 12, companion_url: null,
-      companion_height_ratio: 0.4, companion_muted: false,
+      companion_height_ratio: 0.4, companion_muted: false, native_frame: "off",
     });
     const emptied = { ...installed, models: [{ ...installed.models[0], installed: false }] };
     vi.mocked(aiManagedStatus).mockResolvedValueOnce(installed).mockResolvedValue(emptied);
@@ -209,7 +209,7 @@ describe("Managed setup disclosure", () => {
       ai_base_url: "http://127.0.0.1:11434", companion_url_list: [],
       launch_groups: "off", action_groups: "off", clip_groups: "off",
       reveal_dwell_ms: 200, reveal_sensitivity_px: 12, companion_url: null,
-      companion_height_ratio: 0.4, companion_muted: false,
+      companion_height_ratio: 0.4, companion_muted: false, native_frame: "off",
     });
     vi.mocked(aiManagedStatus).mockResolvedValueOnce(before).mockResolvedValue(after);
     vi.mocked(aiRemoveManaged).mockResolvedValue({ model_id: "alpha", removed: true, remaining_installed: 1, message: "Removed alpha." });
@@ -273,7 +273,7 @@ describe("Managed Start/Stop + status (ticket 189)", () => {
       ai_base_url: "http://127.0.0.1:11434", companion_url_list: [],
       launch_groups: "off", action_groups: "off", clip_groups: "off",
       reveal_dwell_ms: 200, reveal_sensitivity_px: 12, companion_url: null,
-      companion_height_ratio: 0.4, companion_muted: false,
+      companion_height_ratio: 0.4, companion_muted: false, native_frame: "off",
     };
   }
 
@@ -369,7 +369,7 @@ describe("Active managed model radio (ticket 191)", () => {
       ai_base_url: "http://127.0.0.1:11434", companion_url_list: [],
       launch_groups: "off", action_groups: "off", clip_groups: "off",
       reveal_dwell_ms: 200, reveal_sensitivity_px: 12, companion_url: null,
-      companion_height_ratio: 0.4, companion_muted: false,
+      companion_height_ratio: 0.4, companion_muted: false, native_frame: "off",
     };
   }
 
@@ -541,7 +541,7 @@ describe("Managed install progress + recovery (ticket 193)", () => {
       ai_base_url: "http://127.0.0.1:11434", companion_url_list: [],
       launch_groups: "off", action_groups: "off", clip_groups: "off",
       reveal_dwell_ms: 200, reveal_sensitivity_px: 12, companion_url: null,
-      companion_height_ratio: 0.4, companion_muted: false,
+      companion_height_ratio: 0.4, companion_muted: false, native_frame: "off",
     };
   }
 
@@ -628,7 +628,7 @@ describe("Managed resource Details (ticket 190)", () => {
       ai_base_url: "http://127.0.0.1:11434", companion_url_list: [],
       launch_groups: "off", action_groups: "off", clip_groups: "off",
       reveal_dwell_ms: 200, reveal_sensitivity_px: 12, companion_url: null,
-      companion_height_ratio: 0.4, companion_muted: false,
+      companion_height_ratio: 0.4, companion_muted: false, native_frame: "off",
     };
   }
 
@@ -704,7 +704,7 @@ describe("Managed install stages + retry (ticket 193 follow-up)", () => {
       ai_base_url: "http://127.0.0.1:11434", companion_url_list: [],
       launch_groups: "off", action_groups: "off", clip_groups: "off",
       reveal_dwell_ms: 200, reveal_sensitivity_px: 12, companion_url: null,
-      companion_height_ratio: 0.4, companion_muted: false,
+      companion_height_ratio: 0.4, companion_muted: false, native_frame: "off",
     };
   }
 
