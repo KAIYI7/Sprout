@@ -6,13 +6,13 @@
 
 **Blocked by:** 207 (needs the launcher-first probe order). Follows the 147 shell-field shape as prior art.
 
-**Status:** ready-for-agent
+**Status:** done — implemented 2026-09-16 (mid-way backend completed; this unit finished frontend + shell-matrix tests; backend 688 passed, ownership gate pass, svelte-check 0 errors, vitest 37 passed)
 
-- [ ] `python3` offered as a shell choice with validation; legacy records keep their meaning; unknown shells fail honestly
-- [ ] Run/stop/test route through the shared owner (new argv builder beside the existing shell argvs) — no new invocation site; stop uses the same shell
-- [ ] Missing runtime surfaces honestly in Test and Run with the install pointer; Sprout vendors no runtime, so updates change only the reported version
-- [ ] Backup carries the shell per the 147 envelope-v2 contract; legacy round-trips unchanged
-- [ ] Verification: shell-matrix tests green (including missing-runtime case); backup round-trip; backend suite + ownership gate green
+- [x] `python3` offered as a shell choice with validation; legacy records keep their meaning; unknown shells fail honestly
+- [x] Run/stop/test route through the shared owner (new argv builder beside the existing shell argvs) — no new invocation site; stop uses the same shell
+- [x] Missing runtime surfaces honestly in Test and Run with the install pointer; Sprout vendors no runtime, so updates change only the reported version
+- [x] Backup carries the shell per the 147 envelope-v2 contract; legacy round-trips unchanged
+- [x] Verification: shell-matrix tests green (including missing-runtime case); backup round-trip; backend suite + ownership gate green
 
 **Explicitly not built:**
 

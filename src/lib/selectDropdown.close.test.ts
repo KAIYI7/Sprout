@@ -135,6 +135,26 @@ describe("Select popout", () => {
     expect(items[2].getAttribute("title")).toBe("Unavailable here");
   });
 
+  it("reserves the check gutter on every row so labels align", async () => {
+    const host = mountSelect();
+    await tick();
+    trigger(host).click();
+    await tick();
+    await nextFrame();
+    await tick();
+
+    const items = menuItems();
+    const slots = items.map((item) =>
+      item.querySelector(".ctx-item__icon"),
+    );
+    // Every row reserves the slot: the checked row draws the check, the
+    // rest keep an empty spacer — no row sits left-shifted.
+    expect(slots.every(Boolean)).toBe(true);
+    expect(slots[0]?.querySelector("svg")).not.toBeNull();
+    expect(slots[1]?.querySelector("svg")).toBeNull();
+    expect(slots[2]?.querySelector("svg")).toBeNull();
+  });
+
   it("moves focus into the menu on keyboard open and restores it on Escape", async () => {
     const host = mountSelect();
     await tick();

@@ -605,6 +605,12 @@ fn command_for(shell: QuickActionShell, kind: TargetKind, path: &str) -> Result<
             Ok(format!("start \"\" {}", quote_cmd(path)?))
         }
         (QuickActionShell::Cmd, TargetKind::Folder) => Ok(format!("explorer {}", quote_cmd(path)?)),
+        // Target binding is qualified per shell like the rest of automated
+        // authoring: Python 3 has none yet, so binding refuses instead of
+        // emitting a command in the wrong language (ADR-0030).
+        (QuickActionShell::Python3, _) => Err(
+            "Binding a target for the Python 3 shell is not available yet — write the command by hand.".into(),
+        ),
     }
 }
 

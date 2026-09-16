@@ -34,6 +34,7 @@
   import { invoke } from "@tauri-apps/api/core";
   import Dialog from "$lib/components/Dialog.svelte";
   import Button from "$lib/components/Button.svelte";
+  import Checkbox from "$lib/components/Checkbox.svelte";
   import ConfirmDialog from "$lib/components/ConfirmDialog.svelte";
   import ContextMenu, {
     type ContextMenuItem,
@@ -3249,10 +3250,11 @@
   <p>Everything is included by default — untick what should stay out of the file.</p>
   <div class="export-picker" role="group" aria-label="Collections to include">
     {#each EXPORT_ORDER as key (key)}
-      <label class="export-picker__item">
-        <input type="checkbox" bind:checked={include[key]} />
-        <span>{COLLECTIONS[key].label}</span>
-      </label>
+      <Checkbox
+        title={COLLECTIONS[key].label}
+        checked={include[key]}
+        onchange={(v) => (include[key] = v)}
+      />
     {/each}
   </div>
 </ConfirmDialog>
@@ -3769,19 +3771,5 @@
     display: flex;
     flex-direction: column;
     gap: var(--space-2);
-  }
-
-  .export-picker__item {
-    display: flex;
-    align-items: center;
-    gap: var(--space-2);
-    cursor: pointer;
-  }
-
-  .export-picker__item input[type="checkbox"] {
-    margin: 0;
-    accent-color: var(--accent);
-    width: 14px;
-    height: 14px;
   }
 </style>

@@ -1,6 +1,6 @@
 # 205 — Companion picker cap, Python detection + shell, file Download, staging grace (spec)
 
-**Status:** planning package only — no application behavior changed here. Tickets 206–211 `ready-for-agent` (created next in this unit).
+**Status:** complete 2026-09-16 — all tickets 206–211 done (see Acceptance and verification + Further Notes). No application behavior changed in this spec file itself.
 
 **Parents / related (read before implementing):**
 - [166 field cleanup / dock filter / companion navigation](166-field-cleanup-dock-filter-companion-navigation-spec.md) + [170 site picker](170-companion-saved-site-picker.md) — dock picker is an ordered saved-site menu with active-mark, single-site plain label, main-app authoring; 170 automated validation complete, native matrix pending. This round caps the picker, changing no lifecycle, isolation, or docked-only visibility.
@@ -77,17 +77,29 @@ AI qualification for the `python3` shell (spec-145 pattern, separate round); mai
 
 ## Acceptance and verification
 
-- [ ] User confirmed picker cap, phased Python, Download A+B, glossary text, unconditional grace (this grill).
-- [ ] 206 verifies 0/1/5/6+ cases, active-mark, manage-row target, keyboard + narrow-dock behavior; frontend check clean.
-- [ ] 207 verifies `py`/`python`/`python3` present/not-found/not-verifiable matrix incl. launcher-first order; backend prereq tests green.
-- [ ] 208 verifies run/stop/test under `python3`, missing-runtime honesty, legacy rows + backup round-trip, ownership gate pass.
-- [ ] 209+210 verify byte-identical single + zip-iff-2-or-more downloads, Save-As overwrite, dialog + row-menu surface, lint fires only on the cmd title-trap shape.
-- [ ] 211 verifies handed-off opens survive cold start (pdf + audio), no behavior change for non-file runs, existing staging tests green.
-- [ ] Coordinator records Rust/frontend checks, reconciles CONTEXT/ADR/research status, publishes each completed unit through the ownership gate + verified sync-up (twice, expect 0 copied).
+- [x] User confirmed picker cap, phased Python, Download A+B, glossary text, unconditional grace (this grill).
+- [x] 206 verifies 0/1/5/6+ cases, active-mark, manage-row target, keyboard + narrow-dock behavior; frontend check clean.
+- [x] 207 verifies `py`/`python`/`python3` present/not-found/not-verifiable matrix incl. launcher-first order; backend prereq tests green.
+- [x] 208 verifies run/stop/test under `python3`, missing-runtime honesty, legacy rows + backup round-trip, ownership gate pass.
+- [x] 209+210 verify byte-identical single + zip-iff-2-or-more downloads, Save-As overwrite, dialog + row-menu surface, lint fires only on the cmd title-trap shape.
+- [x] 211 verifies handed-off opens survive cold start (pdf + audio), no behavior change for non-file runs, existing staging tests green.
+- [x] Coordinator records Rust/frontend checks, reconciles CONTEXT/ADR/research status, publishes each completed unit through the ownership gate + verified sync-up (twice, expect 0 copied).
 
 No application behavior changed in this planning session.
 
 ## Further Notes
+
+- Completion validation 2026-09-16: 206 verified against source
+  (`COMPANION_DOCK_PICKER_LIMIT`, capped dock menu + manage row, Settings
+  uncapped; vitest 19/19, svelte-check 0 errors) and flipped to done;
+  207–211 already carried done status with per-ticket evidence, spot-checked
+  against source (`probe_python` launcher-first, `python_argv` + shell matrix,
+  `get_quick_action_file_bytes` + `getQuickActionFile` seam,
+  `detectCmdStartTitleTrap`, unconditional
+  `release_staged_dir_with_grace`). Known caveats ride with their tickets:
+  209's full unfiltered backend suite was env-blocked (disk-full link);
+  210's manual keyboard/SR/theme/size matrix is owed a human runtime run.
+  No ADR text changes; CONTEXT + research 0024 entries as recorded.
 
 - to-spec seam check: seams above are all existing owners; reviewer confirms at dispatch.
 - The mp3 `Invoke-Item` isolating test (manual copy to Documents) remains a useful pre-211 datapoint but gates nothing.

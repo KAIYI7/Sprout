@@ -2,6 +2,7 @@
   import { onMount } from "svelte";
   import { goto } from "$app/navigation";
   import type { Group, QuickAction } from "$lib/types";
+  import { quickActionShellLabel } from "$lib/types";
   import type { PreCheckReport, PreFixResult } from "$lib/types";
   import {
     aiManagedStatus,
@@ -50,6 +51,7 @@
   } from "$lib/components/ContextMenu.svelte";
   import DockVisibilityFilter from "$lib/components/DockVisibilityFilter.svelte";
   import { save as saveDialog } from "@tauri-apps/plugin-dialog";
+  import { downloadFilesZip, downloadSingleFile } from "$lib/quickActionDownload";
   import EmptyState from "$lib/components/EmptyState.svelte";
   import Notice from "$lib/components/Notice.svelte";
   import PageFeaturesButton from "$lib/components/PageFeaturesButton.svelte";
@@ -399,6 +401,30 @@
     }
   }
 
+  /** Row-menu single-file Download: Save-As wins, cancel stays silent. */
+  async function downloadRowFile(action: QuickAction, fileId: number, filename: string) {
+    error = "";
+    try {
+      const result = await downloadSingleFile(fileId, filename);
+      if (result === "saved") flash(`Downloaded ${filename} from ${action.name}.`);
+    } catch (e) {
+      console.error(e);
+      error = String(e);
+    }
+  }
+
+  /** Row-menu Download-all-zip: only offered while two or more persist. */
+  async function downloadRowZip(action: QuickAction) {
+    error = "";
+    try {
+      const result = await downloadFilesZip(action.id, action.name);
+      if (result === "saved") flash(`Downloaded all files from ${action.name}.`);
+    } catch (e) {
+      console.error(e);
+      error = String(e);
+    }
+  }
+
   const featureItems = $derived([
     {
       label: "Groups",
@@ -431,9 +457,11 @@
   /** One ⋯ menu per action row, on the round's ordering standard (ticket
    *  106): Edit first (the row's primary verb), then the Move to group
    *  flyout while Groups is on, the dock visibility toggle, single-action
-   *  Export, Move up / Move down over the visible slice, Remove danger-last
+   *  Export, the Download flyout while files persist (per-file plus
+   *  Download-all-zip iff two or more — research 0006 pattern 4, near its
+   *  object), Move up / Move down over the visible slice, Remove danger-last
    *  behind a separator. */
-  function openRowMenu(
+  async function openRowMenu(
     action: QuickAction,
     anchor: HTMLButtonElement,
     viaKeyboard: boolean
@@ -441,6 +469,19 @@
     if (menu?.actionId === action.id) {
       menu = null;
       return;
+    }
+    // Persisted-file Download lives on its action (research 0006 pattern 4):
+    // a flyout so N files never bloat the flat menu, content-gated so a
+    // fileless action shows no Download at all (research 0004 rule 2). A
+    // failed list degrades to no Download — the other verbs still open.
+    let files: { id: number; filename: string }[] = [];
+    try {
+      files = (await listQuickActionFiles(action.id)).map((f) => ({
+        id: f.id,
+        filename: f.filename,
+      }));
+    } catch (e) {
+      console.error(e);
     }
     const slice = moveSlice(action);
     const index = slice.indexOf(action);
@@ -467,9 +508,31 @@
     // the Move verbs (pinned row order across 159/160).
     items.push({
       label: "Export",
-      icon: "download",
+      icon: "export",
       onselect: () => exportViaDialog(action),
     });
+    if (files.length > 0) {
+      items.push({
+        label: "Download",
+        icon: "download",
+        children: [
+          ...files.map((file) => ({
+            label: file.filename,
+            icon: "download" as const,
+            onselect: () => downloadRowFile(action, file.id, file.filename),
+          })),
+          ...(files.length >= 2
+            ? [
+                {
+                  label: "Download all (.zip)",
+                  icon: "download" as const,
+                  onselect: () => downloadRowZip(action),
+                },
+              ]
+            : []),
+        ],
+      });
+    }
     items.push(
       {
         label: "Move up",
@@ -600,7 +663,7 @@
         <Icon name="note" size={12} />
       </span>
     {/if}
-    <span class="rack__shell" title={`Runs under ${action.shell === "cmd" ? "cmd" : "PowerShell"}`}>{action.shell === "cmd" ? "cmd" : "PowerShell"}</span>
+    <span class="rack__shell" title={`Runs under ${quickActionShellLabel[action.shell ?? "powershell"]}`}>{quickActionShellLabel[action.shell ?? "powershell"]}</span>
     {#if !isDockVisible(action)}
       <!-- The dock-hidden annotation (ADR-0028): informational only — the
            action stays fully runnable here; only the dock filters it out. -->
@@ -706,7 +769,7 @@
   {:else if quickActions.length === 0}
     <EmptyState icon="terminal" title="No quick actions yet">
       <p>
-        Press <strong>Add</strong> to write a named PowerShell or cmd command
+        Press <strong>Add</strong> to write a named PowerShell, cmd, or Python 3 command
         with an optional working directory. Run each action right here or from
         the Quick Launch window — hidden, as the current user, with no status UI.
       </p>

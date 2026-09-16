@@ -119,7 +119,7 @@ fn migrate(conn: &Connection) -> Result<()> {
         CREATE TABLE IF NOT EXISTS quick_actions (
             id           INTEGER PRIMARY KEY AUTOINCREMENT,
             name         TEXT NOT NULL,
-            shell        TEXT NOT NULL DEFAULT 'powershell' CHECK (shell IN ('powershell', 'cmd')),
+            shell        TEXT NOT NULL DEFAULT 'powershell' CHECK (shell IN ('powershell', 'cmd', 'python3')),
             command      TEXT NOT NULL,
             cwd          TEXT,
             stoppable    INTEGER NOT NULL DEFAULT 0,
@@ -161,6 +161,7 @@ fn migrate(conn: &Connection) -> Result<()> {
     ensure_quick_action_note(conn)?;
     ensure_quick_action_auto_run(conn)?;
     ensure_quick_action_shell(conn)?;
+    ensure_quick_action_python_shell(conn)?;
     ensure_quick_action_pre_action(conn)?;
     ensure_show_in_dock_columns(conn)?;
     ensure_clip_images_table(conn)?;
@@ -381,9 +382,53 @@ fn ensure_quick_action_shell(conn: &Connection) -> Result<()> {
     )?;
     if !exists {
         conn.execute_batch(
-            "ALTER TABLE quick_actions ADD COLUMN shell TEXT NOT NULL DEFAULT 'powershell' CHECK (shell IN ('powershell', 'cmd'))",
+            "ALTER TABLE quick_actions ADD COLUMN shell TEXT NOT NULL DEFAULT 'powershell' CHECK (shell IN ('powershell', 'cmd', 'python3'))",
         )?;
     }
+    Ok(())
+}
+
+/// Widens the Quick Action shell check on databases that gained the column
+/// earlier: their stored schema still rejects `python3`, so persisting the new
+/// shell would fail at the database even though the app accepts it. SQLite
+/// cannot alter a check in place, so the table is rebuilt from its own stored
+/// schema with only the shell list widened — every column, row, and position
+/// survives byte-for-byte. Foreign keys rest off across the rebuild: dropping
+/// the old table with them on would cascade into the attached-files table.
+/// Idempotent — re-runs find `python3` in the stored schema and change nothing.
+fn ensure_quick_action_python_shell(conn: &Connection) -> Result<()> {
+    let stored: Option<String> = conn
+        .query_row(
+            "SELECT sql FROM sqlite_master WHERE name = 'quick_actions'",
+            [],
+            |row| row.get(0),
+        )
+        .optional()?;
+    let Some(stored) = stored else {
+        return Ok(());
+    };
+    const LEGACY_CHECK: &str = "CHECK (shell IN ('powershell', 'cmd'))";
+    const WIDENED_CHECK: &str = "CHECK (shell IN ('powershell', 'cmd', 'python3'))";
+    if stored.contains("'python3'") {
+        return Ok(());
+    }
+    if !stored.contains(LEGACY_CHECK) {
+        return Err(rusqlite::Error::InvalidQuery);
+    }
+    let rebuilt = stored
+        .replacen("CREATE TABLE quick_actions", "CREATE TABLE quick_actions_new_shell", 1)
+        .replacen(LEGACY_CHECK, WIDENED_CHECK, 1);
+    conn.execute_batch(
+        "PRAGMA foreign_keys = OFF;
+         DROP TABLE IF EXISTS quick_actions_new_shell;",
+    )?;
+    conn.execute_batch(&rebuilt)?;
+    conn.execute_batch(
+        "INSERT INTO quick_actions_new_shell SELECT * FROM quick_actions;
+         DROP TABLE quick_actions;
+         ALTER TABLE quick_actions_new_shell RENAME TO quick_actions;
+         PRAGMA foreign_keys = ON;",
+    )?;
     Ok(())
 }
 

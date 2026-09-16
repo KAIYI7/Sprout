@@ -2,7 +2,7 @@
  * Lightweight command-editor intelligence for the Quick Action dialog: shell
  * coloring plus `<FilesDir>` autocomplete plus unused/missing hints.
  *
- * A small hand scanner covers the two authoring shells with token classes only
+ * A small hand scanner covers the three authoring shells with token classes only
  * (comments/strings/commands distinct) — no editor dependency, so the bundle
  * is unchanged. The textarea stays the sole edit surface (native
  * paste/undo/IME); the highlight copy behind it is visual only, which is why
@@ -26,7 +26,7 @@ export interface QuickActionToken {
   kind: QuickActionTokenKind;
 }
 
-export type QuickActionShellKind = "powershell" | "cmd";
+export type QuickActionShellKind = "powershell" | "cmd" | "python3";
 
 /** The attached-files placeholder spelling; matched case-insensitively like
  * the run-time expansion, while emitted text keeps the author's own casing. */
@@ -50,9 +50,9 @@ export function tokenizeQuickActionCommand(
   shell: QuickActionShellKind,
   filenames: string[] = [],
 ): QuickActionToken[] {
-  return shell === "cmd"
-    ? tokenizeCmdCommand(command, filenames)
-    : tokenizePowerShellCommand(command, filenames);
+  if (shell === "cmd") return tokenizeCmdCommand(command, filenames);
+  if (shell === "python3") return tokenizePythonCommand(command, filenames);
+  return tokenizePowerShellCommand(command, filenames);
 }
 
 type Emitter = (text: string, kind: QuickActionTokenKind) => void;
@@ -338,6 +338,91 @@ function tokenizeCmdCommand(
     }
     emit(c, "text");
     i += 1;
+  }
+  return tokens;
+}
+
+/** Python 3 highlighting: `#` comments, backslash-escaped `'...'`/`"..."` plus
+ *  triple-quoted spans, and the leading word of each statement as its command.
+ *  `REM`/`::` stay plain code here — they comment CMD only — while the files
+ *  placeholder highlights everywhere including inside strings. */
+function tokenizePythonCommand(
+  command: string,
+  filenames: string[],
+): QuickActionToken[] {
+  const tokens: QuickActionToken[] = [];
+  const emit = makeEmitter(tokens);
+  let i = 0;
+  const n = command.length;
+  let expectCommand = true;
+  while (i < n) {
+    if (startsWithFilesDir(command, i)) {
+      emit(command.slice(i, i + FILES_DIR.length), "placeholder");
+      i += FILES_DIR.length;
+      const nameLength = filesDirNameLength(command, i, filenames);
+      if (nameLength > 0) {
+        emit(command.slice(i, i + nameLength), "placeholder");
+        i += nameLength;
+      }
+      expectCommand = false;
+      continue;
+    }
+    const c = command[i];
+    if (c === "#") {
+      let j = command.indexOf("\n", i);
+      if (j === -1) j = n;
+      emit(command.slice(i, j), "comment");
+      i = j;
+      continue;
+    }
+    if (c === "'" || c === '"') {
+      const quote = c;
+      const triple = command.startsWith(quote.repeat(3), i);
+      const opener = triple ? quote.repeat(3) : quote;
+      let j = i + opener.length;
+      while (j < n) {
+        if (triple && command.startsWith(opener, j)) {
+          j += opener.length;
+          break;
+        }
+        if (!triple && command[j] === "\n") break;
+        if (command[j] === "\\" && j + 1 < n) {
+          j += 2;
+          continue;
+        }
+        if (!triple && command[j] === quote) {
+          j += 1;
+          break;
+        }
+        j += 1;
+      }
+      emitStringWithPlaceholders(command, i, j, filenames, emit);
+      i = j;
+      expectCommand = false;
+      continue;
+    }
+    if (c === "\n" || c === ";" || c === ":" || c === "(" || c === "[") {
+      emit(c, "text");
+      i += 1;
+      expectCommand = true;
+      continue;
+    }
+    if (/\s/.test(c)) {
+      emit(c, "text");
+      i += 1;
+      continue;
+    }
+    if (expectCommand && /[A-Za-z_]/.test(c)) {
+      let j = i + 1;
+      while (j < n && /[A-Za-z0-9_]/.test(command[j])) j += 1;
+      emit(command.slice(i, j), "command");
+      i = j;
+      expectCommand = false;
+      continue;
+    }
+    emit(c, "text");
+    i += 1;
+    if (/[A-Za-z0-9_)\]}]/.test(c)) expectCommand = false;
   }
   return tokens;
 }

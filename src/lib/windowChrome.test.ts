@@ -27,6 +27,10 @@ const RAIL_SOURCE = readFileSync(
   new URL("./components/NavRail.svelte", import.meta.url),
   "utf8",
 );
+const MAIN_CAPABILITY_SOURCE = readFileSync(
+  new URL("../../src-tauri/capabilities/default.json", import.meta.url),
+  "utf8",
+);
 
 describe("sectionLabelForRoute", () => {
   it("labels the home route as launching", () => {
@@ -62,6 +66,13 @@ describe("parseNativeFrame", () => {
 describe("UnifiedHeader drag + button contract", () => {
   it("makes the bar the drag region", () => {
     expect(HEADER_SOURCE).toMatch(/data-tauri-drag-region="deep"/);
+  });
+
+  it("grants the main window the start-dragging permission the bar needs", () => {
+    // The bar's `data-tauri-drag-region` drives Tauri's injected
+    // `start_dragging` command — denied without this capability, the bar
+    // renders but never moves (min/max keep working through custom commands).
+    expect(MAIN_CAPABILITY_SOURCE).toMatch(/core:window:allow-start-dragging/);
   });
 
   it("opts the button cluster out of dragging", () => {

@@ -333,6 +333,22 @@
     item.onselect?.();
     onclose();
   }
+
+  /** Whether a menu list needs the leading check/icon gutter: any row
+   *  carrying an icon or a radio state reserves the slot for every row, so
+   *  unchecked rows align with checked ones instead of sitting left-shifted
+   *  (the Windows/macOS menu convention; NN/g left-edge scannability —
+   *  eyes scan straight down one edge). Lists with neither render exactly
+   *  as before — no empty gutter appears. */
+  function needsGutter(
+    list: { separator?: boolean; icon?: string; checked?: boolean }[],
+  ): boolean {
+    return list.some(
+      (item) =>
+        !item.separator &&
+        (item.icon !== undefined || item.checked !== undefined),
+    );
+  }
 </script>
 
 {#if ctx?.open}
@@ -388,9 +404,11 @@
             if (item.children && openIndex === i) scheduleFlyoutClose();
           }}
         >
-          {#if item.icon || item.checked}
+          {#if ctx.items && needsGutter(ctx.items)}
             <span class="ctx-item__icon" aria-hidden="true">
-              <Icon name={item.icon ?? "check"} size={14} />
+              {#if item.icon || item.checked}
+                <Icon name={item.icon ?? "check"} size={14} />
+              {/if}
             </span>
           {/if}
           <span>{item.label}</span>
@@ -429,9 +447,11 @@
                     if (!child.disabled) setActiveChild(ci);
                   }}
                 >
-                  {#if child.icon || child.checked}
+                  {#if item.children && needsGutter(item.children)}
                     <span class="ctx-item__icon" aria-hidden="true">
-                      <Icon name={child.icon ?? "check"} size={14} />
+                      {#if child.icon || child.checked}
+                        <Icon name={child.icon ?? "check"} size={14} />
+                      {/if}
                     </span>
                   {/if}
                   <span>{child.label}</span>
@@ -501,6 +521,13 @@
 
   .ctx-item__icon {
     display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    /* Fixed icon-size slot: rows with a glyph render exactly as before,
+       while empty slots keep unchecked rows on the same left edge. */
+    flex: none;
+    width: 14px;
+    height: 14px;
     color: var(--text-muted);
   }
 

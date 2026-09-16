@@ -449,13 +449,14 @@ export interface VirtualDesktop {
   current: boolean;
 }
 
-/** The shell a Quick Action runs under: explicit PowerShell or CMD. */
-export type QuickActionShell = "powershell" | "cmd";
+/** The shell a Quick Action runs under: explicit PowerShell, CMD, or Python 3. */
+export type QuickActionShell = "powershell" | "cmd" | "python3";
 
 /** How the Quick Action shell choices read in the add/edit dialog. */
 export const quickActionShellLabel: Record<QuickActionShell, string> = {
   powershell: "PowerShell",
   cmd: "cmd",
+  python3: "Python 3",
 };
 
 /** The editable shape of a Quick Action: a named shell command with an
@@ -557,6 +558,14 @@ export interface QuickActionFileMeta {
   action_id: number;
   filename: string;
   size: number;
+}
+
+/** One attached file with its bytes for Download: the persisted filename
+ *  plus the exact stored bytes (base64). The list stays meta-only; this
+ *  shape carries the bytes only when one file is explicitly fetched. */
+export interface QuickActionFileBytes {
+  filename: string;
+  bytes_base64: string;
 }
 
 /** A machine-local plain-text Clip (ticket 78), hand-authored for one-click

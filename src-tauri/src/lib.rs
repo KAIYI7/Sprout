@@ -68,6 +68,11 @@ pub struct AppState {
     pub launcher: Arc<dyn LauncherEngine>,
     pub launch_in_progress: Arc<AtomicBool>,
     pub pending_import: Mutex<Option<String>>,
+    /// The main-app route the dock asked to open (its Companion picker's
+    /// management row): consumed once by the main layout on load, so a
+    /// freshly recreated window still lands on the manager after the
+    /// close-then-reopen path. `None` means no pending navigation.
+    pub pending_route: Mutex<Option<String>>,
     /// The Quick Launch window's live dock state (ticket 53): `Some` while the
     /// window is docked as a Win32 AppBar, cleared on undock/close/quit.
     pub dock: Mutex<Option<quick_window::DockState>>,
@@ -327,6 +332,14 @@ fn export_quick_action(
 #[tauri::command]
 fn take_pending_import(state: State<'_, AppState>) -> Result<Option<String>, String> {
     let mut pending = state.pending_import.lock().map_err(|e| e.to_string())?;
+    Ok(pending.take())
+}
+
+/// Returns the main-app route the dock asked to open, once; `None` when
+/// there is none or it was already consumed.
+#[tauri::command]
+fn take_pending_route(state: State<'_, AppState>) -> Result<Option<String>, String> {
+    let mut pending = state.pending_route.lock().map_err(|e| e.to_string())?;
     Ok(pending.take())
 }
 
@@ -1539,6 +1552,22 @@ fn attach_quick_action_file(
 fn remove_quick_action_file(state: State<'_, AppState>, file_id: i64) -> Result<(), String> {
     let conn = lock(&state)?;
     quick_actions::remove_quick_action_file(&conn, file_id)
+}
+
+/// Fetches one persisted file's bytes by row id: the stored filename plus the
+/// exact bytes as stored (base64). The list stays meta-only; this command
+/// carries the bytes only when one file is explicitly fetched for Download.
+#[tauri::command]
+fn get_quick_action_file(
+    state: State<'_, AppState>,
+    file_id: i64,
+) -> Result<quick_actions::QuickActionFileBytes, String> {
+    let conn = lock(&state)?;
+    let (filename, bytes) = quick_actions::get_quick_action_file_bytes(&conn, file_id)?;
+    Ok(quick_actions::QuickActionFileBytes {
+        filename,
+        bytes_base64: B64.encode(&bytes),
+    })
 }
 
 // ------------------- Quick Clips (ticket 78) ------------------------------
@@ -3148,6 +3177,22 @@ fn open_sprout_cmd(app: AppHandle) -> Result<(), String> {
     Ok(())
 }
 
+/// Opens the main window on the Companion manager (the dock picker's
+/// management row): records the route for a freshly recreated window to
+/// consume on load, notifies an already-open window to navigate, then opens
+/// (or focuses) the window through the off-thread single-flight seam — never
+/// the blocking call, which would hang this command's event thread (see
+/// `request_open_main_window`).
+#[tauri::command]
+fn open_companion_manager(app: AppHandle, state: State<'_, AppState>) -> Result<(), String> {
+    if let Ok(mut pending) = state.pending_route.lock() {
+        *pending = Some("/companion".to_string());
+    }
+    let _ = app.emit("open-companion-manager", ());
+    crate::request_open_main_window(&app);
+    Ok(())
+}
+
 /// The dock chrome's state query (tickets 53 & 59): the current edge and mode
 /// when docked, or — while the window floats — the target edge/mode the
 /// toggle would dock to; `docked` tells the two apart. The header renders its
@@ -3426,6 +3471,12 @@ pub fn run() {
             crate::request_open_main_window(app);
         }))
         .plugin(tauri_plugin_dialog::init())
+        // File Download (ticket 210): the frontend saves persisted-file bytes
+        // and frontend-composed zip bundles through the OS Save-As dialog. The
+        // dialog returns a user-consented path; this plugin writes exactly
+        // there — the same unrestricted user-chosen destination the backend
+        // export commands already write to, so no narrower scope is set.
+        .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_notification::init())
         // Quick Clips' clipboard writes (ticket 78): the plugin is driven
         // from Rust commands only — no JS-side plugin surface, so no
@@ -3610,6 +3661,7 @@ pub fn run() {
             launcher: Arc::new(engine::windows::WindowsLauncherEngine),
             launch_in_progress: Arc::new(AtomicBool::new(false)),
             pending_import: Mutex::new(pending_import),
+            pending_route: Mutex::new(None),
             dock: Mutex::new(None),
             running_actions: Mutex::new(HashMap::new()),
             settings_dirty: Mutex::new(false),
@@ -3637,6 +3689,8 @@ pub fn run() {
             import_backup,
             export_quick_action,
             take_pending_import,
+            take_pending_route,
+            open_companion_manager,
             compute_plan,
             quick_install_plan,
             start_run,
@@ -3677,6 +3731,7 @@ pub fn run() {
             list_quick_action_files,
             attach_quick_action_file,
             remove_quick_action_file,
+            get_quick_action_file,
             run_quick_action,
             run_quick_action_fix,
             stop_quick_action,

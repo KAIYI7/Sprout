@@ -38,9 +38,11 @@ pub fn contains_files_placeholder(command: &str) -> bool {
 }
 
 /// Shell-quotes an absolute staged path. PowerShell takes a single-quoted
-/// literal (`''` escapes a quote); CMD takes a double-quoted string — the
-/// two shells quote differently, which is why the expansion lives with the
-/// execution owner instead of the caller (ADR-0029).
+/// literal (`''` escapes a quote); CMD takes a double-quoted string; Python
+/// takes a double-quoted literal with its backslashes doubled, since a bare
+/// Windows path would otherwise smuggle escapes (`\n`, `\t`) into the script —
+/// the three shells quote differently, which is why the expansion lives with
+/// the execution owner instead of the caller (ADR-0029).
 pub fn quote_staged_path(shell: &str, path: &Path) -> Result<String, String> {
     match shell {
         "powershell" => Ok(format!(
@@ -54,8 +56,9 @@ pub fn quote_staged_path(shell: &str, path: &Path) -> Result<String, String> {
             }
             Ok(format!("\"{text}\""))
         }
+        "python3" => quote_python_literal(&path.to_string_lossy()),
         other => Err(format!(
-            "'{other}' is not a supported Quick Action shell — expected 'powershell' or 'cmd'"
+            "'{other}' is not a supported Quick Action shell — expected 'powershell', 'cmd', or 'python3'"
         )),
     }
 }
@@ -199,8 +202,9 @@ pub fn expand_files_dir(
 
 /// Quotes one already-joined `prefix + staged absolute path` for the shell.
 /// PowerShell takes a single-quoted literal (`''` escapes a quote); CMD takes
-/// a double-quoted string. Split from [`quote_staged_path`] so the prefix
-/// joins inside the same pair instead of gluing onto its opening quote.
+/// a double-quoted string; Python takes its own literal (see below). Split
+/// from [`quote_staged_path`] so the prefix joins inside the same pair instead
+/// of gluing onto its opening quote.
 fn quote_full_path(shell: &str, full: &str) -> Result<String, String> {
     match shell {
         "powershell" => Ok(format!("'{}'", full.replace('\'', "''"))),
@@ -210,10 +214,25 @@ fn quote_full_path(shell: &str, full: &str) -> Result<String, String> {
             }
             Ok(format!("\"{full}\""))
         }
+        "python3" => quote_python_literal(full),
         other => Err(format!(
-            "'{other}' is not a supported Quick Action shell — expected 'powershell' or 'cmd'"
+            "'{other}' is not a supported Quick Action shell — expected 'powershell', 'cmd', or 'python3'"
         )),
     }
+}
+
+/// A Windows path as a Python string literal: double-quoted with every
+/// backslash doubled, so the script reads the path literally instead of
+/// interpreting its segments as escapes (`\t`, `\n`). A path holding a line
+/// break has nowhere honest to go on one literal line and is refused.
+fn quote_python_literal(text: &str) -> Result<String, String> {
+    if text.contains('\n') || text.contains('\r') {
+        return Err("the staged files path cannot be quoted for python3".to_string());
+    }
+    Ok(format!(
+        "\"{}\"",
+        text.replace('\\', "\\\\").replace('"', "\\\"")
+    ))
 }
 
 /// The staging-time name rule mirrors the stored file-name rule: basenames
@@ -285,26 +304,27 @@ pub fn cleanup_staged_dir(dir: &Path) {
 /// A GUI program the shell started is the middle case, not the detached
 /// one: PowerShell returns as soon as Notepad's process exists while CMD
 /// waits for its window to close, so releasing on shell exit pulls the file
-/// out from under a starting Notepad. The directory therefore waits out the
-/// shell's direct children first, then lingers one grace past the drain so a
-/// program the shell handed off to (a second Notepad opening a tab in the
-/// already-running instance) still finds its file. Tracking itself is
-/// untouched — the run still reports not-running at shell exit; only the
-/// temp folder outlives it. Child liveness comes from the process-inspection
-/// owner (One source of truth per Windows command), never a second snapshot
-/// here: when its snapshot cannot be taken it reports no children and the
-/// directory releases on shell exit.
+/// out from under a starting Notepad. The directory therefore always lingers
+/// one grace past shell exit — even with no observed children, since a
+/// handed-off open may not have appeared in the process snapshot yet
+/// (ticket 211 repairs that observe-then-grace TOCTOU hole). When the shell
+/// still owns direct children, the release drains them first and then lingers
+/// the same grace, so a program the shell handed off to (a second Notepad
+/// opening a tab in the already-running instance) still finds its file.
+/// Tracking itself is untouched — the run still reports not-running at shell
+/// exit; only the temp folder outlives it. Child liveness comes from the
+/// process-inspection owner (One source of truth per Windows command), never
+/// a second snapshot here: when its snapshot cannot be taken it reports no
+/// children and the directory still lingers one grace past shell exit.
 pub fn release_staged_dir(dir: &Path, shell_pid: u32) {
     release_staged_dir_with_grace(dir, shell_pid, STAGED_HANDOFF_GRACE);
 }
 
 fn release_staged_dir_with_grace(dir: &Path, shell_pid: u32, grace: Duration) {
-    if crate::engine::windows::inspection::children_alive(shell_pid) {
-        while crate::engine::windows::inspection::children_alive(shell_pid) {
-            std::thread::sleep(STAGED_CHILD_POLL);
-        }
-        std::thread::sleep(grace);
+    while crate::engine::windows::inspection::children_alive(shell_pid) {
+        std::thread::sleep(STAGED_CHILD_POLL);
     }
+    std::thread::sleep(grace);
     cleanup_staged_dir(dir);
 }
 
@@ -364,6 +384,14 @@ mod tests {
         assert_eq!(
             quote_staged_path("cmd", Path::new(r"C:\Temp\my files")).unwrap(),
             r#""C:\Temp\my files""#
+        );
+    }
+
+    #[test]
+    fn python_quotes_with_doubled_backslashes() {
+        assert_eq!(
+            quote_staged_path("python3", Path::new(r"C:\Temp\my files")).unwrap(),
+            r#""C:\\Temp\\my files""#
         );
     }
 
@@ -657,13 +685,41 @@ mod tests {
     }
 
     #[test]
-    fn release_without_children_deletes_on_shell_exit() {
+    fn release_without_children_lingers_past_shell_exit() {
         let dir = stage_action_files(&[("a.txt".to_string(), b"hi".to_vec())]).unwrap();
         let mut shell =
             crate::windows_execution::spawn_action("cmd", "exit 0", None, None).unwrap();
         let pid = shell.id();
         let _ = shell.wait();
-        release_staged_dir(&dir, pid);
+        let start = std::time::Instant::now();
+        release_staged_dir_with_grace(&dir, pid, Duration::from_secs(1));
+        assert!(start.elapsed() >= Duration::from_secs(1));
+        assert!(!dir.exists());
+    }
+
+    #[test]
+    fn handed_off_open_finds_its_file_after_shell_exit() {
+        let files = vec![
+            ("doc.pdf".to_string(), b"%PDF-1.4 staged".to_vec()),
+            ("clip.mp3".to_string(), b"ID3 staged".to_vec()),
+        ];
+        let dir = stage_action_files(&files).unwrap();
+        let mut shell =
+            crate::windows_execution::spawn_action("cmd", "exit 0", None, None).unwrap();
+        let pid = shell.id();
+        let _ = shell.wait();
+        let pending = dir.clone();
+        let handle =
+            std::thread::spawn(move || release_staged_dir_with_grace(&pending, pid, Duration::from_secs(2)));
+        // Cold-start grace: the shell is gone but the handed-off viewer has
+        // not appeared in any snapshot — the staged paths still resolve.
+        std::thread::sleep(Duration::from_millis(250));
+        assert_eq!(
+            std::fs::read(dir.join("doc.pdf")).unwrap(),
+            b"%PDF-1.4 staged"
+        );
+        assert_eq!(std::fs::read(dir.join("clip.mp3")).unwrap(), b"ID3 staged");
+        handle.join().unwrap();
         assert!(!dir.exists());
     }
 

@@ -31,6 +31,7 @@
     listLaunchEntries,
     listQuickActions,
     openCompanionExternal,
+    openCompanionManager,
     openSprout,
     openVolumeMixer,
     runQuickAction,
@@ -73,6 +74,7 @@
   } from "$lib/companionPane";
   import {
     companionDisplayName,
+    companionDockPickerSites,
     companionPickerLabel,
     companionUrlKey,
     createCompanionSiteSwitchQueue,
@@ -403,7 +405,10 @@
 
   const companionSiteMenu: ContextMenuState | null = $derived.by(() => {
     if (!companionSiteMenuOpen || !companionHasSitePicker) return null;
-    const items: ContextMenuItem[] = companionUrlList.map((site) => ({
+    // The picker stays a fast palette (research 0004:1-3, 0006:1): the first
+    // sites in user order plus a management row into the full main-app
+    // manager — never a search box or a scrolling list in the narrow dock.
+    const items: ContextMenuItem[] = companionDockPickerSites(companionUrlList).map((site) => ({
       // Rows show the user-configured name only (unique at authoring;
       // blank names fall back to the address) — the trigger tooltip keeps
       // the full name + address for long/similar entries.
@@ -413,6 +418,10 @@
         companionUrlKey(site.url) === companionUrlKey(companionUrl),
       onselect: () => chooseCompanionSite(site),
     }));
+    items.push(
+      { label: "", separator: true, onselect: () => {} },
+      { label: "Manage in Sprout…", onselect: () => void manageCompanionSites() },
+    );
     return {
       open: true,
       items,
@@ -437,6 +446,21 @@
     if (!companionSiteMenuOpen) companionMoreMenuOpen = false;
     companionSiteMenuFocusFirst = viaKeyboard;
     companionSiteMenuOpen = !companionSiteMenuOpen;
+  }
+
+  // The picker's management row: the full saved-site list is authored in the
+  // main-app manager (research 0006:1 — configuration lives away from the
+  // quick-access surface), so the row opens Sprout there instead of growing
+  // the dock menu. Failures surface on the dock's own error line rather than
+  // reading as an applied navigation.
+  async function manageCompanionSites() {
+    closeCompanionSiteMenu();
+    try {
+      await openCompanionManager();
+    } catch (manageError) {
+      console.error("companion manager open failed", manageError);
+      error = `Couldn't open the Companion manager — ${String(manageError)}`;
+    }
   }
 
   function closeCompanionSiteMenu() {

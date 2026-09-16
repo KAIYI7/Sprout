@@ -2336,6 +2336,37 @@ mod tests {
     }
 
     #[test]
+    fn python_shell_survives_backup_roundtrip() {
+        let source = conn();
+        let mut py = action("PyTask");
+        py.shell = quick_actions::QuickActionShell::Python3;
+        py.command = "print(\"hi\")".into();
+        quick_actions::create_quick_action(&source, &py).unwrap();
+
+        let dir = tempfile::tempdir().unwrap().into_path();
+        let file = write_file(&dir, "backup.json", "");
+        export_backup(&source, &file, &BackupSelection::all()).unwrap();
+
+        let on_disk: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(&file).unwrap()).unwrap();
+        let actions = on_disk["quick_actions"].as_array().unwrap();
+        assert_eq!(actions.len(), 1);
+        assert_eq!(actions[0]["shell"], "python3");
+
+        let target = conn();
+        let summary = import_backup(&target, &file).unwrap();
+        assert_eq!(summary.inserted.quick_actions, 1);
+        let listed = quick_actions::list_quick_actions(&target).unwrap();
+        assert_eq!(listed.len(), 1);
+        assert_eq!(listed[0].action.shell, quick_actions::QuickActionShell::Python3);
+        assert_eq!(listed[0].action.command, "print(\"hi\")");
+
+        let again = import_backup(&target, &file).unwrap();
+        assert_eq!(again.inserted.quick_actions, 0);
+        assert_eq!(again.skipped.quick_actions, 1);
+    }
+
+    #[test]
     fn quick_action_pre_action_absent_in_older_files_reads_as_none() {
         // Files written before the section carry no such keys — they restore
         // as actions with no pre-action, like every additive field before.

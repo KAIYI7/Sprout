@@ -15,6 +15,7 @@
     minimizeMainWindow,
     setPresenceStatus,
     takePendingImport,
+    takePendingRoute,
     toggleMainWindowMaximize,
   } from "$lib/api";
   import { nativeFrame, startNativeFrame } from "$lib/nativeFrame.svelte";
@@ -77,6 +78,16 @@
         if (path) {
           launchImport.path = path;
           goto("/presets");
+        }
+      })
+      .catch(() => {});
+    // The dock Companion picker's management row asks for the full manager:
+    // a recreated window consumes the recorded route here, an already-open
+    // one navigates through the event below.
+    takePendingRoute()
+      .then((route) => {
+        if (route) {
+          goto(route);
         }
       })
       .catch(() => {});
@@ -145,12 +156,21 @@
   // import flow as a first-launch argument.
   $effect(() => {
     if (isQuickLaunchWindow) return;
-    let unlisten: (() => void) | undefined;
+    let unlistenImport: (() => void) | undefined;
+    let unlistenRoute: (() => void) | undefined;
     listen<string>("pending-import", (event) => {
       launchImport.path = event.payload;
       goto("/presets");
-    }).then((fn) => (unlisten = fn));
-    return () => unlisten?.();
+    }).then((fn) => (unlistenImport = fn));
+    // The dock picker's management row while this window is already open —
+    // the recreated-window case is covered by the pending route above.
+    listen("open-companion-manager", () => {
+      goto("/companion");
+    }).then((fn) => (unlistenRoute = fn));
+    return () => {
+      unlistenImport?.();
+      unlistenRoute?.();
+    };
   });
 </script>
 

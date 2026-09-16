@@ -26,6 +26,7 @@ import type {
   Product,
   ProductPresetImpact,
   QuickAction,
+  QuickActionFileBytes,
   QuickActionFileMeta,
   QuickActionInput,
   QuickActionRunOutcome,
@@ -404,6 +405,13 @@ export function attachQuickActionFile(
  *  silent success. */
 export function removeQuickActionFile(fileId: number): Promise<void> {
   return invoke<void>("remove_quick_action_file", { fileId });
+}
+
+/** Fetches one persisted file's bytes by row id: the stored filename plus
+ *  the exact bytes as stored (base64). The list stays meta-only; this
+ *  carries the bytes only when one file is explicitly fetched for Download. */
+export function getQuickActionFile(fileId: number): Promise<QuickActionFileBytes> {
+  return invoke<QuickActionFileBytes>("get_quick_action_file", { fileId });
 }
 
 /** One-line byte size for file rows — the row's mono metadata voice, the same
@@ -899,6 +907,18 @@ export function setPresenceStatus(details: string, state: string): Promise<void>
 
 export function openSprout(): Promise<void> {
   return invoke<void>("open_sprout_cmd");
+}
+
+/** Opens the main window on the Companion manager (the dock picker's
+ *  management row) — the full saved-site list lives there, uncapped. */
+export function openCompanionManager(): Promise<void> {
+  return invoke<void>("open_companion_manager");
+}
+
+/** Returns the main-app route the dock asked to open, once; `None` when
+ *  there is none or it was already consumed. */
+export function takePendingRoute(): Promise<string | null> {
+  return invoke<string | null>("take_pending_route");
 }
 
 /** The Quick Launch dock's toggle (ticket 53): docks the window to its

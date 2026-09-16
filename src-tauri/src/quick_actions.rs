@@ -1,6 +1,6 @@
-//! Quick Actions (ticket 50): the machine-local list of named PowerShell
-//! commands the Quick Launch window's Quick Actions tab fires — storage,
-//! validation, the hidden fire-and-forget runner, and the timeboxed Test.
+//! Quick Actions (ticket 50): the machine-local list of named shell commands
+//! the Quick Launch window's Quick Actions tab fires — storage, validation,
+//! the hidden fire-and-forget runner, and the timeboxed Test.
 //!
 //! Glossary (docs/CONTEXT.md): a **Quick Action** is a machine-local,
 //! user-authored named command (PowerShell, optional working directory) run
@@ -22,15 +22,17 @@ use serde::{Deserialize, Serialize};
 
 use crate::launch::{TestResult, TEST_TIMEOUT, timed_test_result};
 
-/// The shell a Quick Action runs under (ADR-0017 shell extension): explicit
-/// PowerShell or CMD. There is deliberately no direct-executable variant —
-/// every action runs through one of the two shells owned by the Windows
+/// The shell a Quick Action runs under: explicit PowerShell, CMD, or Python 3
+/// (run through the Windows `py` launcher so the 64-bit/Store installs resolve
+/// the same way everywhere). There is deliberately no direct-executable variant —
+/// every action runs through one of the three shells owned by the Windows
 /// execution module (ADR-0029).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum QuickActionShell {
     Powershell,
     Cmd,
+    Python3,
 }
 
 impl QuickActionShell {
@@ -38,6 +40,7 @@ impl QuickActionShell {
         match self {
             QuickActionShell::Powershell => "powershell",
             QuickActionShell::Cmd => "cmd",
+            QuickActionShell::Python3 => "python3",
         }
     }
 
@@ -45,6 +48,7 @@ impl QuickActionShell {
         match value {
             "powershell" => Some(QuickActionShell::Powershell),
             "cmd" => Some(QuickActionShell::Cmd),
+            "python3" => Some(QuickActionShell::Python3),
             _ => None,
         }
     }
@@ -536,6 +540,16 @@ pub struct QuickActionFileMeta {
     pub size: u64,
 }
 
+/// One attached file with its bytes for Download: the persisted filename plus
+/// the exact stored bytes (base64 at the Tauri boundary, raw in the domain).
+/// The list stays meta-only so large attachments never bloat listings; this
+/// shape carries the bytes only when one file is explicitly fetched.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct QuickActionFileBytes {
+    pub filename: String,
+    pub bytes_base64: String,
+}
+
 /// The plain file-name rule: basenames only, so a stored name can never
 /// escape the per-run staging directory or a backup bundle. Returns the
 /// trimmed name the callers persist.
@@ -711,6 +725,22 @@ pub(crate) fn list_quick_action_file_blobs(
         .map_err(|e| e.to_string())
 }
 
+/// Fetches one persisted file's bytes by row id: the stored filename plus the
+/// exact bytes as stored. An unknown id fails honestly, never empty.
+pub fn get_quick_action_file_bytes(
+    conn: &Connection,
+    file_id: i64,
+) -> std::result::Result<(String, Vec<u8>), String> {
+    conn.query_row(
+        "SELECT filename, bytes FROM quick_action_files WHERE id = ?1",
+        params![file_id],
+        |row| Ok((row.get::<_, String>(0)?, row.get::<_, Vec<u8>>(1)?)),
+    )
+    .optional()
+    .map_err(|e| e.to_string())?
+    .ok_or_else(|| "That file is gone — refresh and try again.".to_string())
+}
+
 fn human_bytes(len: usize) -> String {
     const MB: usize = 1024 * 1024;
     if len >= MB {
@@ -739,6 +769,7 @@ pub fn spawn_quick_action(
         normalized_cwd(action).as_deref(),
         output,
     )
+    .map_err(|e| with_python_hint(action.shell, e))
 }
 
 /// Spawns the action's stop command through the same hidden shell path as the
@@ -754,6 +785,30 @@ pub fn spawn_stop_command(
     output: Option<&File>,
 ) -> std::result::Result<(), String> {
     crate::windows_execution::spawn_action_stop(shell.as_str(), stop_command, cwd, output)
+        .map_err(|e| with_python_hint(shell, e))
+}
+
+/// What a failed Python 3 launch means: its launcher never started, so no
+/// script ran — the machine simply has no Python 3 for Sprout to use. Sprout
+/// never bundles a runtime, so installing or updating Python only changes what
+/// detection reports, never the app itself.
+fn explain_python_missing(detail: &str) -> String {
+    format!(
+        "Python 3 was not found — no script ran ({detail}). Install it from python.org or the Microsoft Store, then run again."
+    )
+}
+
+/// Translates a spawn failure for the Python 3 shell into the honest
+/// missing-runtime message with its install pointer. Every other shell — and
+/// every non-spawn failure — passes through untouched, so the inbox shells
+/// keep their own wording and a log-attach failure never reads as missing
+/// Python.
+fn with_python_hint(shell: QuickActionShell, message: String) -> String {
+    if shell == QuickActionShell::Python3 && message.contains("failed to start") {
+        explain_python_missing(&message)
+    } else {
+        message
+    }
 }
 
 /// The stop-command watchdog (ticket 92): waits out [`STOP_WATCHDOG`] for the
@@ -1007,7 +1062,18 @@ pub(crate) fn test_quick_action_with_timeout(
             };
         }
     };
-    timed_test_result(cwd, &exe, &args, timeout)
+    let mut result = timed_test_result(cwd, &exe, &args, timeout);
+    // A Python 3 probe whose launcher never started ran nothing — say so with
+    // the install pointer instead of the raw spawn error. Timeouts and real
+    // exits keep their own reporting: only a failure to start is missing.
+    if shell == QuickActionShell::Python3
+        && !result.timed_out
+        && result.exit_code.is_none()
+        && result.output.contains("failed to start")
+    {
+        result.output = explain_python_missing(&result.output);
+    }
+    result
 }
 
 // ---------------------------------------------------------------------------
@@ -2076,22 +2142,74 @@ mod tests {
     }
 
     #[test]
+    fn python_shell_roundtrips_and_coexists_with_other_shells() {
+        let c = conn();
+        let mut py = input("py-task");
+        py.shell = QuickActionShell::Python3;
+        py.command = "print(\"same\")".into();
+        let created = create_quick_action(&c, &py).unwrap();
+        assert_eq!(created.action.shell, QuickActionShell::Python3);
+        let listed = list_quick_actions(&c).unwrap();
+        assert_eq!(listed[0].action.shell, QuickActionShell::Python3);
+        assert_eq!(listed[0].action.command, "print(\"same\")");
+        let mut ps = input("ps-task");
+        ps.shell = QuickActionShell::Powershell;
+        ps.command = "print(\"same\")".into();
+        assert!(colliding_action(&c, &ps, None).unwrap().is_none());
+        let mut edited = listed[0].clone();
+        edited.action.shell = QuickActionShell::Cmd;
+        update_quick_action(&c, &edited).unwrap();
+        let stored = get_quick_action(&c, edited.id).unwrap().unwrap();
+        assert_eq!(stored.action.shell, QuickActionShell::Cmd);
+    }
+
+    #[test]
+    fn python_missing_runtime_explains_itself_with_install_pointer() {
+        let missing =
+            with_python_hint(QuickActionShell::Python3, "failed to start 'py': file not found".into());
+        assert!(missing.contains("Python 3 was not found"), "{missing}");
+        assert!(missing.contains("no script ran"), "{missing}");
+        assert!(missing.contains("python.org"), "{missing}");
+        let other = with_python_hint(
+            QuickActionShell::Powershell,
+            "failed to start 'powershell': file not found".into(),
+        );
+        assert!(other.contains("failed to start"), "{other}");
+        assert!(!other.contains("Python 3 was not found"), "{other}");
+        let log_failure = with_python_hint(
+            QuickActionShell::Python3,
+            "cannot attach the run log: denied".into(),
+        );
+        assert_eq!(log_failure, "cannot attach the run log: denied");
+    }
+
+    #[test]
     fn shell_names_parse_and_reject_unknown_values() {
         assert_eq!(
             QuickActionShell::from_str("powershell"),
             Some(QuickActionShell::Powershell)
         );
         assert_eq!(QuickActionShell::from_str("cmd"), Some(QuickActionShell::Cmd));
+        assert_eq!(
+            QuickActionShell::from_str("python3"),
+            Some(QuickActionShell::Python3)
+        );
         assert_eq!(QuickActionShell::from_str("none"), None);
         assert_eq!(QuickActionShell::from_str("PowerShell"), None);
         assert_eq!(QuickActionShell::from_str(""), None);
         assert_eq!(QuickActionShell::Powershell.as_str(), "powershell");
         assert_eq!(QuickActionShell::Cmd.as_str(), "cmd");
+        assert_eq!(QuickActionShell::Python3.as_str(), "python3");
         let parsed: QuickActionInput = serde_json::from_str(
             r#"{"name":"x","shell":"cmd","command":"echo hi","cwd":null,"stoppable":false,"stop_command":null}"#,
         )
         .unwrap();
         assert_eq!(parsed.shell, QuickActionShell::Cmd);
+        let parsed_py: QuickActionInput = serde_json::from_str(
+            r#"{"name":"x","shell":"python3","command":"print(\"hi\")","cwd":null,"stoppable":false,"stop_command":null}"#,
+        )
+        .unwrap();
+        assert_eq!(parsed_py.shell, QuickActionShell::Python3);
         assert!(serde_json::from_str::<QuickActionInput>(
             r#"{"name":"x","shell":"none","command":"echo hi","cwd":null,"stoppable":false,"stop_command":null}"#
         )
@@ -2534,5 +2652,50 @@ mod tests {
             attach_quick_action_file(&conn, listed[0].id, "legacy.txt", b"data").unwrap();
         assert_eq!(meta.filename, "legacy.txt");
         assert_eq!(list_quick_action_files(&conn, listed[0].id).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn file_bytes_round_trip_exactly_including_binary() {
+        let c = conn();
+        let id = filed_action(&c);
+        let text = attach_quick_action_file(&c, id, "notes.txt", b"hello").unwrap();
+        let (name, bytes) = get_quick_action_file_bytes(&c, text.id).unwrap();
+        assert_eq!(name, "notes.txt");
+        assert_eq!(bytes, b"hello");
+
+        let binary: Vec<u8> = (0u8..=255u8).collect();
+        let meta = attach_quick_action_file(&c, id, "all-bytes.bin", &binary).unwrap();
+        let (name, bytes) = get_quick_action_file_bytes(&c, meta.id).unwrap();
+        assert_eq!(name, "all-bytes.bin");
+        assert_eq!(bytes, binary);
+
+        let pdf: Vec<u8> = b"%PDF-1.7\n%\xe2\xe3\xcf\xd3\n".to_vec();
+        let meta = attach_quick_action_file(&c, id, "doc.pdf", &pdf).unwrap();
+        assert_eq!(get_quick_action_file_bytes(&c, meta.id).unwrap().1, pdf);
+
+        let mp3: Vec<u8> = vec![0x49, 0x44, 0x33, 0x04, 0x00, 0x00, 0x00, 0x00, 0xFF, 0xFB, 0x00, 0x00];
+        let meta = attach_quick_action_file(&c, id, "clip.mp3", &mp3).unwrap();
+        assert_eq!(get_quick_action_file_bytes(&c, meta.id).unwrap().1, mp3);
+    }
+
+    #[test]
+    fn file_bytes_unknown_id_fails_honestly() {
+        let c = conn();
+        let err = get_quick_action_file_bytes(&c, 99999).unwrap_err();
+        assert!(err.contains("gone"), "{err}");
+    }
+
+    #[test]
+    fn file_list_stays_meta_only_while_bytes_come_from_getter() {
+        let c = conn();
+        let id = filed_action(&c);
+        let meta = attach_quick_action_file(&c, id, "a.txt", b"abc").unwrap();
+        let listed = list_quick_action_files(&c, id).unwrap();
+        assert_eq!(listed.len(), 1);
+        assert_eq!(listed[0], meta);
+        assert_eq!(listed[0].size, 3);
+        let (name, bytes) = get_quick_action_file_bytes(&c, listed[0].id).unwrap();
+        assert_eq!(name, "a.txt");
+        assert_eq!(bytes, b"abc");
     }
 }

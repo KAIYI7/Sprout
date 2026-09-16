@@ -746,6 +746,14 @@ pub fn check_output(
                 };
             }
         }
+        // Automated authoring is qualified per shell: Python 3 has no qualified
+        // authoring yet, so its drafts refuse here while hand-written commands
+        // keep saving through the normal validation (ADR-0030).
+        QuickActionShell::Python3 => {
+            return OutputVerdict::Refuse {
+                reason: "AI drafting for the Python 3 shell is not available yet — write the command by hand.".into(),
+            };
+        }
     }
     if let Some((message, choices)) = shell_request_hint(&flat, &toks) {
         return OutputVerdict::Clarify {
@@ -791,9 +799,18 @@ pub fn build_prompt(
             "That extra context is longer than the bounded {MAX_CONTEXT_CHARS} characters — shorten it and try again."
         ));
     }
+    // Automated authoring is qualified per shell: refusing before the provider
+    // call spends nothing, and the message points at the hand-authoring path
+    // that stays open (ADR-0030).
+    if shell == QuickActionShell::Python3 {
+        return Err(
+            "AI drafting for the Python 3 shell is not available yet — write the command by hand.".into(),
+        );
+    }
     let shell_name = match shell {
         QuickActionShell::Powershell => "Windows PowerShell 5.1 (powershell.exe)",
         QuickActionShell::Cmd => "Windows CMD (cmd.exe)",
+        QuickActionShell::Python3 => "Python 3 (py launcher)",
     };
     let system = format!(
         "{}\n\n{}\n\nTarget shell: {shell_name}. Reply with JSON only: {{\"command\": \"...\", \"assumptions\": [\"...\"], \"affected_targets\": [\"...\"], \"explanation\": \"...\"}}. Never claim execution.",
@@ -1495,9 +1512,10 @@ fn build_diagnose_prompt(
     let shell_name = match shell {
         QuickActionShell::Powershell => "Windows PowerShell 5.1 (powershell.exe)",
         QuickActionShell::Cmd => "Windows CMD (cmd.exe)",
+        QuickActionShell::Python3 => "Python 3 (py launcher)",
     };
     let system = format!(
-        "{}\n\n{}\n\nTarget shell: {shell_name}. Diagnose the supplied saved script and error only. Reply with JSON only: {{\"explanation\": \"...\", \"command\": \"... or null when no code change applies\", \"shell\": \"powershell or cmd\", \"cwd\": \"... or null\", \"note\": \"... or null\", \"assumptions\": [\"...\"], \"affected_targets\": [\"...\"]}}. Never claim execution; never repair destructive behavior.",
+        "{}\n\n{}\n\nTarget shell: {shell_name}. Diagnose the supplied saved script and error only. Reply with JSON only: {{\"explanation\": \"...\", \"command\": \"... or null when no code change applies\", \"shell\": \"powershell, cmd, or python3\", \"cwd\": \"... or null\", \"note\": \"... or null\", \"assumptions\": [\"...\"], \"affected_targets\": [\"...\"]}}. Never claim execution; never repair destructive behavior.",
         skills.shared, skills.diagnose
     );
     let user = format!(
@@ -1577,8 +1595,14 @@ pub fn request_diagnosis(
     if proposed.chars().count() > MAX_COMMAND_CHARS {
         return DiagnoseOutcome::Failed { message: ProviderError::Oversized.message() };
     }
+    // The model's shell answer is trusted only when it names a real shell —
+    // anything else keeps the saved one, and the output checks below still
+    // hold the text. A Python 3 proposal refuses there until its authoring is
+    // qualified, so it can never slip in unreviewed (ADR-0030).
     let proposed_shell = match parsed.shell.as_deref().map(str::trim) {
+        Some("powershell") => QuickActionShell::Powershell,
         Some("cmd") => QuickActionShell::Cmd,
+        Some("python3") => QuickActionShell::Python3,
         _ => input.shell,
     };
     match check_output(proposed_shell, &proposed, &AnsweredAspects::none()) {
@@ -1687,7 +1711,11 @@ mod tests {
 
     fn draft_input(shell: &str, request: &str) -> DraftInput {
         DraftInput {
-            shell: if shell == "cmd" { QuickActionShell::Cmd } else { QuickActionShell::Powershell },
+            shell: match shell {
+                "cmd" => QuickActionShell::Cmd,
+                "python3" => QuickActionShell::Python3,
+                _ => QuickActionShell::Powershell,
+            },
             request: request.to_string(),
             context: None,
             model: "test-model".to_string(),

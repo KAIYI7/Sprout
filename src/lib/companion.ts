@@ -20,6 +20,22 @@ export function companionUrlKey(url: string): string {
   return url.trim().toLowerCase().replace(/\/+$/, "");
 }
 
+/** How many saved sites the dock Companion picker shows: enough for a
+ *  one-glance menu in the narrow dock strip, never a scrolling list.
+ *  WHY five: the dock picker is quick access over saved sites (ADR-0022
+ *  Companion is one isolated site in the docked window only) while the full
+ *  list lives in the main-app manager — five short names still scan without
+ *  searching, and anything beyond stays one click away behind the manage row.
+ *  The saved list itself is never trimmed by this cap. */
+export const COMPANION_DOCK_PICKER_LIMIT = 5;
+
+/** The sites the dock picker renders: the first sites in user order, so the
+ *  menu stays a fast palette no matter how many sites are saved. Pure — the
+ *  input order is the user's own and is never re-sorted here. */
+export function companionDockPickerSites(list: CompanionSite[]): CompanionSite[] {
+  return list.slice(0, COMPANION_DOCK_PICKER_LIMIT);
+}
+
 /** The session trail behind the dock Companion's Back/Forward (ADR-0022
  *  Companion is a single isolated site: Back/Forward are its sole history
  *  chrome, and the pinned JavaScript child-WebView surface exposes no

@@ -204,3 +204,27 @@ clarification needs it, restoring the two-level maximum. `Use this draft`
 applies shell plus command and auto-flips to Manual for full review with
 applied feedback. Patterns 1–12 stand unchanged; only this applied case
 moved from stacking to exclusive views.
+
+## Evidence extension — 2026-09-16 (reserved check gutter in menus)
+
+Extends pattern 10's menu structure with the check-column rule behind the
+shared ContextMenu gutter fix. Secondary sources only — no fresh first-hand
+app audit or user study; graded accordingly.
+
+- GNOME Bugzilla 561521 records the convention directly: Windows and macOS
+  both "leave enough room for a checkmark to the left of every menu item
+  regardless of whether the item ever has a checkmark or not", adopted "not
+  because it's what Windows and OS X do, but because it's more internally
+  consistent" (mpt, 2008).
+- NN/g on menu scannability (eyetracking: eyes run down the list's left
+  edge; a ragged left margin forces re-acquiring each line) supplies the
+  mechanism: a missing gutter on unchecked rows breaks the straight scan
+  line — https://www.nngroup.com/articles/right-justified-navigation-menus/
+- WAI-APG `menuitemradio` requires `aria-checked` on every radio (true and
+  false alike), so the visual gutter has an accessibility twin: state is
+  exposed per-row, never by presence of the mark alone.
+- Applied: any ContextMenu list where a row carries an icon or radio state
+  reserves the 14px leading slot on every row (checked rows draw, the rest
+  keep an empty spacer); lists with neither render exactly as before. Covers
+  Select popouts, the dock filter, and the Move-to-group / Virtual-desktop
+  flyouts in one place.

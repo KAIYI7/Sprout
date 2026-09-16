@@ -48,6 +48,8 @@ import type { Group, LaunchCommandTest, QuickAction, QuickActionShell } from "$l
     prereqLines as toPrereqLines,
     type PrereqLine,
   } from "$lib/prereqGuidance";
+  import { detectCmdStartTitleTrap } from "$lib/quickActionFiles";
+  import { downloadFilesZip, downloadSingleFile } from "$lib/quickActionDownload";
   import { open as openFolderPicker } from "@tauri-apps/plugin-dialog";
   import Dialog from "./Dialog.svelte";
   import Button from "./Button.svelte";
@@ -1141,6 +1143,48 @@ import type { Group, LaunchCommandTest, QuickAction, QuickActionShell } from "$l
     }
   }
 
+  // Download lives where the files do (research 0006 pattern 4): per-file
+  // beside its row plus Download-all-zip while two or more persist, main-app
+  // only — the dock stays read-only (research 0004 rule 3). Persisted rows
+  // only; Add-dialog staged bytes need nothing until creation resolves.
+  const persistedFileCount = $derived(fileRows.filter((row) => row.id !== null).length);
+
+  async function downloadFile(row: AttachedFileRow) {
+    if (row.id === null) return;
+    filesError = "";
+    filesBusy = true;
+    try {
+      const result = await downloadSingleFile(row.id, row.filename);
+      if (result === "saved") filesAnnouncement = `Downloaded ${row.filename}.`;
+    } catch (e) {
+      console.error(e);
+      filesError = String(e);
+    } finally {
+      filesBusy = false;
+    }
+  }
+
+  async function downloadAllFiles() {
+    if (!editing || !action) return;
+    filesError = "";
+    filesBusy = true;
+    try {
+      const result = await downloadFilesZip(action.id, action.name);
+      if (result === "saved") {
+        filesAnnouncement = `Downloaded all ${persistedFileCount} files.`;
+      }
+    } catch (e) {
+      console.error(e);
+      filesError = String(e);
+    } finally {
+      filesBusy = false;
+    }
+  }
+
+  // Cmd `start` without an empty title eats its own quoted path: warn with
+  // the fixed forms, never block — the check is advisory, Save stays open.
+  const startTrap = $derived(detectCmdStartTitleTrap(command, shell));
+
   function trackCaret(reopen: boolean) {
     if (cmdEl) suggestCaret = cmdEl.selectionStart ?? command.length;
     if (reopen) {
@@ -1602,12 +1646,15 @@ import type { Group, LaunchCommandTest, QuickAction, QuickActionShell } from "$l
         options={[
           { value: "powershell", label: quickActionShellLabel.powershell },
           { value: "cmd", label: quickActionShellLabel.cmd },
+          { value: "python3", label: quickActionShellLabel.python3 },
         ]}
       />
       <p class="field__hint">
         {shell === "powershell"
           ? "Runs with -NoProfile -NonInteractive."
-          : "Runs as: cmd /c {command}."}
+          : shell === "cmd"
+            ? "Runs as: cmd /c {command}."
+            : "Runs as: py -3 -c {command}."}
       </p>
     </div>
 
@@ -1628,7 +1675,7 @@ import type { Group, LaunchCommandTest, QuickAction, QuickActionShell } from "$l
           id="qa-command"
           class="field__cmd cmdwrap__input"
           rows="6"
-          placeholder="e.g. docker compose up -d"
+          placeholder={shell === "python3" ? 'e.g. print("hi")' : "e.g. docker compose up -d"}
           autocomplete="off"
           autocapitalize="none"
           spellcheck="false"
@@ -1690,6 +1737,9 @@ import type { Group, LaunchCommandTest, QuickAction, QuickActionShell } from "$l
           attach them below.
         </p>
       {/if}
+      {#if startTrap}
+        <Notice tone="warn">{"`start` treats the first quoted path as its window title — add an empty title (`start \"\" …`), or use `Start-Process …` / `explorer …`."}</Notice>
+      {/if}
     </div>
 
     <div class="field">
@@ -1707,6 +1757,16 @@ import type { Group, LaunchCommandTest, QuickAction, QuickActionShell } from "$l
             <li class="files__row">
               <span class="files__name">{row.filename}</span>
               <span class="files__size">{formatActionFileBytes(row.size)}</span>
+              {#if editing && row.id !== null}
+                <Button
+                  type="button"
+                  variant="ghost"
+                  disabled={filesBusy}
+                  onclick={() => void downloadFile(row)}
+                >
+                  Download
+                </Button>
+              {/if}
               <Button
                 type="button"
                 variant="ghost"
@@ -1731,6 +1791,16 @@ import type { Group, LaunchCommandTest, QuickAction, QuickActionShell } from "$l
         <Button type="button" variant="secondary" onclick={insertFilesDir} disabled={filesBusy || fileRows.length === 0}>
           Insert
         </Button>
+        {#if editing && persistedFileCount >= 2}
+          <Button
+            type="button"
+            variant="secondary"
+            disabled={filesBusy}
+            onclick={() => void downloadAllFiles()}
+          >
+            Download all (.zip)
+          </Button>
+        {/if}
       </div>
       <input
         bind:this={filePick}

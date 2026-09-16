@@ -51,9 +51,10 @@ pub const DETECT_MAX_KEY_CHARS: usize = 200;
 /// call sites; this table exists so the no-execution test can oracle every
 /// spawned argv against one fixed list.
 #[cfg(test)]
-const DETECT_PROBE_ALLOW_LIST: [&str; 6] = [
+const DETECT_PROBE_ALLOW_LIST: [&str; 7] = [
     "where.exe",
     "node",
+    "py",
     "python",
     "python3",
     "npx",
@@ -128,7 +129,7 @@ fn route(raw: &str) -> Result<Catalog, String> {
     let lowered = key.to_lowercase();
     match lowered.as_str() {
         "node" | "nodejs" => Ok(Catalog::RuntimeNode),
-        "python" | "python3" => Ok(Catalog::RuntimePython),
+        "py" | "python" | "python3" => Ok(Catalog::RuntimePython),
         "playwright" => Ok(Catalog::Playwright),
         _ => {
             if let Some(id) = split_prefix(key, "winget:") {
@@ -225,9 +226,7 @@ fn detect_with_limits(
         let catalog = route(key)?;
         verdicts.push(match catalog {
             Catalog::RuntimeNode => probe_runtime(key, "node", &["node"], runner, timeout),
-            Catalog::RuntimePython => {
-                probe_runtime(key, "python", &["python", "python3"], runner, timeout)
-            }
+            Catalog::RuntimePython => probe_python(key, runner, timeout),
             Catalog::Playwright => probe_playwright(key, runner, timeout),
             Catalog::Winget(id) => probe_winget(key, &id, winget),
             Catalog::Extension(id) => probe_extension(key, &id, runner, timeout),
@@ -348,6 +347,42 @@ fn probe_runtime(
     } else {
         not_found(name)
     }
+}
+
+/// Python probe: the launcher first (`py -3 --version`), then PATH
+/// (`python --version`, `python3 --version`). Each candidate falls through to
+/// the next on a ran-but-absent outcome; only a present version or an unrunnable
+/// check returns immediately, so timeouts stay `not-verifiable` (ADR-0030).
+fn probe_python(name: &str, runner: &impl ProbeRunner, timeout: Duration) -> PrerequisiteVerdict {
+    const CANDIDATES: [(&str, &[&str]); 3] = [
+        ("py", &["-3", "--version"]),
+        ("python", &["--version"]),
+        ("python3", &["--version"]),
+    ];
+    for (exe, version_args) in CANDIDATES {
+        let lookup = runner.timed("where.exe", &[exe.to_string()], timeout);
+        if let Err(verdict) = ran(&lookup, name, timeout) {
+            return verdict;
+        }
+        if lookup.exit_code != Some(0) {
+            continue;
+        }
+        let args: Vec<String> = version_args.iter().map(|arg| arg.to_string()).collect();
+        let run = runner.timed(exe, &args, timeout);
+        if let Err(verdict) = ran(&run, name, timeout) {
+            return verdict;
+        }
+        if run.exit_code == Some(0) {
+            if let Some(version) = first_version_token(&run.output) {
+                return present(
+                    name,
+                    Some(version.clone()),
+                    format!("python {version} found"),
+                );
+            }
+        }
+    }
+    not_found(name)
 }
 
 /// Playwright probe: the fixed local query that never installs. A missing
@@ -565,6 +600,7 @@ mod tests {
         let probes = Transcript::replay(vec![
             Transcript::ok("C:\\nodejs\\node.exe"), // where node
             Transcript::ok("v22.14.0"),             // node --version
+            Transcript::fail("INFO: Could not find files"), // where py
             Transcript::fail("INFO: Could not find files"), // where python
             Transcript::fail("INFO: Could not find files"), // where python3
             Transcript::ok("Version 1.49.1"),       // npx playwright --version
@@ -610,8 +646,10 @@ mod tests {
     fn not_found_matrix_per_source() {
         let probes = Transcript::replay(vec![
             Transcript::fail("no match"),                       // where node
+            Transcript::fail("INFO: Could not find files"),     // where py
             Transcript::ok("C:\\py\\python.exe"),               // where python
             Transcript::fail("not recognized"),                 // python --version nonzero
+            Transcript::fail("INFO: Could not find files"),     // where python3
             Transcript::fail("npm ERR! could not determine executable"), // npx playwright missing
             Transcript::ok("gitlens@1.0.0"),                    // extensions without the id
             Transcript::fail("INFO: Could not find files"),     // where ffmpeg
@@ -666,8 +704,8 @@ mod tests {
     fn timeout_reads_as_not_verifiable_never_absent() {
         let probes = Transcript::replay(vec![
             Transcript::timed_out(), // where node hangs
-            Transcript::ok("C:\\py\\python.exe"),
-            Transcript::timed_out(), // python --version hangs
+            Transcript::ok("C:\\Windows\\py.exe"),
+            Transcript::timed_out(), // py -3 --version hangs
             Transcript::timed_out(), // npx hangs
         ]);
         let names = ["node", "python", "playwright"]
@@ -710,7 +748,7 @@ mod tests {
         let probes = Transcript::replay(vec![
             Transcript::ok("C:\\nodejs\\node.exe"),
             Transcript::ok("v22.14.0"),
-            Transcript::ok("C:\\py\\python.exe"),
+            Transcript::ok("C:\\Windows\\py.exe"),
             Transcript::ok("Python 3.14.7"),
             Transcript::ok("Version 1.49.1"),
             Transcript::ok("ms-python.python@2024.10.0"),
@@ -744,6 +782,8 @@ mod tests {
     fn routing_is_case_insensitive_and_trims() {
         assert_eq!(route("Node").unwrap(), Catalog::RuntimeNode);
         assert_eq!(route("  PYTHON3 ").unwrap(), Catalog::RuntimePython);
+        assert_eq!(route("py").unwrap(), Catalog::RuntimePython);
+        assert_eq!(route("  PY ").unwrap(), Catalog::RuntimePython);
         assert_eq!(
             route("WINGET:Git.Git").unwrap(),
             Catalog::Winget("Git.Git".to_string())
@@ -758,6 +798,85 @@ mod tests {
         );
         assert!(route("winget:").is_err());
         assert!(route("extension:").is_err());
+    }
+
+    #[test]
+    fn python_probe_prefers_launcher_and_stops_before_path() {
+        let probes = Transcript::replay(vec![
+            Transcript::ok("C:\\Windows\\py.exe"), // where py
+            Transcript::ok("Python 3.14.7"),       // py -3 --version
+        ]);
+        let verdicts = detect_with(&["python".to_string()], None, &probes).unwrap();
+        assert_eq!(verdicts.len(), 1);
+        assert_eq!(verdicts[0].status, PrereqStatus::Present);
+        assert_eq!(verdicts[0].version.as_deref(), Some("3.14.7"));
+        assert_eq!(
+            probes.exes(),
+            vec!["where.exe".to_string(), "py".to_string()]
+        );
+        let args = probes.calls.borrow()[1].1.clone();
+        assert_eq!(args, vec!["-3".to_string(), "--version".to_string()]);
+    }
+
+    #[test]
+    fn python_probe_falls_back_to_path_when_launcher_absent() {
+        let probes = Transcript::replay(vec![
+            Transcript::fail("INFO: Could not find files"), // where py
+            Transcript::ok("C:\\py\\python.exe"),           // where python
+            Transcript::ok("Python 3.12.4"),                // python --version
+        ]);
+        let verdicts = detect_with(&["py".to_string()], None, &probes).unwrap();
+        assert_eq!(verdicts.len(), 1);
+        assert_eq!(verdicts[0].name, "py");
+        assert_eq!(verdicts[0].status, PrereqStatus::Present);
+        assert_eq!(verdicts[0].version.as_deref(), Some("3.12.4"));
+        assert_eq!(
+            probes.exes(),
+            vec![
+                "where.exe".to_string(),
+                "where.exe".to_string(),
+                "python".to_string()
+            ]
+        );
+    }
+
+    #[test]
+    fn python_probe_falls_back_to_python3_when_python_version_fails() {
+        let probes = Transcript::replay(vec![
+            Transcript::fail("INFO: Could not find files"), // where py
+            Transcript::ok("C:\\py\\python.exe"),           // where python
+            Transcript::fail("not recognized"),             // python --version nonzero
+            Transcript::ok("C:\\py\\python3.exe"),          // where python3
+            Transcript::ok("Python 3.11.9"),                // python3 --version
+        ]);
+        let verdicts = detect_with(&["python".to_string()], None, &probes).unwrap();
+        assert_eq!(verdicts[0].status, PrereqStatus::Present);
+        assert_eq!(verdicts[0].version.as_deref(), Some("3.11.9"));
+    }
+
+    #[test]
+    fn python_probe_not_found_when_all_candidates_absent() {
+        for key in ["py", "python", "python3"] {
+            let probes = Transcript::replay(vec![
+                Transcript::fail("INFO: Could not find files"),
+                Transcript::fail("INFO: Could not find files"),
+                Transcript::fail("INFO: Could not find files"),
+            ]);
+            let verdicts = detect_with(&[key.to_string()], None, &probes).unwrap();
+            assert_eq!(verdicts[0].status, PrereqStatus::NotFound);
+            assert_eq!(verdicts[0].version, None);
+        }
+    }
+
+    #[test]
+    fn python_probe_not_verifiable_when_launcher_version_hangs() {
+        let probes = Transcript::replay(vec![
+            Transcript::ok("C:\\Windows\\py.exe"), // where py
+            Transcript::timed_out(),               // py -3 --version hangs
+        ]);
+        let verdicts = detect_with(&["python".to_string()], None, &probes).unwrap();
+        assert_eq!(verdicts[0].status, PrereqStatus::NotVerifiable);
+        assert_eq!(verdicts[0].version, None);
     }
 
     #[test]

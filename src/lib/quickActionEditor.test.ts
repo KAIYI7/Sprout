@@ -17,11 +17,11 @@ const PACKAGE = JSON.parse(
   readFileSync(new URL("../../package.json", import.meta.url), "utf8"),
 ) as { dependencies: Record<string, string> };
 
-function kindsOf(command: string, shell: "powershell" | "cmd"): string[] {
+function kindsOf(command: string, shell: "powershell" | "cmd" | "python3"): string[] {
   return tokenizeQuickActionCommand(command, shell).map((t) => t.kind);
 }
 
-function textsOf(command: string, shell: "powershell" | "cmd"): string[] {
+function textsOf(command: string, shell: "powershell" | "cmd" | "python3"): string[] {
   return tokenizeQuickActionCommand(command, shell).map((t) => t.text);
 }
 
@@ -47,16 +47,29 @@ describe("command tokenizer follows the selected shell", () => {
   });
 
   it("reads the same text differently per shell", () => {
-    // `#` comments PowerShell but is plain text in CMD.
+    // `#` comments PowerShell and Python but is plain text in CMD.
     expect(kindsOf("# x", "powershell")).toEqual(["comment"]);
+    expect(kindsOf("# x", "python3")).toEqual(["comment"]);
     expect(kindsOf("# x", "cmd")).not.toContain("comment");
-    // `REM` comments CMD but is a plain command word in PowerShell.
+    // `REM` comments CMD but is a plain command word in PowerShell and Python.
     expect(kindsOf("REM x", "cmd")[0]).toBe("comment");
     expect(kindsOf("REM x", "powershell")[0]).toBe("command");
+    expect(kindsOf("REM x", "python3")[0]).toBe("command");
   });
 
-  it("marks the files placeholder in both shells", () => {
-    for (const shell of ["powershell", "cmd"] as const) {
+  it("marks Python comments, strings, and commands distinctly", () => {
+    expect(kindsOf("# list files", "python3")).toEqual(["comment"]);
+    const tokens = tokenizeQuickActionCommand(`print("hi") # greet`, "python3");
+    expect(tokens[0]).toEqual({ text: "print", kind: "command" });
+    expect(tokens[tokens.length - 1].kind).toBe("comment");
+    expect(kindsOf(`"a \\"b\\" c"`, "python3")).toEqual(["string"]);
+    expect(kindsOf(`'it\\'s'`, "python3")).toEqual(["string"]);
+    expect(kindsOf(`"""multi\nline"""`, "python3")).toEqual(["string"]);
+    expect(kindsOf(":: not a comment", "python3")[0]).not.toBe("comment");
+  });
+
+  it("marks the files placeholder in all shells", () => {
+    for (const shell of ["powershell", "cmd", "python3"] as const) {
       const tokens = tokenizeQuickActionCommand(
         `copy <FilesDir>\\a.txt .`,
         shell,
@@ -69,7 +82,7 @@ describe("command tokenizer follows the selected shell", () => {
   });
 
   it("marks the placeholder regardless of case, keeping the author's casing", () => {
-    for (const shell of ["powershell", "cmd"] as const) {
+    for (const shell of ["powershell", "cmd", "python3"] as const) {
       expect(tokenizeQuickActionCommand("run <filesdir>\\a.txt", shell, ["a.txt"])).toEqual([
         { text: "run", kind: "command" },
         { text: " ", kind: "text" },
@@ -101,7 +114,7 @@ describe("command tokenizer follows the selected shell", () => {
       "sort < input.txt",
       'notepad "<FilesDir>\\a.txt"',
     ];
-    for (const shell of ["powershell", "cmd"] as const) {
+    for (const shell of ["powershell", "cmd", "python3"] as const) {
       for (const command of corpus) {
         const joined = textsOf(command, shell).join("");
         expect({ shell, command, joined }).toEqual({
@@ -115,7 +128,7 @@ describe("command tokenizer follows the selected shell", () => {
 
   it("highlights an attached filename as part of the placeholder", () => {
     const names = ["a.txt"];
-    for (const shell of ["powershell", "cmd"] as const) {
+    for (const shell of ["powershell", "cmd", "python3"] as const) {
       expect(tokenizeQuickActionCommand("run <FilesDir>\\a.txt", shell, names)).toEqual([
         { text: "run", kind: "command" },
         { text: " ", kind: "text" },
@@ -146,7 +159,7 @@ describe("command tokenizer follows the selected shell", () => {
 
   it("keeps the placeholder highlight inside quotes", () => {
     const names = ["a.txt"];
-    for (const shell of ["powershell", "cmd"] as const) {
+    for (const shell of ["powershell", "cmd", "python3"] as const) {
       expect(
         tokenizeQuickActionCommand('notepad "<FilesDir>\\a.txt"', shell, names),
       ).toEqual([
@@ -177,7 +190,7 @@ describe("command tokenizer follows the selected shell", () => {
 
   it("highlights a spaced filename as one placeholder unit", () => {
     const names = ["my file.txt", "a.txt"];
-    for (const shell of ["powershell", "cmd"] as const) {
+    for (const shell of ["powershell", "cmd", "python3"] as const) {
       expect(
         tokenizeQuickActionCommand("run <FilesDir>\\my file.txt", shell, names),
       ).toEqual([
@@ -391,9 +404,13 @@ describe("files seam and dialog wiring", () => {
   });
 
   it("adds no editor dependency to the bundle", () => {
+    // Ticket 210 adds the fs plugin so frontend-composed Download bytes
+    // (single + zip) save through Save-As with no silent overwrite; no
+    // editor library — the command box stays dependency-free.
     expect(Object.keys(PACKAGE.dependencies).sort()).toEqual([
       "@tauri-apps/api",
       "@tauri-apps/plugin-dialog",
+      "@tauri-apps/plugin-fs",
       "@tauri-apps/plugin-notification",
     ]);
   });

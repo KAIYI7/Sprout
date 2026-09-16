@@ -206,17 +206,56 @@ pub(crate) fn cmd_argv(command: &str) -> (String, Vec<String>) {
     ("cmd".into(), vec!["/c".into(), command.into()])
 }
 
+/// Resolves the Windows `py` launcher without trusting the backend's
+/// inherited PATH: a backend started before a Python install (or before a
+/// PATH update, including a stale Explorer parent) cannot find bare `py` by
+/// name even though the launcher file exists on disk. Prefer the known
+/// install locations, falling back to bare `py` only when no file exists so
+/// the spawn error still names the missing launcher.
+fn python_launcher_exe() -> String {
+    if let Ok(local) = std::env::var("LOCALAPPDATA") {
+        let candidate = std::path::Path::new(&local)
+            .join("Programs")
+            .join("Python")
+            .join("Launcher")
+            .join("py.exe");
+        if candidate.is_file() {
+            return candidate.to_string_lossy().into_owned();
+        }
+    }
+    let system = std::path::Path::new(r"C:\Windows\py.exe");
+    if system.is_file() {
+        return system.to_string_lossy().into_owned();
+    }
+    "py".into()
+}
+
+/// Builds the argv for Python 3's launcher convention: the Windows `py`
+/// launcher pins the newest installed Python 3 (`-3`) and takes the script as
+/// an inline program (`-c`), so one argv covers every install shape — the
+/// launcher-first order detection probes first. The exe is the resolved
+/// launcher path (see [`python_launcher_exe`]), so a stale backend PATH
+/// cannot hide an installed Python. Same hidden, no-window policy
+/// as the other shells, only the runtime differs.
+pub(crate) fn python_argv(command: &str) -> (String, Vec<String>) {
+    (
+        python_launcher_exe(),
+        vec!["-3".into(), "-c".into(), command.into()],
+    )
+}
+
 /// Resolves a Quick Action shell name to its argv through the single execution
-/// owner (ADR-0029): callers pass domain intent (`powershell`/`cmd`), never a
-/// reconstructed Windows call. Unknown values fail honestly instead of
+/// owner (ADR-0029): callers pass domain intent (`powershell`/`cmd`/`python3`),
+/// never a reconstructed Windows call. Unknown values fail honestly instead of
 /// falling back to PowerShell, so a corrupt record can never run under the
 /// wrong shell (ADR-0017 shell extension).
 pub(crate) fn action_argv(shell: &str, command: &str) -> Result<(String, Vec<String>), String> {
     match shell {
         "powershell" => Ok(powershell_argv(command)),
         "cmd" => Ok(cmd_argv(command)),
+        "python3" => Ok(python_argv(command)),
         other => Err(format!(
-            "'{other}' is not a supported Quick Action shell — expected 'powershell' or 'cmd'"
+            "'{other}' is not a supported Quick Action shell — expected 'powershell', 'cmd', or 'python3'"
         )),
     }
 }
@@ -428,10 +467,52 @@ fn shell_argv_routes_through_the_single_owner() {
         action_argv("cmd", "echo hi").unwrap(),
         ("cmd".into(), vec!["/c".into(), "echo hi".into()])
     );
+    let (exe, args) = action_argv("python3", "print(\"hi\")").unwrap();
+    assert_eq!(args, vec!["-3".to_string(), "-c".to_string(), "print(\"hi\")".to_string()]);
+    assert_python_launcher(&exe);
     assert_eq!(cmd_argv("echo hi"), ("cmd".into(), vec!["/c".into(), "echo hi".into()]));
+    let (exe, args) = python_argv("print(\"hi\")");
+    assert_eq!(args, vec!["-3".to_string(), "-c".to_string(), "print(\"hi\")".to_string()]);
+    assert_python_launcher(&exe);
     let err = action_argv("none", "echo hi").unwrap_err();
     assert!(err.contains("not a supported Quick Action shell"), "{err}");
     let err = action_argv("PowerShell", "echo hi").unwrap_err();
     assert!(err.contains("not a supported Quick Action shell"), "{err}");
+}
+
+#[cfg(test)]
+fn assert_python_launcher(exe: &str) {
+    // Machines with the launcher installed resolve absolute; machines
+    // without one keep bare `py` so the spawn error still names it.
+    if std::path::Path::new(exe).is_absolute() {
+        assert!(exe.ends_with("py.exe"), "got: {exe}");
+        assert!(std::path::Path::new(exe).exists(), "got: {exe}");
+    } else {
+        assert_eq!(exe, "py", "got: {exe}");
+    }
+}
+
+#[test]
+fn python_argv_survives_a_stale_backend_path() {
+    // Regression: the backend inherits its PATH at start, so a Python
+    // installed (or PATH-updated) after boot leaves `py` unresolvable by
+    // name even though the launcher file exists on disk. The argv must
+    // carry an absolute launcher path when one exists, never bare `py`.
+    let (exe, args) = python_argv("print(\"hi\")");
+    assert_eq!(args, vec!["-3".to_string(), "-c".to_string(), "print(\"hi\")".to_string()]);
+    if std::path::Path::new(&exe).is_absolute() {
+        assert!(
+            exe.ends_with("py.exe"),
+            "absolute python launcher should end with py.exe, got: {exe}"
+        );
+        assert!(
+            std::path::Path::new(&exe).exists(),
+            "absolute python launcher must exist on disk, got: {exe}"
+        );
+    } else {
+        panic!(
+            "python launcher resolved by bare name ({exe}) — stale backend PATH would fail to start it"
+        );
+    }
 }
 }
