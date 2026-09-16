@@ -138,12 +138,20 @@ _Avoid_: Action (a Plan term), command entry, script
 The machine-local collection of Quick Action commands, configured in the main app and available from the Quick Launch window. It is independent of the Quick Launch list and of Preset installation Runs.
 _Avoid_: Quick Launch entries, preset steps
 
+**Quick Action file**:
+A machine-local binary blob attached to exactly one Quick Action under its original filename, shipped with the action and staged per-run where the action's `<FilesDir>` placeholder points. Bytes round-trip exactly — an attached mp3 downloads back as that mp3. Never part of Presets, Plan, Run, or exports; carried by whole-app backup.
+_Avoid_: Attachment (without saying what), embedded resource
+
+**`<FilesDir>`**:
+The template placeholder in a Quick Action command that expands once per run to the per-run folder holding that action's files. Authored by the user; expanded by the Windows execution owner, shell-quoted for the action's shell.
+_Avoid_: Variable, macro, path
+
 **Companion**:
 A machine-local, single-site web surface shown in the lower portion of the Quick Launch dock when the user chooses an active saved site. It is absent while the window floats or no site is active, and it is unrelated to Quick Actions, Presets, Plans, and Runs.
 _Avoid_: Browser pane, embedded app, mini window
 
 **Companion site**:
-One saved https address available to the Companion, carrying the user's display name for it. Sites are ordered by the user and unique by address; choosing one as the active site shows it in the dock. Each site carries its own browser identity — Mobile (default) or Desktop for desktop-only sites — and its own page zoom (50–200%, unset follows the automatic width zoom). Machine-local; never part of Presets, Plan, Run, or exports.
+One saved https address available to the Companion, carrying the user's display name for it. Sites are ordered by the user and unique by address; choosing one as the active site shows it in the dock. Each site carries its own browser identity — Mobile (default) or Desktop for desktop-only sites — and its own page zoom (50–200%, unset follows the automatic width zoom). Machine-local; never part of Presets, Plan, Run, or exports. `Site dropdown` unqualified means the dock Companion picker — the Settings active-site control and the main-app Companion manager are named in full when meant.
 _Avoid_: Bookmark, favorite, tab
 
 **Companion site name**:
