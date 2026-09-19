@@ -1,3 +1,10 @@
+/// Display labels resolve through the copy dictionary (spec 214), so every
+/// surface follows the active locale live — the English literals below live
+/// only in `src/lib/copy/en.json`. `envActionLabel` stays a plain map: SET /
+/// PREPEND are data keywords echoed on env badges, like the shell proper
+/// nouns below, never prose.
+import { t } from "./copy";
+
 export type EnvAction = "set" | "prepend";
 
 export interface EnvWiring {
@@ -56,11 +63,11 @@ export type VersionPolicy =
   | { kind: "pinned"; version: string }
   | { kind: "present" };
 
-export const policyLabel: Record<VersionPolicy["kind"], string> = {
-  latest: "latest",
-  pinned: "pinned",
-  present: "present",
-};
+/** Display text for a version-policy kind — a function (not a map) so the
+ *  label follows the active locale at render time. */
+export function policyLabelText(kind: VersionPolicy["kind"]): string {
+  return t(`policy.${kind}`);
+}
 
 export interface VerifyCommand {
   command: string;
@@ -109,13 +116,22 @@ export type PlannedAction =
   | { kind: "satisfied_by_newer"; installed: string; pinned: string }
   | { kind: "unmanaged_skip" };
 
-export const actionLabel: Record<PlannedAction["kind"], string> = {
-  install: "will install",
-  upgrade: "will upgrade",
-  already_ok: "already OK",
-  satisfied_by_newer: "satisfied by newer",
-  unmanaged_skip: "unmanaged — skip",
-};
+/** Display text for a plan action — a function (not a map) so the label
+ *  follows the active locale at render time. */
+export function actionLabelText(kind: PlannedAction["kind"]): string {
+  switch (kind) {
+    case "install":
+      return t("action.install");
+    case "upgrade":
+      return t("action.upgrade");
+    case "already_ok":
+      return t("status.alreadyOk");
+    case "satisfied_by_newer":
+      return t("status.newer");
+    case "unmanaged_skip":
+      return t("action.unmanaged");
+  }
+}
 
 /** One way a selected Preset declares a Product, with the action that
  * declaration would produce on this machine. */
@@ -161,15 +177,26 @@ export type RunStatus =
   | "failed"
   | "timed_out";
 
-export const runStatusLabel: Record<RunStatus, string> = {
-  installed: "installed",
-  upgraded: "upgraded",
-  already_ok: "already OK",
-  satisfied_by_newer: "satisfied by newer",
-  skipped_unmanaged: "skipped — unmanaged",
-  failed: "failed",
-  timed_out: "timed out",
-};
+/** Display text for a run status — a function (not a map) so the label
+ *  follows the active locale at render time. */
+export function runStatusLabelText(status: RunStatus): string {
+  switch (status) {
+    case "installed":
+      return t("status.installed");
+    case "upgraded":
+      return t("status.upgraded");
+    case "already_ok":
+      return t("status.alreadyOk");
+    case "satisfied_by_newer":
+      return t("status.newer");
+    case "skipped_unmanaged":
+      return t("status.unmanaged");
+    case "failed":
+      return t("status.failed");
+    case "timed_out":
+      return t("status.timedOut");
+  }
+}
 
 /** One Requirement's outcome inside a Run. */
 export interface RequirementOutcome {
@@ -185,12 +212,20 @@ export type RunOutcome = "ok" | "with_notes" | "failed" | "cancelled";
 
 /** The four honest outcome labels (ticket 16) — text always carries the
  * meaning; the Notion status colors only reinforce it. */
-export const runOutcomeLabel: Record<RunOutcome, string> = {
-  ok: "Applied",
-  with_notes: "With notes",
-  cancelled: "Cancelled",
-  failed: "Failed",
-};
+/** Display text for a run outcome — a function (not a map) so the label
+ *  follows the active locale at render time. */
+export function runOutcomeLabelText(outcome: RunOutcome): string {
+  switch (outcome) {
+    case "ok":
+      return t("outcome.ok");
+    case "with_notes":
+      return t("outcome.notes");
+    case "cancelled":
+      return t("outcome.cancelled");
+    case "failed":
+      return t("outcome.failed");
+  }
+}
 
 /** One application of a Plan, persisted with per-Requirement outcomes. */
 export interface RunRecord {
@@ -271,9 +306,9 @@ export interface Settings {
   /** Quick Launch concurrency cap (ticket 38): how many Launch entries may
    * be in flight at once before the rest queue. */
   launch_concurrency: number;
-  /** The Quick Launch dock's visibility mode (tickets 49/50): "auto-hide"
+  /** The Quick Launch dock's visibility mode (tickets 49/50, spec 214): "auto-hide"
    * slides to a sliver when not hovered; "fixed" keeps the strip
-   * permanently reserved. */
+   * permanently reserved; "bezel" parks a small edge tab that opens on click. */
   dock_mode: string;
   /** The screen edge the Quick Launch dock attaches to by default (tickets
    * 49/50): "left" or "right". */
@@ -283,8 +318,9 @@ export interface Settings {
    *  toggle writes back. */
   dock_state: string;
   /** The docked strip's width as % of its monitor (ticket 128): 10–30,
-   *  default 18. Docked only — floating stays 340 — shared by fixed and
-   *  auto-hide, with per-monitor memory falling back here. */
+   *  default 18. Docked only — floating stays 340 — shared by fixed,
+   *  auto-hide, and bezel (fixed caps at 30, the overlays may run to 60),
+   *  with per-monitor memory falling back here. */
   dock_width_pct: number;
   /** The Quick Launch window's list density: "compact", "default", or
    *  "large" (default). Rescales the docked and floating lists only — the
@@ -659,7 +695,7 @@ export interface LogLocations {
  * frees up. The header renders it as the warning banner. */
 export interface QuickLaunchDockState {
   edge: "left" | "right";
-  mode: "auto-hide" | "fixed";
+  mode: "auto-hide" | "fixed" | "bezel";
   docked: boolean;
   blocked: string | null;
   left_eligible: boolean;
@@ -756,13 +792,21 @@ export interface PrerequisiteVerdict {
  *  loopback service, managed local, or the later cloud slice. */
 export type AiProvider = "off" | "existing-local" | "managed" | "cloud";
 
-/** How the AI provider choices read in Settings. */
-export const aiProviderLabel: Record<AiProvider, string> = {
-  off: "Off",
-  "existing-local": "Existing local service",
-  managed: "Managed local",
-  cloud: "Cloud provider (later)",
-};
+/** Display text for an AI provider choice — a function (not a map) so the
+ *  label follows the active locale at render time. "Off" reuses the shared
+ *  switch word. */
+export function aiProviderLabelText(provider: AiProvider): string {
+  switch (provider) {
+    case "off":
+      return t("common.off");
+    case "existing-local":
+      return t("ai.existing");
+    case "managed":
+      return t("ai.managedShort");
+    case "cloud":
+      return t("ai.cloudLater");
+  }
+}
 
 /** One reviewable Script draft (ADR-0030): data, never an executed thing.
  *  `executed` is always false — the shape marks what review means. */

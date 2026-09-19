@@ -1,10 +1,11 @@
 <script lang="ts">
   import Icon from "./Icon.svelte";
+  import { t } from "$lib/copy";
 
   let {
     value,
     placeholder,
-    ariaLabel = "Search the library",
+    ariaLabel = "",
     onchange,
   }: {
     value: string;
@@ -12,6 +13,10 @@
     ariaLabel?: string;
     onchange: (v: string) => void;
   } = $props();
+
+  // The shared fallback keeps every caller translated even where a page
+  // passes no name; callers that pass one own their wording.
+  const resolvedLabel = $derived(ariaLabel || t("common.searchLibrary"));
 
   let input: HTMLInputElement | undefined = $state();
 </script>
@@ -24,7 +29,7 @@
     type="search"
     name="library-search"
     autocomplete="off"
-    aria-label={ariaLabel}
+    aria-label={resolvedLabel}
     {placeholder}
     value={value}
     oninput={(e) => onchange((e.target as HTMLInputElement).value)}
@@ -33,8 +38,8 @@
     <button
       type="button"
       class="search__clear"
-      aria-label="Clear search"
-      title="Clear search"
+      aria-label={t("common.clearSearch")}
+      title={t("common.clearSearch")}
       onclick={() => {
         onchange("");
         input?.focus();

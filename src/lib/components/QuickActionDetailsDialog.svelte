@@ -6,6 +6,7 @@
   import Button from "./Button.svelte";
   import Icon from "./Icon.svelte";
   import QuickActionRunControl from "./QuickActionRunControl.svelte";
+  import { t } from "$lib/copy";
 
   let {
     open,
@@ -113,7 +114,7 @@
         return;
       }
       copied = true;
-      copyAnnouncement = "Command copied.";
+      copyAnnouncement = t("qdetails.commandCopied");
       clearTimeout(copyTimer);
       copyTimer = setTimeout(() => (copied = false), 1200);
     } catch (e) {
@@ -130,25 +131,25 @@
      Note-first (research 0004 rule 2, 0006:13–14): the unbounded why leads in
      full; the unbounded command collapses to a 3-line scent behind
      Show-command, so the narrow dock never grows a mono wall. -->
-<Dialog {open} title={action ? `About ${action.name}` : "More info"} onclose={onclose} width={480}>
+<Dialog {open} title={action ? t("dialog.aboutName").replace("{name}", action.name) : t("common.moreInfo")} onclose={onclose} width={480}>
   {#if action}
     {#if hasRenderedNote}
       <div class="note-block note-block--first">
-        <p class="note-block__label">Note</p>
+        <p class="note-block__label">{t("qdetails.note")}</p>
         <div class="note">{@html rendered}</div>
       </div>
     {:else}
       <p class="details__hint details__hint--first">
         {#if onedit}
-          No note — edit the action to add one.
+          {t("qdetails.noNoteEdit")}
         {:else}
-          No note.
+          {t("qdetails.noNote")}
         {/if}
       </p>
     {/if}
 
     <div class="cmd-block">
-      <p class="cmd-block__label">Command</p>
+      <p class="cmd-block__label">{t("qdetails.command")}</p>
       <pre
         id="qa-details-command"
         bind:this={commandEl}
@@ -163,47 +164,47 @@
             aria-expanded={showFullCommand}
             aria-controls="qa-details-command"
           >
-            {showFullCommand ? "Hide" : "Show command"}
+            {showFullCommand ? t("qdetails.hide") : t("qdetails.showCommand")}
           </Button>
         {/if}
         <Button
           variant="secondary"
           onclick={() => void copyCommand()}
-          aria-label={copied ? `Copied ${action.name} command` : `Copy ${action.name} command`}
+          aria-label={copied ? t("qdetails.copiedCmdName").replace("{name}", action.name) : t("qdetails.copyCmdName").replace("{name}", action.name)}
         >
           <Icon name={copied ? "check" : "copy"} size={13} />
-          {copied ? "Copied" : "Copy"}
+          {copied ? t("common.copied") : t("common.copy")}
         </Button>
       </div>
       <p class="sr-only" role="status" aria-live="polite">{copyAnnouncement}</p>
       {#if !hasRenderedNote && commandOverflows && !showFullCommand}
-        <p class="details__hint">Find the full command in the main app.</p>
+        <p class="details__hint">{t("qdetails.fullCmdHint")}</p>
       {/if}
     </div>
 
     <dl class="details">
       <div class="details__row">
-        <dt>Shell</dt>
+        <dt>{t("qdetails.shell")}</dt>
         <dd class="mono">{quickActionShellLabel[action.shell ?? "powershell"]}</dd>
       </div>
       {#if action.cwd}
         <div class="details__row">
-          <dt>Working directory</dt>
+          <dt>{t("qdetails.cwd")}</dt>
           <dd class="mono">{action.cwd}</dd>
         </div>
       {/if}
       {#if action.stoppable}
         <div class="details__row">
-          <dt>Stop</dt>
-          <dd class="mono">{action.stop_command ?? "kills the process tree"}</dd>
+          <dt>{t("action.stop")}</dt>
+          <dd class="mono">{action.stop_command ?? t("qdetails.killTree")}</dd>
         </div>
       {/if}
     </dl>
 
     <div class="details__actions">
-      <Button variant="secondary" onclick={onclose}>Close</Button>
+      <Button variant="secondary" onclick={onclose}>{t("common.close")}</Button>
       {#if onedit}
-        <Button variant="secondary" onclick={() => onedit(action)}>Edit</Button>
+        <Button variant="secondary" onclick={() => onedit(action)}>{t("common.edit")}</Button>
       {/if}
       <QuickActionRunControl
         name={action.name}

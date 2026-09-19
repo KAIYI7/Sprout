@@ -1,6 +1,6 @@
 # One design system and disclosure rules govern every screen
 
-> Latest status: amended 2026-09-13 for spec-181 round delivery (two-view dialog shipped in 183, clarify handoff in 183–184); selective guidance + dock visibility implementation still pending in 167–169 under spec 166. See the final amendments; earlier text is preserved.
+> Latest status: amended 2026-09-13 for spec-181 round delivery (two-view dialog shipped in 183, clarify handoff in 183–184); selective guidance + dock visibility implementation still pending in 167–169 under spec 166; amended 2026-09-17 for copy-voice revalidation (noun titles + Discord-tone descriptions per research 0027). See the final amendments; earlier text is preserved.
 
 > Status: amended 2026-09-05 — original decision text preserved; see the executable-source audit amendment for current behavior and implementation gaps.
 
@@ -48,3 +48,23 @@ Continue / Draft anyway / Dismiss. No new component, token, or dimension
 size source untouched); 167 copy rules reconciled with no removed hint
 re-added. Research 0006 and 0019 carry the dated decision updates. Original
 plus 2026-09-05/08/09/12 text untouched.
+
+## Amendment — 2026-09-17 (copy voice: noun titles + Discord-tone descriptions)
+
+At the user's direction, the spec-214 voice rule recorded for ticket 219
+(2nd person + verb-led labels) is superseded for Settings and same-category
+copy, on first-hand Discord evidence (research 0027):
+
+- Titles are concise nouns ("Theme", not "Pick a theme"; "Window frame",
+  not "Use a window frame") — the adjacent control already carries the verb
+  (0014 rule 3 label-length; 0004 rule 4; 0027 findings 1–2). Applied to every
+  Settings label and same-category labels elsewhere.
+- Descriptions follow Discord settings tone (0027 findings 2–3): terse
+  neutral statements — what the setting does first, then constraints,
+  defaults, and consequences; no second-person lead. The 0017 preservation
+  duty (constraints, defaults, validation, non-obvious consequences) and the
+  140-character hint cap stand unchanged, as do ticket 33's bans.
+- Action tooltips on icon buttons stay verb-led (the tooltip is the control's
+  verb — 0004 rule 4); presence states and the seam reason stay
+  wording-locked (ADR-0033, tests). Applied to `src/lib/copy/en.json` with
+  keys and wiring untouched, so translation remains a file swap.

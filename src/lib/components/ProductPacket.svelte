@@ -3,6 +3,7 @@
   import { envActionLabel } from "$lib/types";
   import PacketCard from "./PacketCard.svelte";
   import type { MenuRequest } from "./ContextMenu.svelte";
+  import { t, tCount } from "$lib/copy";
 
   let {
     product,
@@ -26,9 +27,9 @@
 
 <PacketCard
   name={product.name}
-  cardLabel={`More info for ${product.name}`}
+  cardLabel={t("packet.moreInfoFor").replace("{name}", product.name)}
   badge={{
-    text: product.winget_id ? "winget" : "custom step",
+    text: product.winget_id ? "winget" : t("packet.customStep"),
     tone: product.winget_id ? "accent" : "warm",
     upper: true,
   }}
@@ -39,17 +40,17 @@
   {onmenu}
 >
   {#if product.winget_id}
-    <p class="packet__id" title="winget ID">{product.winget_id}</p>
+    <p class="packet__id" title={t("packet.wingetId")}>{product.winget_id}</p>
   {:else}
-    <p class="packet__id packet__id--custom">Custom install step</p>
+    <p class="packet__id packet__id--custom">{t("packet.customInstall")}</p>
   {/if}
 
   <div class="packet__tags">
     {#if product.install_location_hint}
-      <span class="tag tag--hint" title="Install location hint">loc: {product.install_location_hint}</span>
+      <span class="tag tag--hint" title={t("packet.locHint")}>loc: {product.install_location_hint}</span>
     {/if}
     {#if product.install_dir}
-      <span class="tag tag--hint" title="Install directory override">dir: {product.install_dir}</span>
+      <span class="tag tag--hint" title={t("packet.dirOverride")}>dir: {product.install_dir}</span>
     {/if}
     {#each visibleEnv as item (item.name + item.action)}
       <span class="tag" title="{envActionLabel[item.action]} {item.name} = {item.value}">
@@ -57,7 +58,7 @@
       </span>
     {/each}
     {#if extraEnv > 0}
-      <span class="tag tag--more">+{extraEnv} more</span>
+      <span class="tag tag--more">{tCount("packet.moreExtra", extraEnv)}</span>
     {/if}
   </div>
 </PacketCard>

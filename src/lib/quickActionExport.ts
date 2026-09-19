@@ -6,6 +6,9 @@
  * file is. One backup document format either way: the zip holds the same
  * envelope as `action.json` plus the raw bytes under `files/`.
  */
+
+import { t } from "./copy";
+
 export interface ActionExportTarget {
   defaultPath: string;
   filters: { name: string; extensions: string[] }[];
@@ -18,11 +21,11 @@ export function actionExportTarget(
   if (fileCount > 0) {
     return {
       defaultPath: `${actionName}.zip`,
-      filters: [{ name: "Sprout action bundle", extensions: ["zip"] }],
+      filters: [{ name: t("files.actionBundle"), extensions: ["zip"] }],
     };
   }
   return {
     defaultPath: `${actionName}.json`,
-    filters: [{ name: "Sprout backup", extensions: ["json"] }],
+    filters: [{ name: t("files.actionBackup"), extensions: ["json"] }],
   };
 }

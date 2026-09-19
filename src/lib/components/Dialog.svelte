@@ -5,6 +5,7 @@
   import Icon from "./Icon.svelte";
   import { dialogSubmitAction } from "$lib/dialogSubmit";
   import { animation } from "$lib/animation.svelte";
+  import { t } from "$lib/copy";
 
   let {
     open,
@@ -37,8 +38,8 @@
       lastFocus = document.activeElement as HTMLElement;
       if (!dialog.open) dialog.showModal();
       focusFirst();
-      const t = setTimeout(() => focusFirst(), 30);
-      return () => clearTimeout(t);
+      const focusTimer = setTimeout(() => focusFirst(), 30);
+      return () => clearTimeout(focusTimer);
     }
     if (!open && dialog?.open) {
       dialog.close();
@@ -160,7 +161,7 @@
   >
     <header class="dialog__head">
       <h2 id={titleId} class="dialog__title">{title}</h2>
-      <button class="icon-btn" onclick={onclose} aria-label="Close dialog">
+      <button class="icon-btn" onclick={onclose} aria-label={t("dialog.close")}>
         <Icon name="x" size={15} />
       </button>
     </header>

@@ -2,6 +2,7 @@
   import type { PresetRecord } from "$lib/types";
   import PacketCard from "./PacketCard.svelte";
   import type { MenuRequest } from "./ContextMenu.svelte";
+  import { t, tCount } from "$lib/copy";
 
   let {
     record,
@@ -28,8 +29,8 @@
 
 <PacketCard
   name={record.name}
-  cardLabel={`Actions for ${record.name}`}
-  badge={{ text: `v${record.version}`, title: "Preset version" }}
+  cardLabel={t("packet.actionsFor").replace("{name}", record.name)}
+  badge={{ text: `v${record.version}`, title: t("packet.presetVersion") }}
   {index}
   {animate}
   {expanded}
@@ -39,29 +40,29 @@
 
   <div class="packet__tags">
     <span class="tag">
-      {requirements.length} requirement{requirements.length === 1 ? "" : "s"}
+      {requirements.length === 1 ? tCount("packet.reqOne", requirements.length) : tCount("packet.reqMany", requirements.length)}
     </span>
     {#each visibleProducts as product (product)}
       <span class="tag tag--product">{product}</span>
     {/each}
     {#if extraProducts > 0}
-      <span class="tag tag--more">+{extraProducts} more</span>
+      <span class="tag tag--more">{tCount("packet.moreExtra", extraProducts)}</span>
     {/if}
     {#if record.imported}
-      <span class="tag tag--imported" title="Imported from a .sprout.json — stored as authored, fork to edit">
-        imported
+      <span class="tag tag--imported" title={t("packet.importedTitle")}>
+        {t("packet.imported")}
       </span>
     {/if}
     {#if envCount > 0}
-      <span class="tag tag--env" title="Env wiring entries">env: {envCount}</span>
+      <span class="tag tag--env" title={t("packet.envTitle")}>{t("packet.envCount").replace("{count}", String(envCount))}</span>
     {/if}
     {#if verifyCount > 0}
-      <span class="tag tag--env" title="Verify commands">verify: {verifyCount}</span>
+      <span class="tag tag--env" title={t("packet.verifyTitle")}>{t("packet.verifyCount").replace("{count}", String(verifyCount))}</span>
     {/if}
   </div>
 
   {#if record.author}
-    <p class="packet__author">by {record.author}</p>
+    <p class="packet__author">{t("packet.byAuthor").replace("{author}", record.author)}</p>
   {/if}
 </PacketCard>
 

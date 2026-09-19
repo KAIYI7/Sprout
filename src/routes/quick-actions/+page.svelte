@@ -60,6 +60,7 @@
   import { hasNote } from "$lib/noteFormat";
   import { actionExportTarget } from "$lib/quickActionExport";
   import { goAiSetup } from "$lib/aiSetupPointer";
+  import { t, tCount } from "$lib/copy";
 
   let quickActions = $state<QuickAction[]>([]);
   let loading = $state(true);
@@ -114,7 +115,6 @@
   // collection key and feedback channels.
   const groups = createCollectionGroups({
     collection: "action",
-    noun: "actions",
     host: {
       begin() {
         error = "";
@@ -201,7 +201,7 @@
     try {
       const outcome = await runQuickAction(action.id);
       if (outcome.outcome === "started") {
-        flash(`${action.name} started.`);
+        flash(t("actions.startedFlash").replace("{name}", action.name));
       } else {
         warnAction = action;
         warnReport = {
@@ -262,18 +262,17 @@
   /** Plain verdict lines for the warn dialog — constraints and outcomes
    *  only, no tutorials. */
   function checkVerdict(report: { timed_out: boolean; exit_code: number | null }): string {
-    if (report.timed_out) return "Check timed out — the action did not run.";
-    if (report.exit_code === 0) return "Check passed (exit 0).";
-    if (report.exit_code === null) return "Check could not start — the action did not run.";
-    return `Check failed (exit ${report.exit_code}) — the action did not run.`;
+    if (report.timed_out) return t("actions.checkTimeout");
+    if (report.exit_code === 0) return t("actions.checkPassed");
+    if (report.exit_code === null) return t("actions.checkNoStart");
+    return t("actions.checkFailed").replace("{code}", String(report.exit_code));
   }
 
   function fixVerdict(result: PreFixResult): string {
-    if (result.timed_out) return "Fix timed out.";
-    if (result.exit_code === 0)
-      return "Fix finished (exit 0). Run the action again to retry the check.";
-    if (result.exit_code === null) return "Fix could not start.";
-    return `Fix finished (exit ${result.exit_code}).`;
+    if (result.timed_out) return t("actions.fixTimeout");
+    if (result.exit_code === 0) return t("actions.fixDone");
+    if (result.exit_code === null) return t("actions.fixNoStart");
+    return t("actions.fixDoneCode").replace("{code}", String(result.exit_code));
   }
 
   /** Stop via the shared store's lifecycle (tickets 62 & 92): Stopping is
@@ -320,7 +319,7 @@
     error = "";
     try {
       await deleteQuickAction(action.id);
-      flash(`${action.name} removed.`);
+      flash(t("actions.removedFlash").replace("{name}", action.name));
       await load();
     } catch (e) {
       console.error(e);
@@ -355,8 +354,8 @@
       await updateQuickAction({ ...action, show_in_dock: visible });
       flash(
         visible
-          ? `${action.name} will show in the dock.`
-          : `${action.name} hidden from the dock — still here and runnable.`
+          ? t("launch.dockShown").replace("{name}", action.name)
+          : t("launch.dockHidden").replace("{name}", action.name),
       );
       await load();
     } catch (e) {
@@ -385,7 +384,7 @@
     }
     const target = actionExportTarget(action.name, fileCount);
     const path = await saveDialog({
-      title: `Export ${action.name} as backup`,
+      title: t("actions.exportTitle").replace("{name}", action.name),
       defaultPath: target.defaultPath,
       filters: target.filters,
     });
@@ -393,7 +392,17 @@
     try {
       await exportQuickAction(path, action.id);
       flash(
-        `Exported ${action.name}${fileCount > 0 ? `, including ${fileCount} attached file${fileCount === 1 ? "" : "s"}` : ""}.`
+        t("actions.exportedFlash")
+          .replace("{name}", action.name)
+          .replace(
+            "{files}",
+            fileCount > 0
+              ? t(fileCount === 1 ? "actions.exportedFilesOne" : "actions.exportedFilesMany").replace(
+                  "{count}",
+                  String(fileCount),
+                )
+              : "",
+          ),
       );
     } catch (e) {
       console.error(e);
@@ -406,7 +415,10 @@
     error = "";
     try {
       const result = await downloadSingleFile(fileId, filename);
-      if (result === "saved") flash(`Downloaded ${filename} from ${action.name}.`);
+      if (result === "saved")
+        flash(
+          t("actions.downloadedOne").replace("{file}", filename).replace("{name}", action.name),
+        );
     } catch (e) {
       console.error(e);
       error = String(e);
@@ -418,7 +430,7 @@
     error = "";
     try {
       const result = await downloadFilesZip(action.id, action.name);
-      if (result === "saved") flash(`Downloaded all files from ${action.name}.`);
+      if (result === "saved") flash(t("actions.downloadedAll").replace("{name}", action.name));
     } catch (e) {
       console.error(e);
       error = String(e);
@@ -427,9 +439,8 @@
 
   const featureItems = $derived([
     {
-      label: "Groups",
-      description:
-        "Bucket actions into named sections you order yourself. Groups and assignments are kept while off.",
+      label: t("features.groupsLabel"),
+      description: t("features.groupsDesc").replace("{noun}", t("groups.noun.actions")),
       value: groups.enabled,
       onchange: () => groups.toggle(),
     },
@@ -487,33 +498,33 @@
     const index = slice.indexOf(action);
     const items: ContextMenuItem[] = [
       {
-        label: "Edit",
+        label: t("common.edit"),
         icon: "pencil",
         onselect: () => openEdit(action),
       },
     ];
     if (groups.enabled) {
       items.push({
-        label: "Move to group",
+        label: t("menu.moveToGroup"),
         icon: "folder",
         children: groups.moveToGroupChildren(action, action.name),
       });
     }
     items.push({
-      label: (action.show_in_dock ?? true) ? "Hide from dock" : "Show in dock",
+      label: (action.show_in_dock ?? true) ? t("menu.hideFromDock") : t("common.showInDock"),
       icon: (action.show_in_dock ?? true) ? "eye-off" : "eye",
       onselect: () => toggleDockVisibility(action),
     });
     // Single-action Export lands here, between the visibility toggle and
     // the Move verbs (pinned row order across 159/160).
     items.push({
-      label: "Export",
+      label: t("menu.export"),
       icon: "export",
       onselect: () => exportViaDialog(action),
     });
     if (files.length > 0) {
       items.push({
-        label: "Download",
+        label: t("menu.download"),
         icon: "download",
         children: [
           ...files.map((file) => ({
@@ -524,7 +535,7 @@
           ...(files.length >= 2
             ? [
                 {
-                  label: "Download all (.zip)",
+                  label: t("menu.downloadAll"),
                   icon: "download" as const,
                   onselect: () => downloadRowZip(action),
                 },
@@ -535,7 +546,7 @@
     }
     items.push(
       {
-        label: "Move up",
+        label: t("menu.moveUp"),
         icon: "chevron-up",
         // Filtered neighbors are not saved neighbors: refuse to reorder
         // through them rather than write a surprising order.
@@ -543,14 +554,14 @@
         onselect: () => move(action.id, quickActions.indexOf(slice[index - 1])),
       },
       {
-        label: "Move down",
+        label: t("menu.moveDown"),
         icon: "chevron-down",
         disabled: index >= slice.length - 1 || reorderBlocked,
         onselect: () => move(action.id, quickActions.indexOf(slice[index + 1])),
       },
       { label: "", separator: true, onselect: () => {} },
       {
-        label: "Remove",
+        label: t("common.remove"),
         icon: "trash",
         danger: true,
         onselect: () => (deleting = action),
@@ -559,7 +570,7 @@
     menu = {
       actionId: action.id,
       open: true,
-      label: `Actions for ${action.name}`,
+      label: t("packet.actionsFor").replace("{name}", action.name),
       anchor,
       focusFirst: viaKeyboard,
       returnTo: anchor,
@@ -585,7 +596,7 @@
       ? {
           ...groupMenu,
           items: groupMenu.items.map((item) =>
-            item.label === "Move up" || item.label === "Move down"
+            item.label === t("menu.moveUp") || item.label === t("menu.moveDown")
               ? { ...item, disabled: true }
               : item
           ),
@@ -632,7 +643,7 @@
 </script>
 
 <svelte:head>
-  <title>Quick Actions — Sprout</title>
+  <title>{t("nav.actions")} — Sprout</title>
 </svelte:head>
 
 {#snippet actionRow(action: QuickAction)}
@@ -645,7 +656,7 @@
     class="rack__row"
     role="button"
     tabindex="0"
-    aria-label={`About ${action.name}`}
+    aria-label={t("dialog.aboutName").replace("{name}", action.name)}
     onclick={() => openDetails(action)}
     onkeydown={(e) => {
       if (e.key === "Enter" || e.key === " ") {
@@ -659,17 +670,17 @@
     </span>
     <span class="rack__name">{action.name}</span>
     {#if hasNote(action.note)}
-      <span class="rack__note" aria-label="Has note" title="Has note">
+      <span class="rack__note" aria-label={t("common.hasNote")} title={t("common.hasNote")}>
         <Icon name="note" size={12} />
       </span>
     {/if}
-    <span class="rack__shell" title={`Runs under ${quickActionShellLabel[action.shell ?? "powershell"]}`}>{quickActionShellLabel[action.shell ?? "powershell"]}</span>
+    <span class="rack__shell" title={t("actions.runsUnder").replace("{shell}", quickActionShellLabel[action.shell ?? "powershell"])}>{quickActionShellLabel[action.shell ?? "powershell"]}</span>
     {#if !isDockVisible(action)}
       <!-- The dock-hidden annotation (ADR-0028): informational only — the
            action stays fully runnable here; only the dock filters it out. -->
-      <span class="rack__dock" title="Hidden from dock">
+      <span class="rack__dock" title={t("common.hiddenFromDock")}>
         <Icon name="eye-off" size={12} />
-        <span>Hidden from dock</span>
+        <span>{t("common.hiddenFromDock")}</span>
       </span>
     {/if}
     <span class="rack__command" title={action.command}>
@@ -693,7 +704,7 @@
     <span class="rack__menu" onclick={(e) => e.stopPropagation()} onkeydown={(e) => e.stopPropagation()} role="presentation">
       <IconButton
         icon="dots"
-        label={`Actions for ${action.name}`}
+        label={t("packet.actionsFor").replace("{name}", action.name)}
         quiet
         data-ctx-trigger
         onclick={(e) =>
@@ -708,24 +719,23 @@
 {/snippet}
 
 <section class="qa" aria-labelledby="qa-title">
-  <PageHeader titleId="qa-title" title="Quick Actions">
+  <PageHeader titleId="qa-title" title={t("nav.actions")}>
     {#snippet actions()}
       <Button onclick={openAdd} disabled={busy}>
         <Icon name="plus" size={15} />
-        Add
+        {t("common.add")}
       </Button>
     {/snippet}
     {#snippet subtitle()}
-      {quickActions.length} {quickActions.length === 1 ? "action" : "actions"}.
-      Run each one right here or from the Quick Launch window — hidden, as
-      the current user.
+      {quickActions.length === 1 ? tCount("actions.countOne", quickActions.length) : tCount("actions.countMany", quickActions.length)}
+      {t("actions.subBody")}
     {/snippet}
     {#snippet toolbar()}
       <div class="toolbar">
         <SearchInput
           value={filter}
-          placeholder="Search name or command…"
-          ariaLabel="Search quick actions"
+          placeholder={t("actions.searchPh")}
+          ariaLabel={t("actions.searchLabel")}
           onchange={(v) => (filter = v)}
         />
         {#if showDockFilter}
@@ -737,7 +747,7 @@
       </div>
     {/snippet}
     {#snippet features()}
-      <PageFeaturesButton label="Quick Actions features" items={featureItems} />
+      <PageFeaturesButton label={t("actions.featuresLabel")} items={featureItems} />
     {/snippet}
   </PageHeader>
 
@@ -750,51 +760,49 @@
 
   {#if reorderBlocked && quickActions.length > 0}
     <p class="reorder-note">
-      Reordering is paused while filters are active.
+      {t("launch.reorderPaused")}
       <button
         type="button"
         class="reorder-note__clear"
         onclick={clearFilters}
       >
-        Clear filters
+        {t("common.clearFilters")}
       </button>
-      to reorder.
+      {t("launch.reorderTail")}
     </p>
   {/if}
 
   {#if loading && quickActions.length === 0}
     <p class="sifting" aria-live="polite">Loading…</p>
   {:else if loadFailed}
-    <Notice tone="error">Could not load the Quick Actions list.</Notice>
+    <Notice tone="error">{t("actions.loadFail")}</Notice>
   {:else if quickActions.length === 0}
-    <EmptyState icon="terminal" title="No quick actions yet">
+    <EmptyState icon="terminal" title={t("actions.noActions")}>
       <p>
-        Press <strong>Add</strong> to write a named PowerShell, cmd, or Python 3 command
-        with an optional working directory. Run each action right here or from
-        the Quick Launch window — hidden, as the current user, with no status UI.
+        {t("common.emptyPress")}<strong>{t("common.add")}</strong>{t("actions.emptyBodyB")}
       </p>
     </EmptyState>
   {:else if matchedCount === 0 && filter.trim() !== ""}
-    <EmptyState icon="search" title={`Nothing matches “${filter.trim()}”`}>
-      <p>Search looks at action names and their commands.</p>
+    <EmptyState icon="search" title={t("common.noMatchFor").replace("{query}", filter.trim())}>
+      <p>{t("actions.searchLooks")}</p>
       {#if dockVisibility !== "all"}
         <div class="empty-cta">
           <Button variant="secondary" onclick={() => (dockVisibility = "all")}>
-            Show all
+            {t("common.showAll")}
           </Button>
         </div>
       {/if}
     </EmptyState>
   {:else if matchedCount === 0}
-    <EmptyState icon="search" title="No actions match this filter.">
+    <EmptyState icon="search" title={t("actions.noFilterTitle")}>
       {#if dockVisibility === "hidden"}
-        <p>No actions are hidden from the dock right now.</p>
+        <p>{t("actions.noHiddenNow")}</p>
       {:else}
-        <p>Every action is hidden from the dock.</p>
+        <p>{t("actions.everyHidden")}</p>
       {/if}
       <div class="empty-cta">
         <Button variant="secondary" onclick={() => (dockVisibility = "all")}>
-          Show all
+          {t("common.showAll")}
         </Button>
       </div>
     </EmptyState>
@@ -817,7 +825,7 @@
         {#snippet actions()}
           <IconButton
             icon="dots"
-            label={`Actions for group ${section.group.name}`}
+            label={t("groups.menuLabel").replace("{name}", section.group.name)}
             quiet
             data-ctx-trigger
             onclick={(e) =>
@@ -834,7 +842,7 @@
           {/each}
           {#if section.rows.length === 0}
             <li class="rack__hint">
-              No actions here yet — use an action's ⋯ menu to move one in.
+              {t("actions.emptyGroupHint")}
             </li>
           {/if}
         </ul>
@@ -851,29 +859,27 @@
 
 <ConfirmDialog
   open={deleting !== null}
-  title="Remove quick action?"
-  confirmLabel="Remove"
+  title={t("actions.removeTitle")}
+  confirmLabel={t("common.remove")}
   danger
   onconfirm={remove}
   oncancel={() => (deleting = null)}
 >
   <p>
-    <strong>{deleting?.name}</strong> will no longer run from this page or
-    the Quick Launch window. The script is deleted.
+    <strong>{deleting?.name}</strong>{t("actions.removeBodyTail")}
   </p>
 </ConfirmDialog>
 
 <ConfirmDialog
   open={groups.removing !== null}
-  title="Remove group?"
-  confirmLabel="Remove"
+  title={t("dialog.removeGroupTitle")}
+  confirmLabel={t("common.remove")}
   danger
   onconfirm={() => groups.removeGroup()}
   oncancel={() => groups.cancelRemove()}
 >
   <p>
-    <strong>{groups.removing?.name}</strong> will be deleted. Its actions will
-    not be — they return to the ungrouped list.
+    <strong>{groups.removing?.name}</strong>{t("dialog.removeGroupBody").replace("{noun}", t("groups.noun.actions"))}
   </p>
 </ConfirmDialog>
 
@@ -883,25 +889,25 @@
      close it like Cancel — nothing runs unless its button says so. -->
 <Dialog
   open={warnReport !== null}
-  title={warnAction ? `${warnAction.name}: check failed` : "Check failed"}
+  title={warnAction ? t("actions.warnTitleFor").replace("{name}", warnAction.name) : t("actions.warnTitle")}
   onclose={closeWarn}
   width={560}
 >
   {#if warnReport}
     <div class="warn">
       <Notice tone="warn">
-        The pre-action check failed, so the action did not run.
+        {t("actions.warnBody")}
         {#if warnReport.has_fix}
-          Run the fix, run anyway, or cancel.
+          {t("actions.warnFixHint")}
         {:else}
-          Run anyway, or cancel.
+          {t("actions.warnNoFixHint")}
         {/if}
       </Notice>
       <p class="warn__verdict" role="status">{checkVerdict(warnReport)}</p>
       {#if warnReport.output.trim()}
         <pre class="warn__output">{warnReport.output}</pre>
       {:else}
-        <p class="warn__empty">The check produced no output.</p>
+        <p class="warn__empty">{t("actions.warnNoOutput")}</p>
       {/if}
       {#if warnFixError}
         <Notice tone="error">{warnFixError}</Notice>
@@ -919,18 +925,18 @@
             disabled={warnFixRunning}
             onclick={() => void runWarnFix()}
           >
-            {warnFixRunning ? "Running fix…" : "Run fix"}
+            {warnFixRunning ? t("common.busy.runningFix") : t("actions.warnFixBtn")}
           </Button>
         {/if}
         <Button disabled={warnFixRunning} onclick={() => void runAnyway()}>
-          Run anyway
+          {t("actions.warnAnyway")}
         </Button>
         <Button
           variant="secondary"
           disabled={warnFixRunning}
           onclick={closeWarn}
         >
-          Cancel
+          {t("common.cancel")}
         </Button>
       </div>
     </div>
@@ -943,7 +949,7 @@
   error={groups.nameError}
   saving={groups.savingName}
   inputId="group-name"
-  placeholder="e.g. Docker maintenance"
+  placeholder={t("actions.groupEx")}
   ondraft={(v) => (groups.nameDraft = v)}
   onsubmit={() => groups.submitName()}
   onclose={() => groups.cancelNaming()}

@@ -10,7 +10,8 @@
     RunRecord,
     RunStatus,
   } from "$lib/types";
-  import { actionLabel, policyLabel, runStatusLabel } from "$lib/types";
+  import { actionLabelText, policyLabelText, runStatusLabelText } from "$lib/types";
+  import { t, tCount } from "$lib/copy";
   import { cancelRun, computePlan, createPreset, getActiveRun, getRun, getSettings, listPresets, quickInstallPlan, readRunProgress, startRun } from "$lib/api";
   import { goto } from "$app/navigation";
   import { page } from "$app/state";
@@ -131,12 +132,12 @@
         if (missing.length > 0) {
           notice =
             missing.length === 1
-              ? `“${missing[0]}” is no longer in your library; ${
-                  found.length ? "the rest of the selection is still planned" : "there is nothing to plan"
-                }.`
-              : `${missing.length} presets in this link are no longer in your library; ${
-                  found.length ? "the rest of the selection is still planned" : "there is nothing to plan"
-                }.`;
+              ? t("plan.linkMissingOne")
+                  .replace("{name}", missing[0])
+                  .replace("{rest}", found.length ? t("plan.linkRestSome") : t("plan.linkRestNone"))
+              : t("plan.linkMissingMany")
+                  .replace("{count}", String(missing.length))
+                  .replace("{rest}", found.length ? t("plan.linkRestSome") : t("plan.linkRestNone"));
         }
         selected = found.map((p) => p.id);
         if (found.length > 0) {
@@ -363,12 +364,12 @@
     return groups;
   });
 
-  const groupOrder: { id: PlanGroupId; title: string }[] = [
-    { id: "ready", title: "Ready to apply" },
-    { id: "already", title: "Already good" },
-    { id: "decide", title: "Needs your decision" },
-    { id: "attention", title: "Needs attention" },
-  ];
+  const groupOrder: { id: PlanGroupId; title: string }[] = $derived([
+    { id: "ready", title: t("plan.groupReady") },
+    { id: "already", title: t("plan.groupAlready") },
+    { id: "decide", title: t("plan.groupDecide") },
+    { id: "attention", title: t("plan.groupAttention") },
+  ]);
 
   const runGroups = $derived.by(() => {
     if (!runResult) return null;
@@ -517,25 +518,22 @@
         runResult = record;
         syncUrl();
         if (!record) {
-          error =
-            "The run finished but left no results — check the run folder under %LOCALAPPDATA%\\Sprout\\logs\\runs.";
+          error = t("run.noResults");
         }
-      } else {
-        const active = await getActiveRun();
-        if (active?.run_id !== runId) {
-          stopPolling();
-          running = false;
-          error =
-            "The run stopped without reporting results — it may have been killed. Check the run folder under %LOCALAPPDATA%\\Sprout\\logs\\runs.";
-          syncUrl();
-        } else if (Date.now() - pollStarted > maxWait) {
-          stopPolling();
-          running = false;
-          error =
-            "The run did not report back in time — if a Windows permission prompt appeared and was declined, click Run again; otherwise check the run folder under %LOCALAPPDATA%\\Sprout\\logs\\runs.";
-          syncUrl();
+        } else {
+          const active = await getActiveRun();
+          if (active?.run_id !== runId) {
+            stopPolling();
+            running = false;
+            error = t("plan.diedSilent");
+            syncUrl();
+          } else if (Date.now() - pollStarted > maxWait) {
+            stopPolling();
+            running = false;
+            error = t("plan.timeoutPrompt");
+            syncUrl();
+          }
         }
-      }
     } catch (e) {
       stopPolling();
       running = false;
@@ -611,34 +609,36 @@
 
   /** The check-then-act live vocabulary (ticket 20): a row visibly goes
    * "Checking…" then "Installing…" / "Upgrading…", or straight to its
-   * verdict when the check itself was the answer. */
+   * verdict when the check itself was the answer. Action words come from the
+   * backend events; display text resolves per call so a language switch
+   * lands live. */
   function liveActingLabel(action: string): string {
     switch (action) {
       case "install":
-        return "Installing…";
+        return t("plan.actingInstall");
       case "upgrade":
-        return "Upgrading…";
+        return t("plan.actingUpgrade");
       case "already ok":
-        return "Already good — skipped";
+        return t("plan.actingOk");
       case "satisfied by newer":
-        return "Satisfied by newer — skipped";
+        return t("plan.actingNewer");
       case "skip":
-        return "Skipped — unmanaged";
+        return t("plan.actingSkip");
       default:
-        return "Checking…";
+        return t("common.busy.checking");
     }
   }
 
   function liveStatusLabel(status: RunStatus): string {
     switch (status) {
       case "already_ok":
-        return "Already good — skipped";
+        return t("plan.actingOk");
       case "satisfied_by_newer":
-        return "Satisfied by newer — skipped";
+        return t("plan.actingNewer");
       case "skipped_unmanaged":
-        return "Skipped — unmanaged";
+        return t("plan.actingSkip");
       default:
-        return runStatusLabel[status];
+        return runStatusLabelText(status);
     }
   }
 
@@ -723,7 +723,7 @@
     try {
       await createPreset(record);
       saveOpen = false;
-      flash(`Composed ${record.name} — now in your library.`);
+      flash(t("plan.composedFlash").replace("{name}", record.name));
       await load();
     } catch (e) {
       saveError = String(e);
@@ -743,7 +743,7 @@
   }
 
   function actionBadge(action: PlannedAction): string {
-    return actionLabel[action.kind];
+    return actionLabelText(action.kind);
   }
 
   function actionTone(action: PlannedAction): Tone {
@@ -774,10 +774,10 @@
   <li class="plan__row" class:conflict={entry.conflict} class:removed={removedOnly} class:out={!removedOnly && !inRun}>
     <div class="plan__toggle">
       {#if removedOnly}
-        <span class="plan__decision plan__decision--removed">removed</span>
+        <span class="plan__decision plan__decision--removed">{t("plan.removedBadge")}</span>
       {:else if entry.conflict}
         <span class="plan__decision" class:undecided={entryChoice === undefined}>
-          {entryChoice === undefined ? "needs a decision" : entryChoice === "exclude" ? "excluded" : "included"}
+          {entryChoice === undefined ? t("plan.needsDecision") : entryChoice === "exclude" ? t("plan.excluded") : t("plan.included")}
         </span>
       {:else}
         <label class="plan__check">
@@ -786,7 +786,7 @@
             checked={included[entry.product_id]}
             onchange={() => (included[entry.product_id] = !included[entry.product_id])}
           />
-          <span class="plan__check-label">in run</span>
+          <span class="plan__check-label">{t("plan.inRun")}</span>
         </label>
       {/if}
     </div>
@@ -795,41 +795,39 @@
       {#if removedOnly}
         <div class="plan__headline">
           <span class="plan__name">{entry.product_name}</span>
-          <Badge tone="warn">removed from library</Badge>
+          <Badge tone="warn">{t("plan.removedFromLibrary")}</Badge>
         </div>
         <p class="plan__detail">
-          This product is no longer in the library, so it is excluded from this run. Re-add it
-          to the library and the requirement becomes live again.
+          {t("plan.removedDetail")}
         </p>
         <p class="plan__sources">
-          from {entry.sources.map((s) => `“${s}”`).join(" + ")}
+          {t("plan.fromSources").replace("{items}", entry.sources.map((s) => `“${s}”`).join(" + "))}
         </p>
       {:else}
         <div class="plan__headline">
           <span class="plan__name">{entry.product_name}</span>
-          <span class="tag tag--policy">{policyLabel[candidate.requirement.version_policy.kind]}</span>
+          <span class="tag tag--policy">{policyLabelText(candidate.requirement.version_policy.kind)}</span>
           <Badge tone={actionTone(candidate.action)}>{actionBadge(candidate.action)}</Badge>
         </div>
         <p class="plan__detail">{candidate.detail}</p>
         {#if candidate.requirement.product.install_dir ?? installDir}
           <p class="plan__target">
-            install to {candidate.requirement.product.install_dir ?? installDir}
+            {t("plan.installTo").replace("{dir}", candidate.requirement.product.install_dir ?? installDir)}
           </p>
         {/if}
         <p class="plan__sources">
-          from {entry.sources.map((s) => `“${s}”`).join(" + ")}
+          {t("plan.fromSources").replace("{items}", entry.sources.map((s) => `“${s}”`).join(" + "))}
         </p>
 
         {#if entry.unresolved}
           <p class="plan__note">
-            One declaration references a product removed from the library; it is excluded and
-            the others run.
+            {t("plan.unresolvedNote")}
           </p>
         {/if}
 
         {#if entry.conflict}
           <fieldset class="conflict">
-            <legend class="conflict__legend">The presets disagree on this product. Pick one policy, or exclude it:</legend>
+            <legend class="conflict__legend">{t("plan.conflictLegend")}</legend>
             {#each entry.candidates as cand, i (i)}
               <label class="conflict__option">
                 <input
@@ -842,7 +840,7 @@
                 <span class="conflict__body">
                   <span class="conflict__head">
                     <Badge tone={actionTone(cand.action)}>{actionBadge(cand.action)}</Badge>
-                    <span class="conflict__preset">from “{cand.preset}”</span>
+                    <span class="conflict__preset">{t("plan.fromPreset").replace("{name}", cand.preset)}</span>
                   </span>
                   <span class="conflict__detail">{cand.detail}</span>
                 </span>
@@ -858,10 +856,10 @@
               />
               <span class="conflict__body">
                 <span class="conflict__head">
-                  <Badge tone="faint">excluded</Badge>
-                  <span class="conflict__preset">exclude it</span>
+                  <Badge tone="faint">{t("plan.excluded")}</Badge>
+                  <span class="conflict__preset">{t("plan.excludeIt")}</span>
                 </span>
-                <span class="conflict__detail">No action runs for this product this time.</span>
+                <span class="conflict__detail">{t("plan.excludeDetail")}</span>
               </span>
             </label>
           </fieldset>
@@ -872,27 +870,25 @@
 {/snippet}
 
 <section class="plan" aria-labelledby="plan-title">
-  <PageHeader titleId="plan-title" title="Plan">
+  <PageHeader titleId="plan-title" title={t("nav.plan")}>
     {#snippet subtitle()}
       {#if quickProductId}
-        Quick install: {quickProductName ?? "this product"}. It is checked against this
-        machine now. Detection is read-only; nothing is installed or changed until you run.
+        {t("plan.subQuick").replace("{name}", quickProductName ?? t("plan.thisProduct"))}
       {:else}
-        Pick one or more presets. Each is checked against this machine when you select it.
-        Detection is read-only; nothing is installed or changed from this screen.
+        {t("plan.subPick")}
       {/if}
     {/snippet}
   </PageHeader>
 
-  <ol class="steps" aria-label="Plan stages">
+  <ol class="steps" aria-label={t("plan.stagesLabel")}>
     <li class="steps__item" class:active={stage === "pick"} aria-current={stage === "pick" ? "step" : undefined}>
-      1 · Pick presets
+      {t("plan.stepPick")}
     </li>
     <li class="steps__item" class:active={stage === "plan"} aria-current={stage === "plan" ? "step" : undefined}>
-      2 · Review the plan
+      {t("plan.stepReview")}
     </li>
     <li class="steps__item" class:active={stage === "run"} aria-current={stage === "run" ? "step" : undefined}>
-      3 · Run
+      {t("plan.stepRun")}
     </li>
   </ol>
 
@@ -906,25 +902,24 @@
   {#if loading}
     <p class="sifting">Loading…</p>
   {:else if loadFailed}
-    <EmptyState icon="x" title="Couldn't read the library">
-      <p>Something went wrong reading <span class="mono">%LOCALAPPDATA%\Sprout\sprout.db</span>.</p>
+    <EmptyState icon="x" title={t("common.libraryReadFail")}>
+      <p>{t("plan.dbBody")} <span class="mono">%LOCALAPPDATA%\Sprout\sprout.db</span>{t("launch.filterNone")}</p>
       <p class="error-detail">{error}</p>
       <div class="empty-cta">
-        <Button variant="secondary" onclick={load}>Try again</Button>
+        <Button variant="secondary" onclick={load}>{t("common.retry")}</Button>
       </div>
     </EmptyState>
   {:else if presets.length === 0 && !quickProductId}
-    <EmptyState title="No presets to plan">
-      <p>The Plan screen checks a selection of presets against this machine. Your library has
-        no presets yet.</p>
+    <EmptyState title={t("plan.noPresets")}>
+      <p>{t("plan.noPresetsBody")}</p>
       <div class="empty-cta">
-        <Button onclick={() => goto("/presets")}>Compose a preset first</Button>
+        <Button onclick={() => goto("/presets")}>{t("plan.composeFirst")}</Button>
       </div>
     </EmptyState>
   {:else}
     {#if !quickProductId}
       <div class="pick">
-        <p class="pick__label">1 · Pick presets</p>
+        <p class="pick__label">{t("plan.stepPick")}</p>
         <ul class="pick__list">
           {#each presets as record (record.id)}
             {@const checked = selected.includes(record.id)}
@@ -943,9 +938,9 @@
                   </span>
                   <span class="pick__desc">{record.description}</span>
                   <span class="pick__meta">
-                    {record.requirements.length} requirement{record.requirements.length === 1 ? "" : "s"}
+                    {record.requirements.length === 1 ? tCount("packet.reqOne", record.requirements.length) : tCount("packet.reqMany", record.requirements.length)}
                     {#if record.imported}
-                      <span class="pick__imported">imported</span>
+                      <span class="pick__imported">{t("packet.imported")}</span>
                     {/if}
                   </span>
                 </span>
@@ -963,56 +958,55 @@
     {#if composition}
       {@const summary = count}
       <div class="plan__result">
-        <p class="pick__label">2 · Review the plan</p>
+        <p class="pick__label">{t("plan.stepReview")}</p>
 
         <div class="staleness" role="status" aria-live="polite">
           <span class="staleness__note">
             {checkedAt
-              ? `Checked against this machine at ${formatCheckedAt(checkedAt)}.`
-              : "Checked against this machine just now."}
-            Installed or changed something since?
+              ? t("plan.checkedAt").replace("{time}", formatCheckedAt(checkedAt))
+              : t("plan.checkedNow")}
+            {t("plan.stalePrompt")}
           </span>
           <button
             class="staleness__btn"
             onclick={runValidate}
             disabled={planning || (!quickProductId && selected.length === 0)}
           >
-            {planning ? "Checking…" : "Check again"}
+            {planning ? t("common.busy.checking") : t("plan.checkAgain")}
           </button>
         </div>
 
         <div class="plan__summary" role="status" aria-live="polite">
           {#if includedCount > 0}
             <span class="summary-line">
-              {includedCount} requirement{includedCount === 1 ? "" : "s"} in the run; the machine
-              will receive {summary ? Object.entries(summary.by).map(([kind, n]) => `${n} ${actionLabel[kind as PlannedAction["kind"]]}`).join(", ") : ""}.
+              {(includedCount === 1 ? t("plan.reqInRunOne") : t("plan.reqInRunMany"))
+                .replace("{count}", String(includedCount))
+                .replace("{actions}", summary ? Object.entries(summary.by).map(([kind, n]) => `${n} ${actionLabelText(kind as PlannedAction["kind"])}`).join(", ") : "")}
             </span>
           {:else}
-            <span class="summary-line">Nothing selected; every requirement is out of the run.</span>
+            <span class="summary-line">{t("plan.nothingSelected")}</span>
           {/if}
           {#if summary?.skipped}
-            <span class="summary-line summary-line--muted">({summary.skipped} toggled off)</span>
+            <span class="summary-line summary-line--muted">{t("plan.toggledOff").replace("{count}", String(summary.skipped))}</span>
           {/if}
           {#if summary?.unmanaged}
             <span class="summary-line summary-line--attention">
-              {summary.unmanaged} unmanaged product{summary.unmanaged === 1 ? "" : "s"}
-              detected; flagged for attention and skipped.
+              {(summary.unmanaged === 1 ? t("plan.unmanagedOne") : t("plan.unmanagedMany")).replace("{count}", String(summary.unmanaged))}
             </span>
           {/if}
           {#if undecidedCount > 0}
             <span class="summary-line summary-line--warn">
-              {undecidedCount} conflict{undecidedCount === 1 ? "" : "s"} need a decision below.
+              {(undecidedCount === 1 ? t("plan.conflictsOne") : t("plan.conflictsMany")).replace("{count}", String(undecidedCount))}
             </span>
           {/if}
           {#if summary?.removed}
             <span class="summary-line summary-line--warn">
-              {summary.removed} product{summary.removed === 1 ? "" : "s"} removed from the library;
-              excluded from this run.
+              {(summary.removed === 1 ? t("plan.removedOne") : t("plan.removedMany")).replace("{count}", String(summary.removed))}
             </span>
           {/if}
           {#if installDir}
             <span class="summary-line">
-              installs go to {installDir}
+              {t("plan.installsGoTo").replace("{dir}", installDir)}
             </span>
           {/if}
         </div>
@@ -1031,16 +1025,16 @@
                 <p class="group__sub">
                   {#if group.id === "ready"}
                     {installDir
-                      ? `These will install or upgrade into ${installDir} when you run.`
-                      : "These will install or upgrade when you run."}
+                      ? t("plan.subReadyDir").replace("{dir}", installDir)
+                      : t("plan.subReady")}
                   {:else if group.id === "already"}
-                    Already satisfied; the run skips them.
+                    {t("plan.subAlready")}
                   {:else if group.id === "decide"}
                     {undecidedCount > 0
-                      ? "The presets disagree. Pick a policy for each, or leave the product alone."
-                      : "Settled. Your calls stand; you can change them anytime."}
+                      ? t("plan.subDecideOpen")
+                      : t("plan.subDecideSettled")}
                   {:else}
-                    Skipped or excluded from the run; review before running.
+                    {t("plan.subAttention")}
                   {/if}
                 </p>
               </header>
@@ -1057,24 +1051,24 @@
           <div class="plan__run-cta">
             {#if runResult}
               <Button variant="secondary" onclick={runPlan} disabled={!canRun || running}>
-                Run again
+                {t("run.again")}
               </Button>
             {/if}
             {#if !quickProductId}
               <Button variant="secondary" onclick={openSave} disabled={!canSave}>
-                Save as new preset
+                {t("plan.saveAsNew")}
               </Button>
             {/if}
             <Button onclick={runPlan} disabled={!canRun || running}>
-              {running ? "Applying…" : runResult ? "Run this plan" : `Run this plan (${includedCount})`}
+              {running ? t("plan.applying") : runResult ? t("plan.runThis") : t("plan.runThisCount").replace("{count}", String(includedCount))}
             </Button>
           </div>
           <p class="plan__actions-hint">
             {canRun
-              ? "Checks what is already installed, then installs or upgrades only what is missing or outdated."
+              ? t("plan.hintCanRun")
               : undecidedCount > 0
-                ? "Conflicts need a decision before the run starts."
-                : "Toggle a requirement in to run it."}
+                ? t("plan.hintConflict")
+                : t("plan.hintToggle")}
           </p>
         </div>
 
@@ -1082,28 +1076,26 @@
           <section class="live" aria-labelledby="live-title">
             <header class="live__head">
               <div>
-                <p class="eyebrow">Run</p>
-                <h2 id="live-title" class="live__title">Checking first, then applying</h2>
+                <p class="eyebrow">{t("action.run")}</p>
+                <h2 id="live-title" class="live__title">{t("plan.liveTitle")}</h2>
                 <p class="live__sub">
                   {#if cancelRequested}
-                    The current step finishes, then the run stops. The cancel is safe to wait out.
+                    {t("plan.liveCancelNote")}
                   {:else}
-                    Each requirement is checked first. Already-good ones are skipped; missing or
-                    outdated ones are installed or upgraded. Cancel stops the run after the current
-                    step; a hung installer is killed by its timebox.
+                    {t("plan.liveHow")}
                   {/if}
                 </p>
               </div>
               <div class="live__cta">
                 <Button variant="danger" onclick={() => (cancelOpen = true)} disabled={cancelRequested}>
-                  {cancelRequested ? "Cancelling after this step…" : "Cancel run"}
+                  {cancelRequested ? t("run.cancelling") : t("run.cancel")}
                 </Button>
               </div>
             </header>
             <ul class="live__list">
               {#if liveRowList.length === 0}
                 <li class="live__phase" role="status" aria-live="polite">
-                  Checking what's already on this machine…
+                  {t("plan.checkingMachine")}
                 </li>
               {:else}
                 {#each liveRowList as row (row.product_id)}
@@ -1122,7 +1114,7 @@
                     <span class="live__name">{row.product_name}</span>
                     {#if executing}
                       <span class="live__meta">
-                        step {row.index !== undefined ? row.index + 1 : "?"} of {row.total ?? "?"}
+                        {t("plan.stepOf").replace("{index}", String(row.index !== undefined ? row.index + 1 : "?")).replace("{total}", String(row.total ?? "?"))}
                       </span>
                       <Badge tone={liveActionTone(row.action ?? "")}>
                         {liveActingLabel(row.action ?? "")}
@@ -1134,7 +1126,7 @@
                         {liveActingLabel(row.action ?? "")}
                       </Badge>
                     {:else}
-                      <Badge tone="faint">Checking…</Badge>
+                      <Badge tone="faint">{t("common.busy.checking")}</Badge>
                     {/if}
                     {#if (row.status === "failed" || row.status === "timed_out") && row.detail}
                       <span class="live__detail">{row.detail}</span>
@@ -1142,7 +1134,7 @@
                       <span class="live__detail">{row.detail}</span>
                     {/if}
                     {#if row.reboot_required}
-                      <span class="live__note">reboot required — restart, then re-run to finish</span>
+                      <span class="live__note">{t("run.rebootRequired")}</span>
                     {/if}
                   </li>
                 {/each}
@@ -1155,27 +1147,24 @@
           <section class="run" aria-labelledby="run-title">
             <header class="run__head">
               <div>
-                <p class="eyebrow">Run</p>
+                <p class="eyebrow">{t("action.run")}</p>
                 <h2 id="run-title" class="run__title">
                   {runCancelled
-                    ? "Run cancelled — stopped after the current step"
+                    ? t("run.cancelledTitle")
                     : runFailed
-                      ? "Some requirements failed"
+                      ? t("run.failedTitle")
                       : runHasNotes
-                        ? "Applied — with notes"
-                        : "Everything applied cleanly"}
+                        ? t("run.notesTitle")
+                        : t("run.okTitle")}
                 </h2>
                 <p class="run__sub">
-                  {runResult.preset_names.length === 1
-                    ? `From “${runResult.preset_names[0]}”.`
-                    : `From ${runResult.preset_names.map((n) => `“${n}”`).join(" + ")}.`}
+                  {t("run.fromRun").replace("{items}", runResult.preset_names.length === 1 ? `“${runResult.preset_names[0]}”` : runResult.preset_names.map((n) => `“${n}”`).join(" + "))}
                   {#if runCancelled}
-                    Re-run to finish the rest; completed requirements are skipped.
+                    {t("run.rerunRest")}
                   {:else if runFailed}
-                    Re-run to retry what failed; already-finished requirements are skipped.
+                    {t("run.rerunFailed")}
                   {:else if runHasNotes}
-                    {runNotesCount} unmanaged product{runNotesCount === 1 ? "" : "s"}
-                    installed outside winget need manual attention; the rest applied.
+                    {(runNotesCount === 1 ? t("run.notesDetailOne") : t("run.notesDetailMany")).replace("{count}", String(runNotesCount))}
                   {/if}
                 </p>
               </div>
@@ -1184,7 +1173,7 @@
                   variant="secondary"
                   onclick={() => goto(`/history?run=${runResult!.id}`)}
                 >
-                  See it in History
+                  {t("plan.seeHistory")}
                 </Button>
                 <span class="run__id">{runResult.id}</span>
               </div>
@@ -1196,7 +1185,7 @@
                 {#if items.length > 0}
                   <li class="run__group">
                     <p class="run__group-head">
-                      <Badge tone={runStatusTone(status)}>{runStatusLabel[status]}</Badge>
+                      <Badge tone={runStatusTone(status)}>{runStatusLabelText(status)}</Badge>
                       <span class="run__group-count">{items.length}</span>
                     </p>
                     <ul class="run__group-list">
@@ -1204,7 +1193,7 @@
                         <li class="run__item">
                           <span class="run__item-name">{item.product_name}</span>
                           {#if item.reboot_required}
-                            <span class="run__item-note">reboot required — restart, then re-run to finish</span>
+                            <span class="run__item-note">{t("run.rebootRequired")}</span>
                           {/if}
                           {#if status === "failed" || status === "timed_out"}
                             <span class="run__item-detail">{item.detail}</span>
@@ -1241,15 +1230,14 @@
 
 <ConfirmDialog
   open={cancelOpen}
-  title="Stop the run?"
-  confirmLabel="Stop after this step"
+  title={t("dialog.stopRun.title")}
+  confirmLabel={t("dialog.stopRun.confirm")}
   danger
   onconfirm={requestCancel}
   oncancel={() => (cancelOpen = false)}
 >
-  <p>The current step finishes first; nothing is interrupted mid-install. The run then stops,
-    and you can run the plan again to finish the rest; completed requirements are skipped.</p>
-  <p>A hung installer is killed by its timebox.</p>
+  <p>{t("dialog.stopRun.body1")}</p>
+  <p>{t("dialog.stopRun.body2")}</p>
 </ConfirmDialog>
 
 <style>

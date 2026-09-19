@@ -646,10 +646,35 @@ pub fn hidden_rect(full: RECT, edge: u32) -> RECT {
     }
 }
 
+/// Re-applies the shell-granted vertical extent to a re-derived auto-hide
+/// full strip (ticket 128 width slides): only the thickness follows the
+/// slider. Pure — both width-retarget sites (`autohide_tick`'s width pass
+/// and `apply_width`) share it so they cannot drift apart.
+///
+/// A bezel tab's short height must never become the strip's height: when the
+/// granted rect's height disagrees with the fresh full height beyond shell
+/// rounding (±4 px, the reservation-grant tolerance), the fresh monitor
+/// height wins and the tab's top/bottom are dropped. Without this, a
+/// bezel→auto-hide switch records a tab-height "full" and hover reveals a
+/// short strip instead of the full-height panel.
+pub fn preserve_granted_vertical(full: RECT, granted: RECT) -> RECT {
+    if (granted.bottom - granted.top - (full.bottom - full.top)).abs() <= 4 {
+        RECT {
+            top: granted.top,
+            bottom: granted.bottom,
+            ..full
+        }
+    } else {
+        full
+    }
+}
+
 /// The reservation the shell keeps while auto-hide is hidden (ticket 119):
 /// zero width at the monitor's edge — the 2 px sliver artifact is gone, other
 /// windows keep their full size hidden or revealed. Pure — the caller supplies
-/// the monitor's own `rcMonitor`.
+/// the monitor's own `rcMonitor`. Bezel reuses this reservation for its
+/// collapsed and peek tabs (ADR-0011 bezel amendment): they protrude from the
+/// edge as an overlay and take no workspace either.
 pub fn autohide_reservation(monitor: RECT, edge: u32) -> RECT {
     match edge {
         ABE_LEFT => RECT {
@@ -666,6 +691,62 @@ pub fn autohide_reservation(monitor: RECT, edge: u32) -> RECT {
         },
         _ => monitor,
     }
+}
+
+/// The bezel tab rect for a collapsed or peeked bar (spec 214): a
+/// `width`-wide protrusion from `edge`, the ratio-derived tab height tall,
+/// parked at `y_ratio` of its travel (0 = top, 1 = bottom; broken values
+/// center — Y position persists per display under the monitor-identity
+/// pattern (spec 214; ADR-0020)). Pure — the composition `dock`
+/// and `settle_mode` place for bezel, paired with the zero-width reservation
+/// above so collapsed and peek never take workspace (ADR-0011).
+pub fn bezel_tab_rect(monitor: RECT, edge: u32, width: i32, y_ratio: f64) -> RECT {
+    use crate::constants::window::{bezel_tab_height_px, bezel_tab_y_px};
+    let height = monitor.bottom - monitor.top;
+    let tab_height = bezel_tab_height_px(height);
+    let top = bezel_tab_y_px(monitor.top, height, tab_height, y_ratio);
+    let bottom = top + tab_height;
+    match edge {
+        ABE_LEFT => RECT {
+            left: monitor.left,
+            top,
+            right: monitor.left + width,
+            bottom,
+        },
+        ABE_RIGHT => RECT {
+            left: monitor.right - width,
+            top,
+            right: monitor.right,
+            bottom,
+        },
+        _ => monitor,
+    }
+}
+
+/// The bezel collapsed tab: the single-size-source collapsed width protruding
+/// from the edge — the parked form other windows overlay freely.
+pub fn bezel_collapsed_rect(monitor: RECT, edge: u32, y_ratio: f64) -> RECT {
+    bezel_tab_rect(
+        monitor,
+        edge,
+        crate::constants::window::BEZEL_COLLAPSED_WIDTH_PX,
+        y_ratio,
+    )
+}
+
+/// The bezel hover-peek tab: the same tab wider, geometry only — peek never
+/// triggers open (ADR-0019; open stays click-gated per the bezel spec).
+// WHY allowed dead in normal builds: the collapsed tab is the only placed
+// form in this slice — the peek width reaches the UI through its own command
+// and tests pin the rect meanwhile (ADR-0011).
+#[allow(dead_code)]
+pub fn bezel_peek_rect(monitor: RECT, edge: u32, y_ratio: f64) -> RECT {
+    bezel_tab_rect(
+        monitor,
+        edge,
+        crate::constants::window::BEZEL_PEEK_WIDTH_PX,
+        y_ratio,
+    )
 }
 
 /// Whether the cursor (`x`, `y`) is inside the edge trigger band (ticket 112):
@@ -1138,6 +1219,61 @@ mod tests {
     }
 
     #[test]
+    fn bezel_collapsed_and_peek_share_one_tab_geometry() {
+        // The single size source: collapsed 20px, peek 60px (3x, a forgiving
+        // hover target), same height and Y — peek is a wider view of the same
+        // tab, never a separate placement. Both clear a pointer hit threshold
+        // (ADR-0011).
+        let monitor = RECT { left: 0, top: 0, right: 1920, bottom: 1080 };
+        let collapsed = bezel_collapsed_rect(monitor, ABE_LEFT, 0.5);
+        let peek = bezel_peek_rect(monitor, ABE_LEFT, 0.5);
+        assert_eq!(collapsed.right - collapsed.left, 20);
+        assert_eq!(peek.right - peek.left, 60);
+        assert_eq!(collapsed.top, peek.top);
+        assert_eq!(collapsed.bottom, peek.bottom);
+        assert_eq!(collapsed.bottom - collapsed.top, 130); // 12% of 1080
+        // Both protrude from the docked edge, never float mid-screen.
+        assert_eq!(collapsed.left, 0);
+        assert_eq!(peek.left, 0);
+        let collapsed_r = bezel_collapsed_rect(monitor, ABE_RIGHT, 0.5);
+        assert_eq!(collapsed_r.right, 1920);
+        assert_eq!(collapsed_r.right - collapsed_r.left, 20);
+        assert_eq!(collapsed_r.top, collapsed.top);
+    }
+
+    #[test]
+    fn bezel_tab_y_defaults_to_center_and_broken_ratios_follow() {
+        // 1080-tall monitor, 130-tall tab: travel is 950, centered top is 475.
+        let monitor = RECT { left: 0, top: 0, right: 1920, bottom: 1080 };
+        assert_eq!(bezel_collapsed_rect(monitor, ABE_LEFT, 0.5).top, 475);
+        assert_eq!(bezel_collapsed_rect(monitor, ABE_LEFT, 0.0).top, 0);
+        assert_eq!(bezel_collapsed_rect(monitor, ABE_LEFT, 1.0).top, 950);
+        // Broken stored ratios center instead of parking off-screen.
+        for broken in [f64::NAN, f64::INFINITY, -0.5, 2.0] {
+            let rect = bezel_collapsed_rect(monitor, ABE_LEFT, broken);
+            let clamped = if broken.is_finite() {
+                broken.clamp(0.0, 1.0)
+            } else {
+                0.5
+            };
+            assert_eq!(rect.top, ((1080 - 130) as f64 * clamped).round() as i32);
+        }
+    }
+
+    #[test]
+    fn bezel_collapsed_and_peek_reserve_zero_workspace() {
+        // Collapsed + peek take no workspace (ADR-0011 bezel amendment): the
+        // reservation is the auto-hide zero-width pattern, never the tab rect.
+        let monitor = RECT { left: 0, top: 0, right: 1920, bottom: 1080 };
+        for edge in [ABE_LEFT, ABE_RIGHT] {
+            let reservation = autohide_reservation(monitor, edge);
+            assert_eq!(reservation.right - reservation.left, 0);
+            assert_eq!(reservation.top, monitor.top);
+            assert_eq!(reservation.bottom, monitor.bottom);
+        }
+    }
+
+    #[test]
     fn edge_hit_requires_the_band_and_the_strip_height() {
         // Ticket 112: trigger zone is the sliver itself (single size source) — within
         // AUTOHIDE_SLIVER_PX of the docked edge and inside vertical extent.
@@ -1154,8 +1290,26 @@ mod tests {
     }
 
     #[test]
-    fn strip_contains_is_inclusive_and_sliver_friendly() {
-        // Ticket 63: hovering anywhere over the strip (or its sliver) counts;
+    fn preserve_granted_vertical_keeps_shell_height_but_never_inherits_tab_height() {
+        // Ticket 128 width slide on a converged strip: same height, new
+        // thickness — the granted top/bottom are kept, the fresh width wins.
+        let full = RECT { left: 0, top: 0, right: 300, bottom: 1080 };
+        let granted = RECT { left: 0, top: 0, right: 340, bottom: 1080 };
+        let kept = preserve_granted_vertical(full, granted);
+        assert_eq!((kept.left, kept.top, kept.right, kept.bottom), (0, 0, 300, 1080));
+        // Shell rounding (±4 px) still counts as the same height.
+        let rounded = RECT { left: 0, top: 1, right: 340, bottom: 1083 };
+        let kept = preserve_granted_vertical(full, rounded);
+        assert_eq!((kept.top, kept.bottom), (1, 1083));
+        // A bezel tab's short height must never become the strip's: the
+        // fresh monitor height wins, so hover reveals the full panel.
+        let tab = RECT { left: 0, top: 475, right: 14, bottom: 605 };
+        let kept = preserve_granted_vertical(full, tab);
+        assert_eq!((kept.left, kept.top, kept.right, kept.bottom), (0, 0, 300, 1080));
+    }
+
+    #[test]
+    fn strip_contains_is_inclusive_and_sliver_friendly() {        // Ticket 63: hovering anywhere over the strip (or its sliver) counts;
         // the boundary itself is inside so the bar never stutters at 1 px out.
         let strip = RECT { left: 0, top: 40, right: 340, bottom: 1040 };
         assert!(strip_contains(0, 40, strip));

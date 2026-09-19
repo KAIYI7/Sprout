@@ -36,6 +36,9 @@ pub const DOCK_WIDTH_MIN_PCT: u32 = 10;
 pub const DOCK_WIDTH_MAX_PCT_FIXED: u32 = 30;
 /// Auto-hide overlays content and reserves nothing, so it may run wide.
 pub const DOCK_WIDTH_MAX_PCT_AUTOHIDE: u32 = 60;
+/// Bezel overlays content and reserves nothing while collapsed, so its open
+/// panel may run wide like auto-hide (ADR-0011 overlay vs reservation).
+pub const DOCK_WIDTH_MAX_PCT_BEZEL: u32 = 60;
 /// The widest % any mode stores — the Settings and per-monitor validation
 /// range. Kept equal to the auto-hide cap; fixed clamps into its own cap on
 /// apply, so a stored 60 never explodes a fixed strip.
@@ -44,12 +47,13 @@ pub const DOCK_WIDTH_MAX_PCT_ABSOLUTE: u32 = DOCK_WIDTH_MAX_PCT_AUTOHIDE;
 pub const DOCK_WIDTH_DEFAULT_PCT: u32 = 18;
 
 /// The mode's width cap as % of the monitor: fixed stays a strip, auto-hide
-/// may overlay wide (ADR-0011 overlay vs reservation; ADR-0021 single size
-/// source). Unknown modes take the fixed cap — a reserving assumption never
-/// over-claims workspace.
+/// and bezel may overlay wide (ADR-0011 overlay vs reservation; ADR-0021
+/// single size source). Unknown modes take the fixed cap — a reserving
+/// assumption never over-claims workspace.
 pub fn dock_width_max_pct_for_mode(mode: &str) -> u32 {
     match mode {
         "auto-hide" => DOCK_WIDTH_MAX_PCT_AUTOHIDE,
+        "bezel" => DOCK_WIDTH_MAX_PCT_BEZEL,
         _ => DOCK_WIDTH_MAX_PCT_FIXED,
     }
 }
@@ -70,6 +74,60 @@ pub fn dock_width_px_for_mode(monitor_width_px: i32, pct: u32, mode: &str) -> i3
     let cap = monitor_width_px * max as i32 / 100;
     let want = monitor_width_px * pct as i32 / 100;
     want.clamp(DOCK_WIDTH as i32, cap.max(DOCK_WIDTH as i32))
+}
+
+/// The bezel collapsed tab's visible width in physical pixels: wide enough
+/// to hit reliably on a screen edge (ADR-0011 third mode) — 14px read as
+/// unclickable in practice, so the tab keeps its quiet strip while clearing
+/// a pointer hit threshold.
+pub const BEZEL_COLLAPSED_WIDTH_PX: i32 = 20;
+/// The bezel hover-peek width in physical pixels: geometry-only feedback —
+/// peek never opens (ADR-0019 bezel amendment; open stays click-gated). Three
+/// times the collapsed tab, so the hover target is forgiving and the
+/// anticipation reads before any commitment.
+pub const BEZEL_PEEK_WIDTH_PX: i32 = 60;
+/// The bezel tab height as a ratio of the docked monitor's full height
+/// (spec 214): monitor-relative, never a fixed pixel height.
+pub const BEZEL_HEIGHT_RATIO: f64 = 0.12;
+/// Physical-px clamps for the ratio-derived tab height.
+pub const BEZEL_HEIGHT_MIN_PX: i32 = 64;
+pub const BEZEL_HEIGHT_MAX_PX: i32 = 160;
+/// The default Y position as a ratio of the tab's travel (0 = top, 1 =
+/// bottom): centered until the user drags it (Y persists per display).
+pub const BEZEL_Y_RATIO_DEFAULT: f64 = 0.5;
+
+/// The bezel tab height in physical pixels for a monitor `monitor_height_px`
+/// tall: 12% of the monitor, clamped to 64–160px. Pure — the single
+/// tab-height derivation the collapsed/peek rects and the frontend command
+/// share. A degenerate monitor height falls back to the floor, never zero.
+pub fn bezel_tab_height_px(monitor_height_px: i32) -> i32 {
+    if monitor_height_px <= 0 {
+        return BEZEL_HEIGHT_MIN_PX;
+    }
+    let want = (monitor_height_px as f64 * BEZEL_HEIGHT_RATIO).round() as i32;
+    want.clamp(BEZEL_HEIGHT_MIN_PX, BEZEL_HEIGHT_MAX_PX)
+}
+
+/// Clamps a stored bezel Y ratio into 0..1: a broken stored value centers
+/// instead of parking the tab off-screen. Non-finite reads as the default —
+/// clamping NaN would be meaningless.
+pub fn clamp_bezel_y_ratio(ratio: f64) -> f64 {
+    if !ratio.is_finite() {
+        return BEZEL_Y_RATIO_DEFAULT;
+    }
+    ratio.clamp(0.0, 1.0)
+}
+
+/// The bezel tab's top edge in physical pixels: `y_ratio` of the tab's travel
+/// (`monitor_height_px - tab_height_px`) below `monitor_top_px`. Pure.
+pub fn bezel_tab_y_px(
+    monitor_top_px: i32,
+    monitor_height_px: i32,
+    tab_height_px: i32,
+    y_ratio: f64,
+) -> i32 {
+    let travel = (monitor_height_px - tab_height_px).max(0);
+    monitor_top_px + ((travel as f64 * clamp_bezel_y_ratio(y_ratio)).round() as i32)
 }
 
 /// The auto-hide sliver's width in physical pixels (ticket 63 — kept only
@@ -152,5 +210,56 @@ mod tests {
         assert_eq!(dock_width_px_for_mode(1920, 99, "auto-hide"), 1152);
         assert_eq!(dock_width_px_for_mode(1920, 5, "auto-hide"), DOCK_WIDTH as i32);
         assert_eq!(dock_width_px_for_mode(0, 45, "auto-hide"), DOCK_WIDTH as i32);
+    }
+
+    #[test]
+    fn bezel_open_caps_like_an_overlay_at_60pct() {
+        // Bezel reserves nothing extra, so open overlays wide (ADR-0021 bezel
+        // amendment) — the same cap as auto-hide, never the fixed strip cap.
+        assert_eq!(dock_width_max_pct_for_mode("bezel"), 60);
+        assert_eq!(dock_width_px_for_mode(1920, 45, "bezel"), 864);
+        assert_eq!(dock_width_px_for_mode(1920, 60, "bezel"), 1152);
+        // Broken % clamps into range first: 99→60→cap, 5→10→floor.
+        assert_eq!(dock_width_px_for_mode(1920, 99, "bezel"), 1152);
+        assert_eq!(dock_width_px_for_mode(1920, 5, "bezel"), DOCK_WIDTH as i32);
+        // A degenerate monitor never collapses the panel.
+        assert_eq!(dock_width_px_for_mode(0, 45, "bezel"), DOCK_WIDTH as i32);
+    }
+
+    #[test]
+    fn bezel_tab_height_follows_monitor_ratio_with_clamps() {
+        // 12% of the monitor, clamped to 64–160 physical px (ADR-0021 bezel
+        // amendment) — monitor-relative, never a fixed pixel height.
+        assert_eq!(bezel_tab_height_px(1080), 130); // 129.6 rounds to 130
+        assert_eq!(bezel_tab_height_px(2160), 160); // 259.2 clamps to the ceiling
+        assert_eq!(bezel_tab_height_px(400), 64); // 48.0 clamps to the floor
+        // A degenerate monitor never collapses the tab.
+        assert_eq!(bezel_tab_height_px(0), BEZEL_HEIGHT_MIN_PX);
+        assert_eq!(bezel_tab_height_px(-5), BEZEL_HEIGHT_MIN_PX);
+    }
+
+    #[test]
+    fn bezel_y_ratio_clamps_and_broken_values_center() {
+        assert_eq!(clamp_bezel_y_ratio(0.5), 0.5);
+        assert_eq!(clamp_bezel_y_ratio(0.0), 0.0);
+        assert_eq!(clamp_bezel_y_ratio(1.0), 1.0);
+        assert_eq!(clamp_bezel_y_ratio(-0.2), 0.0);
+        assert_eq!(clamp_bezel_y_ratio(1.4), 1.0);
+        // Non-finite stored values center — clamping NaN would be meaningless.
+        assert_eq!(clamp_bezel_y_ratio(f64::NAN), BEZEL_Y_RATIO_DEFAULT);
+        assert_eq!(clamp_bezel_y_ratio(f64::INFINITY), BEZEL_Y_RATIO_DEFAULT);
+    }
+
+    #[test]
+    fn bezel_tab_y_centers_by_default_within_travel() {
+        // 1080-tall monitor, 130-tall tab: travel is 950, centered top is 475.
+        assert_eq!(bezel_tab_y_px(0, 1080, 130, 0.5), 475);
+        assert_eq!(bezel_tab_y_px(0, 1080, 130, 0.0), 0);
+        assert_eq!(bezel_tab_y_px(0, 1080, 130, 1.0), 950);
+        // A non-zero monitor origin rides along; broken ratios center.
+        assert_eq!(bezel_tab_y_px(100, 1080, 130, 0.5), 575);
+        assert_eq!(bezel_tab_y_px(0, 1080, 130, f64::NAN), 475);
+        // A tab taller than the monitor parks at the top instead of underflowing.
+        assert_eq!(bezel_tab_y_px(0, 100, 160, 0.5), 0);
     }
 }

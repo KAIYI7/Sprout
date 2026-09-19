@@ -16,6 +16,7 @@
     type ContextMenuState,
     type MenuRequest,
   } from "$lib/components/ContextMenu.svelte";
+  import { t, tCount } from "$lib/copy";
 
   let products = $state<Product[]>([]);
   let query = $state("");
@@ -75,10 +76,10 @@
     try {
       if (editing) {
         await updateProduct(product);
-        flash(`Saved ${product.name}.`);
+        flash(t("common.savedName").replace("{name}", product.name));
       } else {
         await createProduct(product);
-        flash(`Added ${product.name} to the library.`);
+        flash(t("products.addedFlash").replace("{name}", product.name));
         animateRack = true;
       }
       formOpen = false;
@@ -88,8 +89,8 @@
       error =
         String(e) ||
         (editing
-          ? `Couldn't save ${product.name}. Please try again.`
-          : "Couldn't add that product. Please try again.");
+          ? t("products.saveFailName").replace("{name}", product.name)
+          : t("products.addFail"));
     }
   }
 
@@ -98,12 +99,12 @@
     const name = deleting.name;
     try {
       await deleteProduct(deleting.id);
-      flash(`Removed ${name} from the library.`);
+      flash(t("products.removedFlash").replace("{name}", name));
       deleting = null;
       await load(query);
     } catch (e) {
       console.error(e);
-      error = `Couldn't remove ${name}. Please try again.`;
+      error = t("common.removeFail").replace("{name}", name);
     }
   }
 
@@ -120,7 +121,7 @@
     menu = {
       productId: product.id,
       open: true,
-      label: `Actions for ${product.name}`,
+      label: t("packet.actionsFor").replace("{name}", product.name),
       focusFirst: request.kind === "anchor" ? request.focusFirst : false,
       returnTo: request.returnTo,
       ...(request.kind === "cursor"
@@ -128,17 +129,17 @@
         : { anchor: request.anchor }),
       items: [
         {
-          label: "Install now",
+          label: t("menu.installNow"),
           icon: "play",
           onselect: () =>
             goto(`/plan?quick=${encodeURIComponent(product.id)}`),
         },
-        { label: "Edit", icon: "pencil", onselect: () => openEdit(product) },
-        { label: "More info", icon: "info", onselect: () => (details = product) },
+        { label: t("common.edit"), icon: "pencil", onselect: () => openEdit(product) },
+        { label: t("common.moreInfo"), icon: "info", onselect: () => (details = product) },
         // Ticket 106's ordering standard: destruction last, separated.
         { label: "", separator: true, onselect: () => {} },
         {
-          label: "Remove",
+          label: t("common.remove"),
           icon: "trash",
           danger: true,
           onselect: () => {
@@ -155,22 +156,22 @@
 </script>
 
 <section class="library" aria-labelledby="library-title">
-  <PageHeader titleId="library-title" title="Products">
+  <PageHeader titleId="library-title" title={t("nav.products")}>
     {#snippet actions()}
       <Button onclick={openAdd}>
         <Icon name="plus" size={15} />
-        Add product
+        {t("products.add")}
       </Button>
     {/snippet}
     {#snippet subtitle()}
-      {products.length} product{products.length === 1 ? "" : "s"}
-      {query.trim() ? (products.length === 1 ? " matches your search." : " match your search.") : "."}
-      Right-click a card or open its ⋯ menu for actions.
+      {products.length === 1 ? tCount("products.countOne", products.length) : tCount("products.countMany", products.length)}
+      {query.trim() ? (products.length === 1 ? t("products.searchOne") : t("products.searchMany")) : t("launch.filterNone")}
+      {t("products.hintRight")}
     {/snippet}
     {#snippet toolbar()}
       <SearchInput
         value={query}
-        placeholder="Filter products…"
+        placeholder={t("products.filterPh")}
         onchange={(v) => (query = v)}
       />
     {/snippet}
@@ -186,31 +187,29 @@
   {#if loading && products.length === 0}
     <p class="sifting" aria-live="polite">Loading…</p>
   {:else if loadFailed}
-    <EmptyState icon="x" title="Couldn't read the library">
-      <p>Couldn't read the product library from
+    <EmptyState icon="x" title={t("common.libraryReadFail")}>
+      <p>{t("products.dbBody")}
         <span class="mono">%LOCALAPPDATA%\Sprout\sprout.db</span>.</p>
-      <p>The file may be missing or locked by another process. Close the app, check the file,
-        then relaunch.</p>
+      <p>{t("common.dbLockedHint")}</p>
       <div class="empty-cta">
-        <Button variant="secondary" onclick={() => load(query)}>Try again</Button>
+        <Button variant="secondary" onclick={() => load(query)}>{t("common.retry")}</Button>
       </div>
     </EmptyState>
   {:else if products.length === 0 && !query.trim()}
-    <EmptyState title="No products yet">
-      <p>Add the first product to start composing presets. Products come from the live winget
-        registry search or a custom install step.</p>
+    <EmptyState title={t("products.noProducts")}>
+      <p>{t("products.emptyBody")}</p>
       <div class="empty-cta">
         <Button onclick={openAdd}>
           <Icon name="plus" size={15} />
-          Add product
+          {t("products.add")}
         </Button>
       </div>
     </EmptyState>
   {:else if products.length === 0}
-    <EmptyState title={`Nothing matches “${query.trim()}”`}>
-      <p>Try a different name or winget ID, or clear the search to browse the whole library.</p>
+    <EmptyState title={t("common.noMatchFor").replace("{query}", query.trim())}>
+      <p>{t("products.noSearchHint")}</p>
       <div class="empty-cta">
-        <Button variant="secondary" onclick={() => (query = "")}>Clear search</Button>
+        <Button variant="secondary" onclick={() => (query = "")}>{t("common.clearSearch")}</Button>
       </div>
     </EmptyState>
   {:else}
@@ -244,20 +243,18 @@
 
 <ConfirmDialog
   open={deleting !== null}
-  title="Remove product?"
-  confirmLabel="Remove"
+  title={t("products.removeTitle")}
+  confirmLabel={t("common.remove")}
   danger
   onconfirm={confirmDelete}
   oncancel={() => (deleting = null)}
 >
   <p>
-    <strong>{deleting?.name}</strong> ({deleting?.winget_id ?? "custom install step"}) will be
-    removed from the library.
+    <strong>{deleting?.name}</strong> ({deleting?.winget_id ?? t("products.customStepLong")}){t("products.removeBodyTail")}
     {#if deletingImpact > 0}
-      It will also be removed from {deletingImpact} preset{deletingImpact === 1 ? "" : "s"} that
-      contain it. Imported presets keep their own embedded copy.
+      {deletingImpact === 1 ? t("products.impactOne").replace("{count}", String(deletingImpact)) : t("products.impactMany").replace("{count}", String(deletingImpact))}
     {:else}
-      No preset references it.
+      {t("products.impactNone")}
     {/if}
   </p>
 </ConfirmDialog>

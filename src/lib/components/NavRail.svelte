@@ -3,31 +3,32 @@
   import ConfirmDialog from "./ConfirmDialog.svelte";
   import Notice from "./Notice.svelte";
   import { installNow, updateState } from "$lib/updateState.svelte";
-  import { COLLECTIONS } from "$lib/collections";
+  import { t } from "$lib/copy";
 
   // Frequency split (research 0004): daily quick surfaces first, setup next,
   // reference last — clusters separated by hairline dividers, no headings.
-  const clusters = [
+  // Derived (not const) so the rail follows a language switch live.
+  const clusters = $derived([
     [
-      { id: "launch", label: COLLECTIONS.launch_entries.label, href: "/" },
+      { id: "launch", label: t("nav.launch"), href: "/" },
       {
         id: "quick-actions",
-        label: COLLECTIONS.quick_actions.label,
+        label: t("nav.actions"),
         href: "/quick-actions",
       },
-      { id: "clips", label: COLLECTIONS.clips.label, href: "/clips" },
+      { id: "clips", label: t("nav.clips"), href: "/clips" },
     ],
     [
-      { id: "products", label: COLLECTIONS.products.label, href: "/products" },
-      { id: "presets", label: COLLECTIONS.presets.label, href: "/presets" },
-      { id: "plan", label: "Plan", href: "/plan" },
+      { id: "products", label: t("nav.products"), href: "/products" },
+      { id: "presets", label: t("nav.presets"), href: "/presets" },
+      { id: "plan", label: t("nav.plan"), href: "/plan" },
     ],
     [
-      { id: "history", label: "History", href: "/history" },
-      { id: "logs", label: "Logs", href: "/logs" },
-      { id: "settings", label: "Settings", href: "/settings" },
+      { id: "history", label: t("nav.history"), href: "/history" },
+      { id: "logs", label: t("nav.logs"), href: "/logs" },
+      { id: "settings", label: t("nav.settings"), href: "/settings" },
     ],
-  ];
+  ]);
 
   const current = $derived(page.url.pathname);
 
@@ -54,7 +55,7 @@
   }
 </script>
 
-<nav class="rail" aria-label="Sprout sections">
+<nav class="rail" aria-label={t("nav.sections")}>
   <ul class="rail__list">
     {#each clusters as cluster, ci}
       {#if ci > 0}
@@ -78,14 +79,14 @@
   <div class="rail__foot">
     {#if updateState.installing}
       <span class="rail__update rail__update--busy" role="status"
-        >Updating…</span
+        >{t("common.busy.updating")}</span
       >
     {:else if updateState.available}
       <button
         type="button"
         class="rail__update"
-        title="Update available"
-        aria-label={`Update available — install Sprout ${updateState.available.version}`}
+        title={t("update.available")}
+        aria-label={t("update.railAria").replace("{version}", updateState.available.version)}
         onclick={openConfirm}
       >
         v{updateState.currentVersion} ↑ {updateState.available.version}
@@ -100,13 +101,13 @@
 
 <ConfirmDialog
   open={confirmOpen}
-  title="Update available"
-  confirmLabel={updateState.installing ? "Installing…" : "Install and restart"}
+  title={t("update.available")}
+  confirmLabel={updateState.installing ? t("common.busy.installing") : t("update.installRestart")}
   onconfirm={applyUpdate}
   oncancel={() => (confirmOpen = false)}
 >
-  <p>Install Sprout {updateState.available?.version} now?</p>
-  <p>Sprout restarts when the installer finishes.</p>
+  <p>{t("update.confirmBody").replace("{version}", updateState.available?.version ?? "")}</p>
+  <p>{t("update.confirmNote")}</p>
   {#if installError}
     <Notice tone="error">{installError}</Notice>
   {/if}

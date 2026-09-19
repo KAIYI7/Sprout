@@ -6,15 +6,15 @@
 
 **Blocked by:** [215 Bezel mode backend](215-bezel-mode-backend.md) (geometry + open/close hooks). Copy keys (`dock.bezel.tooltip`, pulse text) coordinated with ticket 219's dictionary — key names pinned in spec 214; consume the loader when 219 lands, English literals until then.
 
-**Status:** ready-for-agent
+**Status:** applied + validated 2026-09-17 (`npm run check` 0 errors; bezel interaction + bezelY + copy tests pass; contrast-check pass both themes; ownership gate pass)
 
-- [ ] Hover on the collapsed tab widens to peek only — verified hover can never open the panel (strict separation from hover mode)
-- [ ] Click anywhere on the tab/peek toggles open/closed; open animates via ADR-0034 tokens (`--dur-slow:280ms`, `--ease-spring`); dock driver motion boundary respected (no driver fork)
-- [ ] Close paths: click-outside + Esc + tab toggle all close; focus loss / alt-tab / copy-paste out of the dock does NOT close (research-backed: no aggressive auto-close)
-- [ ] Discoverability: hover tooltip on the tab + one-time pulse/glow on first bezel-mode entry (dismisses permanently once seen)
-- [ ] Keyboard + screen-reader operable (focusable tab, named toggle action, announced expanded/collapsed); contrast-check pairs pass both themes
-- [ ] Interaction tests (hover-never-opens, toggle, outside/Esc close, focus-loss stays open) + `npm run check` 0 errors
-- [ ] `node tools/ownership-gate.mjs` passes; no ADR text changes (interaction lives inside the accepted motion/disclosure rules)
+- [x] Hover on the collapsed tab widens to peek only — verified hover can never open the panel (strict separation from hover mode)
+- [x] Click anywhere on the tab/peek toggles open/closed; open animates via ADR-0034 tokens (`--dur-slow:280ms`, `--ease-spring`); dock driver motion boundary respected (no driver fork)
+- [x] Close paths: click-outside + Esc + tab toggle all close; focus loss / alt-tab / copy-paste out of the dock does NOT close (research-backed: no aggressive auto-close)
+- [x] Discoverability: hover tooltip on the tab + one-time pulse/glow on first bezel-mode entry (dismisses permanently once seen)
+- [x] Keyboard + screen-reader operable (focusable tab, named toggle action, announced expanded/collapsed); contrast-check pairs pass both themes
+- [x] Interaction tests (hover-never-opens, toggle, outside/Esc close, focus-loss stays open) + `npm run check` 0 errors
+- [x] `node tools/ownership-gate.mjs` passes; no ADR text changes (interaction lives inside the accepted motion/disclosure rules)
 
 **Explicitly not built:**
 

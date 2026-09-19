@@ -6,6 +6,7 @@
     type ContextMenuState,
   } from "./ContextMenu.svelte";
   import type { DockVisibility } from "$lib/dockVisibility";
+  import { t } from "$lib/copy";
 
   let {
     value = "all",
@@ -17,14 +18,16 @@
     onchange: (next: DockVisibility) => void;
   } = $props();
 
-  const options: { value: DockVisibility; label: string }[] = [
-    { value: "all", label: "All" },
-    { value: "shown", label: "Shown in dock" },
-    { value: "hidden", label: "Hidden from dock" },
-  ];
+  // Derived (not const) so the trigger follows a language switch live; the
+  // menu itself is rebuilt on every open from these labels.
+  const options = $derived<{ value: DockVisibility; label: string }[]>([
+    { value: "all", label: t("dockfilter.all") },
+    { value: "shown", label: t("dockfilter.shown") },
+    { value: "hidden", label: t("common.hiddenFromDock") },
+  ]);
 
   const activeLabel = $derived(
-    options.find((o) => o.value === value)?.label ?? "All"
+    options.find((o) => o.value === value)?.label ?? t("dockfilter.all")
   );
   const isActive = $derived(value !== "all");
 
@@ -47,7 +50,7 @@
     }));
     menu = {
       open: true,
-      label: "Dock visibility",
+      label: t("dockfilter.label"),
       anchor: trigger ?? null,
       focusFirst: viaKeyboard,
       returnTo: trigger ?? null,
@@ -65,16 +68,16 @@
     aria-haspopup="menu"
     aria-expanded={menu?.open ?? false}
     aria-label={isActive
-      ? `Dock visibility: ${activeLabel}. Activate to change the filter.`
-      : "Dock visibility. Activate to filter the list."}
+      ? t("dockfilter.hintActive").replace("{label}", activeLabel)
+      : t("dockfilter.hintIdle")}
     title={isActive
-      ? `Dock visibility: ${activeLabel}`
-      : "Dock visibility"}
+      ? t("dockfilter.titleActive").replace("{label}", activeLabel)
+      : t("dockfilter.label")}
     data-ctx-trigger
     onclick={(e) => openMenu(e.detail === 0)}
   >
     <span class="dock-filter__text">
-      Dock visibility{isActive ? `: ${activeLabel}` : ""}
+      {t("dockfilter.label")}{isActive ? `: ${activeLabel}` : ""}
     </span>
     <span class="dock-filter__chevron" aria-hidden="true">
       <Icon name="chevron" size={13} />
@@ -83,7 +86,7 @@
   {#if isActive}
     <IconButton
       icon="x"
-      label="Reset dock visibility to All"
+      label={t("dockfilter.reset")}
       quiet
       onclick={() => onchange("all")}
     />

@@ -9,6 +9,7 @@
   import Icon from "$lib/components/Icon.svelte";
   import Notice from "$lib/components/Notice.svelte";
   import PageHeader from "$lib/components/PageHeader.svelte";
+  import { t, tCount } from "$lib/copy";
 
   /** Rows visible before "Show all" takes over (ticket 83): every family's
    *  preview stays within a fraction of a viewport, so no header buries the
@@ -60,8 +61,7 @@
     try {
       await openFolder(path);
     } catch {
-      error =
-        "Couldn't open that folder — it may have been moved or deleted. Try refreshing the list.";
+      error = t("logs.openFail");
     } finally {
       opening = null;
     }
@@ -84,12 +84,12 @@
       <Disclosure
         open={expanded[key]}
         controls={`family-${key}`}
-        ariaLabel={`Toggle the ${label} list`}
+        ariaLabel={t("logs.toggleFamily").replace("{label}", label)}
         onclick={() => (expanded[key] = !expanded[key])}
       />
       <h2 id={`family-${key}-title`} class="family__name">{label}</h2>
       <span class="family__count">
-        {entries.length} folder{entries.length === 1 ? "" : "s"} · {formatBytes(totalBytes(entries))}
+        {entries.length === 1 ? tCount("logs.folderOne", entries.length).replace("{bytes}", formatBytes(totalBytes(entries))) : tCount("logs.folderMany", entries.length).replace("{bytes}", formatBytes(totalBytes(entries)))}
       </span>
     </header>
     {#if expanded[key]}
@@ -108,7 +108,7 @@
                   {/if}
                 </span>
                 <Button variant="secondary" onclick={() => open(entry.path)} disabled={opening !== null}>
-                  <Icon name="folder" size={13} /> Open
+                  <Icon name="folder" size={13} /> {t("logs.open")}
                 </Button>
               </li>
             {/each}
@@ -119,7 +119,7 @@
               class="expander"
               onclick={() => (showAll[key] = !showAll[key])}
             >
-              {showAll[key] ? "Show fewer" : `Show all ${entries.length}`}
+              {showAll[key] ? t("logs.showFewer") : t("logs.showAllCount").replace("{count}", String(entries.length))}
             </button>
           {/if}
         {/if}
@@ -129,15 +129,14 @@
 {/snippet}
 
 <section class="logs" aria-labelledby="logs-title">
-  <PageHeader titleId="logs-title" title="Logs">
+  <PageHeader titleId="logs-title" title={t("nav.logs")}>
     {#snippet actions()}
       <Button variant="secondary" onclick={load} disabled={loading}>
-        <Icon name="refresh" size={13} /> Refresh
+        <Icon name="refresh" size={13} /> {t("common.refresh")}
       </Button>
     {/snippet}
     {#snippet subtitle()}
-      Log content is not rendered in the app; these are raw files for you and support staff.
-      Every run keeps its own folder; expired folders are pruned per the retention setting.
+      {t("logs.subtitle")}
     {/snippet}
   </PageHeader>
 
@@ -148,15 +147,14 @@
   {#if loading}
     <p class="sifting" aria-live="polite">Loading…</p>
   {:else if loadFailed || !locations}
-    <EmptyState icon="x" title="Couldn't read the log locations">
+    <EmptyState icon="x" title={t("logs.dbTitle")}>
       <p>
-        Couldn't read the log locations from
-        <span class="mono">%LOCALAPPDATA%\Sprout</span> — the folder may be missing or locked by
-        another process.
+        {t("logs.dbBody")}
+        <span class="mono">%LOCALAPPDATA%\Sprout</span>{t("logs.dbBodyTail")}
       </p>
-      <p>Try again; if it keeps failing, close the app and relaunch.</p>
+      <p>{t("logs.retryLater")}</p>
       <div class="empty-cta">
-        <Button variant="secondary" onclick={load}>Try again</Button>
+        <Button variant="secondary" onclick={load}>{t("common.retry")}</Button>
       </div>
     </EmptyState>
   {:else}
@@ -164,31 +162,31 @@
     <div class="roots">
       <article class="root">
         <div class="root__body">
-          <p class="root__name">Logs root</p>
+          <p class="root__name">{t("logs.rootName")}</p>
           <p class="root__path">{loc.logs_dir}</p>
           <p class="root__meta">
-            {loc.runs.length} run folder{loc.runs.length === 1 ? "" : "s"} ·{" "}
-            {loc.quick_action_runs.length} Quick Action run{loc.quick_action_runs.length === 1 ? "" : "s"} ·{" "}
-            {loc.quick_launch_runs.length} Quick Launch run{loc.quick_launch_runs.length === 1 ? "" : "s"} ·{" "}
+            {loc.runs.length === 1 ? tCount("logs.runsMetaOne", loc.runs.length) : tCount("logs.runsMetaMany", loc.runs.length)} ·{" "}
+            {loc.quick_action_runs.length === 1 ? tCount("logs.metaActionOne", loc.quick_action_runs.length) : tCount("logs.metaActionMany", loc.quick_action_runs.length)} ·{" "}
+            {loc.quick_launch_runs.length === 1 ? tCount("logs.metaLaunchOne", loc.quick_launch_runs.length) : tCount("logs.metaLaunchMany", loc.quick_launch_runs.length)} ·{" "}
             {formatBytes(loc.total_logs_bytes)}
           </p>
         </div>
         <div class="root__cta">
           <Button variant="secondary" onclick={() => open(loc.logs_dir)} disabled={opening !== null}>
-            <Icon name="folder" size={13} /> Open folder
+            <Icon name="folder" size={13} /> {t("logs.openFolder")}
           </Button>
         </div>
       </article>
 
       <article class="root">
         <div class="root__body">
-          <p class="root__name">Library database</p>
+          <p class="root__name">{t("logs.dbName")}</p>
           <p class="root__path">{loc.db_path}</p>
-          <p class="root__meta">{formatBytes(loc.db_size_bytes)}; holds the runs list, presets, and products</p>
+          <p class="root__meta">{t("logs.dbMeta").replace("{bytes}", formatBytes(loc.db_size_bytes))}</p>
         </div>
         <div class="root__cta">
           <Button variant="secondary" onclick={() => open(loc.data_dir)} disabled={opening !== null}>
-            <Icon name="folder" size={13} /> Open data folder
+            <Icon name="folder" size={13} /> {t("logs.openDataFolder")}
           </Button>
         </div>
       </article>
@@ -196,21 +194,21 @@
 
     {@render logSection(
       "launch",
-      "Quick Launch runs",
+      t("logs.familyLaunch"),
       loc.quick_launch_runs,
-      "No Quick Launch runs yet. Each run's started, skipped, and failed entries land in its own folder.",
+      t("logs.emptyLaunch"),
     )}
     {@render logSection(
       "actions",
-      "Quick Action runs",
+      t("logs.familyActions"),
       loc.quick_action_runs,
-      "No Quick Action runs yet. Each run's live output and its stop/exit lines land in its own folder.",
+      t("logs.emptyActions"),
     )}
     {@render logSection(
       "runs",
-      "Run folders",
+      t("logs.familyRuns"),
       loc.runs,
-      "No run folders yet. Each run's raw output lands in its own folder.",
+      t("logs.emptyRuns"),
     )}
   {/if}
 </section>

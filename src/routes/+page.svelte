@@ -55,6 +55,7 @@
   import EmptyState from "$lib/components/EmptyState.svelte";
   import Notice from "$lib/components/Notice.svelte";
   import PageFeaturesButton from "$lib/components/PageFeaturesButton.svelte";
+  import { t, tCount } from "$lib/copy";
 
   let entries = $state<LaunchEntry[]>([]);
   let loading = $state(true);
@@ -110,7 +111,6 @@
   // page contributes only its collection key and feedback channels.
   const groups = createCollectionGroups({
     collection: "launch",
-    noun: "entries",
     host: {
       begin() {
         error = "";
@@ -298,14 +298,14 @@
 
   async function addApp() {
     const picked = await open({
-      title: "Pick an application to add",
+      title: t("launch.pickTitle"),
       multiple: false,
       directory: false,
-      filters: [{ name: "Applications", extensions: ["exe", "lnk"] }],
+      filters: [{ name: t("launch.filterApps"), extensions: ["exe", "lnk"] }],
     });
     if (typeof picked !== "string") return;
     if (duplicateTarget(picked)) {
-      flash("Already in Quick Launch — nothing added.");
+      flash(t("launch.alreadyAdded"));
       return;
     }
     busy = true;
@@ -324,7 +324,7 @@
         desktop_id: null,
         show_in_dock: true,
       });
-      flash(`${name ?? picked} added to Quick Launch.`);
+      flash(t("launch.addedFlash").replace("{name}", name ?? picked));
       await load();
     } catch (e) {
       console.error(e);
@@ -336,7 +336,7 @@
 
   async function addCandidate(candidate: LaunchCandidate) {
     if (duplicateTarget(candidate.target)) {
-      flash("Already in Quick Launch — nothing added.");
+      flash(t("launch.alreadyAdded"));
       query = "";
       searchInput?.focus();
       return;
@@ -353,7 +353,7 @@
         desktop_id: null,
         show_in_dock: true,
       });
-      flash(`${candidate.name} added to Quick Launch.`);
+      flash(t("launch.addedFlash").replace("{name}", candidate.name));
       query = "";
       searchInput?.focus();
       await load();
@@ -373,7 +373,7 @@
     error = "";
     try {
       await deleteLaunchEntry(entry.id);
-      flash(`${entry.name} removed from Quick Launch.`);
+      flash(t("launch.removedFlash").replace("{name}", entry.name));
       await load();
     } catch (e) {
       console.error(e);
@@ -440,8 +440,8 @@
    *  no longer knows (the desktop was deleted) reads as "Desktop ?" — the
    *  launch falls back with a note. */
   function desktopName(id: string | null): string {
-    if (!id) return "Current desktop";
-    return desktops.find((d) => d.id === id)?.name ?? "Desktop ?";
+    if (!id) return t("menu.currentDesktop");
+    return desktops.find((d) => d.id === id)?.name ?? t("menu.desktopUnknown");
   }
 
   // The gear menu carries one row per opt-in feature (research 0008): only
@@ -450,9 +450,8 @@
   // would disappear with it (0008 rule 5).
   const featureItems = $derived([
     {
-      label: "Groups",
-      description:
-        "Bucket entries into named sections you order yourself. Groups and assignments are kept while off.",
+      label: t("features.groupsLabel"),
+      description: t("features.groupsDesc").replace("{noun}", t("groups.noun.entries")),
       value: groups.enabled,
       onchange: () => groups.toggle(),
     },
@@ -499,7 +498,7 @@
     const items: ContextMenuItem[] = [];
     if (groups.enabled) {
       items.push({
-        label: "Move to group",
+        label: t("menu.moveToGroup"),
         icon: "folder",
         children: groups.moveToGroupChildren(entry, entry.name),
       });
@@ -511,18 +510,18 @@
       const currentId =
         desktops.find((d) => d.current)?.id ?? null;
       items.push({
-        label: "Virtual desktop",
+        label: t("menu.virtualDesktop"),
         icon: "monitor",
         children: [
           {
-            label: "No assignment",
+            label: t("menu.noAssignment"),
             checked: entry.desktop_id === null,
             onselect: () => assignDesktop(entry, null),
           },
           ...(currentId
             ? [
                 {
-                  label: "Current desktop",
+                  label: t("menu.currentDesktop"),
                   checked: entry.desktop_id === currentId,
                   onselect: () => assignDesktop(entry, currentId),
                 },
@@ -536,7 +535,7 @@
               onselect: () => assignDesktop(entry, d.id),
             })),
           {
-            label: "New desktop…",
+            label: t("menu.newDesktop"),
             icon: "plus",
             onselect: () => newDesktop(entry),
           },
@@ -544,13 +543,13 @@
       });
     }
     items.push({
-      label: (entry.show_in_dock ?? true) ? "Hide from dock" : "Show in dock",
+      label: (entry.show_in_dock ?? true) ? t("menu.hideFromDock") : t("common.showInDock"),
       icon: (entry.show_in_dock ?? true) ? "eye-off" : "eye",
       onselect: () => toggleDockVisibility(entry),
     });
     items.push(
       {
-        label: "Move up",
+        label: t("menu.moveUp"),
         icon: "chevron-up",
         // Filtered neighbors are not saved neighbors: refuse to reorder
         // through them rather than write a surprising order.
@@ -558,14 +557,14 @@
         onselect: () => move(entry.id, entries.indexOf(slice[index - 1])),
       },
       {
-        label: "Move down",
+        label: t("menu.moveDown"),
         icon: "chevron-down",
         disabled: index >= slice.length - 1 || reorderBlocked,
         onselect: () => move(entry.id, entries.indexOf(slice[index + 1])),
       },
       { label: "", separator: true, onselect: () => {} },
       {
-        label: "Remove",
+        label: t("common.remove"),
         icon: "trash",
         danger: true,
         onselect: () => (deleting = entry),
@@ -574,7 +573,7 @@
     menu = {
       entryId: entry.id,
       open: true,
-      label: `Actions for ${entry.name}`,
+      label: t("packet.actionsFor").replace("{name}", entry.name),
       anchor,
       focusFirst: viaKeyboard,
       returnTo: anchor,
@@ -600,7 +599,7 @@
       ? {
           ...groupMenu,
           items: groupMenu.items.map((item) =>
-            item.label === "Move up" || item.label === "Move down"
+            item.label === t("menu.moveUp") || item.label === t("menu.moveDown")
               ? { ...item, disabled: true }
               : item
           ),
@@ -619,8 +618,8 @@
       await updateLaunchEntry({ ...entry, desktop_id: id });
       flash(
         id
-          ? `${entry.name} will open on ${desktopName(id)}.`
-          : `${entry.name} will open wherever you start it — no desktop assignment.`
+          ? t("launch.desktopSet").replace("{name}", entry.name).replace("{desktop}", desktopName(id))
+          : t("launch.desktopCleared").replace("{name}", entry.name),
       );
       await load();
     } catch (e) {
@@ -642,8 +641,8 @@
       await updateLaunchEntry({ ...entry, show_in_dock: visible });
       flash(
         visible
-          ? `${entry.name} will show in the dock.`
-          : `${entry.name} hidden from the dock — still here and runnable.`
+          ? t("launch.dockShown").replace("{name}", entry.name)
+          : t("launch.dockHidden").replace("{name}", entry.name),
       );
       await load();
     } catch (e) {
@@ -663,12 +662,12 @@
     try {
       const id = await createVirtualDesktop();
       if (!id) {
-        error = "Windows did not create the desktop — try again.";
+        error = t("launch.desktopCreateFail");
         return;
       }
       await updateLaunchEntry({ ...entry, desktop_id: id });
       await Promise.all([loadVirtualDesktops(), load()]);
-      flash(`${entry.name} will open on the new desktop.`);
+      flash(t("launch.desktopNew").replace("{name}", entry.name));
     } catch (e) {
       console.error(e);
       error = String(e);
@@ -679,7 +678,7 @@
 </script>
 
 <svelte:head>
-  <title>Quick Launch — Sprout</title>
+  <title>{t("nav.launch")} — Sprout</title>
 </svelte:head>
 
 {#snippet entryRow(entry: LaunchEntry)}
@@ -711,7 +710,7 @@
            exactly when supported && assigned, no placeholder column. -->
       <span
         class="rack__desk"
-        title={`Opens on ${desktopName(entry.desktop_id)}`}
+        title={t("menu.opensOn").replace("{desktop}", desktopName(entry.desktop_id))}
       >
         {desktopName(entry.desktop_id)}
       </span>
@@ -719,9 +718,9 @@
     {#if !isDockVisible(entry)}
       <!-- The dock-hidden annotation (ADR-0028): informational only — the
            entry stays fully runnable here; only the dock filters it out. -->
-      <span class="rack__dock" title="Hidden from dock">
+      <span class="rack__dock" title={t("common.hiddenFromDock")}>
         <Icon name="eye-off" size={12} />
-        <span>Hidden from dock</span>
+        <span>{t("common.hiddenFromDock")}</span>
       </span>
     {/if}
     <span class="rack__target" title={entry.target}>{entry.target}</span>
@@ -729,21 +728,21 @@
       <!-- Ticket 94: the run is in flight until the backend's
            `launch-run-done` lands (research 0004 rule 5 — silence reads as
            breakage). -->
-      <span class="rack__starting">Starting…</span>
+      <span class="rack__starting">{t("common.busy.starting")}</span>
     {/if}
     <!-- Ticket 94: the row's own run affordance — a quiet icon control like
          the ⋯ beside it (research 0005 rule 5); the header's Start keeps the
          page's single accent-filled verb (research 0005 rule 2). -->
     <IconButton
       icon="play"
-      label={`Start ${entry.name}`}
+      label={t("launch.startName").replace("{name}", entry.name)}
       quiet
       disabled={startInFlight}
       onclick={() => startEntry(entry)}
     />
     <IconButton
       icon="dots"
-      label={`Actions for ${entry.name}`}
+      label={t("packet.actionsFor").replace("{name}", entry.name)}
       quiet
       data-ctx-trigger
       onclick={(e) =>
@@ -757,7 +756,7 @@
 {/snippet}
 
 <section class="launch" aria-labelledby="launch-title">
-  <PageHeader titleId="launch-title" title="Quick Launch">
+  <PageHeader titleId="launch-title" title={t("nav.launch")}>
     {#snippet actions()}
       <Button
         onclick={start}
@@ -768,10 +767,10 @@
       >
         <Icon name="play" size={15} />
         {launching
-          ? "Starting…"
+          ? t("common.busy.starting")
           : isFiltering
-            ? `Start matching (${matchedCount})`
-            : "Start"}
+            ? t("launch.startMatching").replace("{count}", String(matchedCount))
+            : t("launch.start")}
       </Button>
       <Button
         variant="secondary"
@@ -780,24 +779,24 @@
         disabled={busy}
       >
         <Icon name="plus" size={15} />
-        Add
+        {t("common.add")}
       </Button>
     {/snippet}
     {#snippet subtitle()}
-      {matchedCount} {matchedCount === 1 ? "entry" : "entries"}
+      {matchedCount === 1 ? tCount("launch.countOne", matchedCount) : tCount("launch.countMany", matchedCount)}
       {isFiltering
         ? matchedCount === 1
-          ? " matches your filter."
-          : " match your filter."
-        : "."}
-      The tray's left-click opens Quick Launch — one click starts them together.
+          ? t("launch.filterOne")
+          : t("launch.filterMany")
+        : t("launch.filterNone")}
+      {t("launch.trayHint")}
     {/snippet}
     {#snippet toolbar()}
       <div class="toolbar">
         <SearchInput
           value={filter}
-          placeholder="Filter Quick Launch…"
-          ariaLabel="Filter Quick Launch"
+          placeholder={t("launch.filterPh")}
+          ariaLabel={t("launch.filterLabel")}
           onchange={(v) => (filter = v)}
         />
         {#if showDockFilter}
@@ -809,7 +808,7 @@
       </div>
     {/snippet}
     {#snippet features()}
-      <PageFeaturesButton label="Quick Launch features" items={featureItems} />
+      <PageFeaturesButton label={t("launch.featuresLabel")} items={featureItems} />
     {/snippet}
   </PageHeader>
 
@@ -822,20 +821,20 @@
 
   {#if reorderBlocked && entries.length > 0}
     <p class="reorder-note">
-      Reordering is paused while filters are active.
+      {t("launch.reorderPaused")}
       <button
         type="button"
         class="reorder-note__clear"
         onclick={clearFilters}
       >
-        Clear filters
+        {t("common.clearFilters")}
       </button>
-      to reorder.
+      {t("launch.reorderTail")}
     </p>
   {/if}
 
   {#if addOpen}
-    <section class="add-panel" aria-label="Add to Quick Launch">
+    <section class="add-panel" aria-label={t("launch.addPanelLabel")}>
       <div class="add-panel__search">
         <span class="add-panel__search-icon" aria-hidden="true">
           <Icon name="search" size={14} />
@@ -844,8 +843,8 @@
           bind:this={searchInput}
           class="add-panel__search-input"
           type="search"
-          placeholder="Search installed apps…"
-          aria-label="Search installed apps"
+          placeholder={t("launch.searchAppsPh")}
+          aria-label={t("launch.searchAppsLabel")}
           autocomplete="off"
           bind:value={query}
           onkeydown={(e) => {
@@ -859,8 +858,8 @@
           <button
             type="button"
             class="add-panel__search-clear"
-            aria-label="Clear search"
-            title="Clear search"
+            aria-label={t("common.clearSearch")}
+            title={t("common.clearSearch")}
             onclick={() => {
               query = "";
               searchInput?.focus();
@@ -872,20 +871,20 @@
       </div>
 
       {#if query.trim()}
-        <div class="hits" aria-label="Installed-app search results">
+        <div class="hits" aria-label={t("launch.hitsLabel")}>
           {#if candidatesLoading}
-            <p class="hits__hint">Scanning installed apps…</p>
+            <p class="hits__hint">{t("launch.scanning")}</p>
           {:else if candidatesFailed}
             <Notice tone="error">
-              Could not scan this machine's installed apps. Try again.
+              {t("launch.scanFail")}
             </Notice>
           {:else if matches.length === 0}
             <p class="hits__hint">
-              Nothing installed matches “{query.trim()}”.
+              {t("launch.noHitFor").replace("{query}", query.trim())}
             </p>
           {:else}
             <p class="hits__hint">
-              {matches.length} {matches.length === 1 ? "match" : "matches"}.
+              {matches.length === 1 ? tCount("launch.hitsOne", matches.length) : tCount("launch.hitsMany", matches.length)}
             </p>
             <ul class="hits__list">
               {#each matches as candidate (candidate.target)}
@@ -894,7 +893,7 @@
                     type="button"
                     class="hits__row"
                     disabled={busy}
-                    title={`Add ${candidate.name}`}
+                    title={t("launch.addName").replace("{name}", candidate.name)}
                     onclick={() => addCandidate(candidate)}
                     use:lazyIcon={candidate.target}
                   >
@@ -925,11 +924,11 @@
       <div class="add-panel__alt">
         <Button variant="ghost" onclick={addApp} disabled={busy}>
           <Icon name="folder" size={14} />
-          Pick a file…
+          {t("launch.pickFile")}
         </Button>
         <Button variant="ghost" onclick={() => (commandOpen = true)} disabled={busy}>
           <Icon name="terminal" size={14} />
-          Add command…
+          {t("launch.addCommand")}
         </Button>
       </div>
     </section>
@@ -938,39 +937,37 @@
   {#if loading && entries.length === 0}
     <p class="sifting" aria-live="polite">Loading…</p>
   {:else if loadFailed}
-    <Notice tone="error">Could not load the Quick Launch list.</Notice>
+    <Notice tone="error">{t("launch.loadFail")}</Notice>
   {:else if entries.length === 0}
-    <EmptyState icon="rocket" title="Nothing to launch yet">
+    <EmptyState icon="rocket" title={t("launch.emptyTitle")}>
       <p>
-        Press <strong>Add</strong> to search this machine's installed apps,
-        pick a file, or write a custom command. The tray's left-click opens
-        Quick Launch — one click starts them together.
+        {t("common.emptyPress")}<strong>{t("common.add")}</strong>{t("launch.emptyBodyTail")}
       </p>
     </EmptyState>
   {:else if matchedCount === 0 && filter.trim() !== ""}
-    <EmptyState title={`Nothing matches “${filter.trim()}”`}>
-      <p>Try a different name, or clear the filter to see every entry.</p>
+    <EmptyState title={t("common.noMatchFor").replace("{query}", filter.trim())}>
+      <p>{t("launch.noMatchBody")}</p>
       <div class="empty-cta">
         <Button variant="secondary" onclick={() => (filter = "")}>
-          Clear filter
+          {t("common.clearFilter")}
         </Button>
         {#if dockVisibility !== "all"}
           <Button variant="secondary" onclick={() => (dockVisibility = "all")}>
-            Show all
+            {t("common.showAll")}
           </Button>
         {/if}
       </div>
     </EmptyState>
   {:else if matchedCount === 0}
-    <EmptyState title="No entries match this filter.">
+    <EmptyState title={t("launch.noFilterTitle")}>
       {#if dockVisibility === "hidden"}
-        <p>No entries are hidden from the dock right now.</p>
+        <p>{t("launch.noHiddenNow")}</p>
       {:else}
-        <p>Every entry is hidden from the dock.</p>
+        <p>{t("launch.everyHidden")}</p>
       {/if}
       <div class="empty-cta">
         <Button variant="secondary" onclick={() => (dockVisibility = "all")}>
-          Show all
+          {t("common.showAll")}
         </Button>
       </div>
     </EmptyState>
@@ -993,7 +990,7 @@
         {#snippet actions()}
           <IconButton
             icon="dots"
-            label={`Actions for group ${section.group.name}`}
+            label={t("groups.menuLabel").replace("{name}", section.group.name)}
             quiet
             data-ctx-trigger
             onclick={(e) =>
@@ -1010,7 +1007,7 @@
           {/each}
           {#if section.rows.length === 0}
             <li class="rack__hint">
-              No entries here yet — use an entry's ⋯ menu to move one in.
+              {t("launch.emptyGroupHint")}
             </li>
           {/if}
         </ul>
@@ -1027,29 +1024,27 @@
 
 <ConfirmDialog
   open={deleting !== null}
-  title="Remove from Quick Launch?"
-  confirmLabel="Remove"
+  title={t("launch.removeTitle")}
+  confirmLabel={t("common.remove")}
   danger
   onconfirm={remove}
   oncancel={() => (deleting = null)}
 >
   <p>
-    <strong>{deleting?.name}</strong> will no longer be started by Quick
-    Launch. The app itself is untouched.
+    <strong>{deleting?.name}</strong>{t("launch.removeBodyTail")}
   </p>
 </ConfirmDialog>
 
 <ConfirmDialog
   open={groups.removing !== null}
-  title="Remove group?"
-  confirmLabel="Remove"
+  title={t("dialog.removeGroupTitle")}
+  confirmLabel={t("common.remove")}
   danger
   onconfirm={() => groups.removeGroup()}
   oncancel={() => groups.cancelRemove()}
 >
   <p>
-    <strong>{groups.removing?.name}</strong> will be deleted. Its entries will
-    not be — they return to the ungrouped list.
+    <strong>{groups.removing?.name}</strong>{t("dialog.removeGroupBody").replace("{noun}", t("groups.noun.entries"))}
   </p>
 </ConfirmDialog>
 
@@ -1059,7 +1054,7 @@
   error={groups.nameError}
   saving={groups.savingName}
   inputId="launch-group-name"
-  placeholder="e.g. Daily drivers"
+  placeholder={t("launch.groupEx")}
   ondraft={(v) => (groups.nameDraft = v)}
   onsubmit={() => groups.submitName()}
   onclose={() => groups.cancelNaming()}

@@ -7,6 +7,7 @@
     CompanionAudioState,
     CompanionHistoryState,
     CompanionSite,
+    DisplayInfo,
     Group,
     LaunchEntry,
     LaunchReport,
@@ -46,6 +47,13 @@
     setCompanionUrl,
     setCompanionUrlList,
     listDisplays,
+    getBezelCollapsedWidth,
+    getBezelPeekWidth,
+    getBezelOpenWidth,
+    getBezelTabHeight,
+    getBezelTabY,
+    getDisplayBezelYRatio,
+    setDisplayBezelYRatio,
     COMPANION_DESKTOP_UA,
     COMPANION_MOBILE_UA,
   } from "$lib/api";
@@ -63,8 +71,9 @@
   import { createGroupCollapse } from "$lib/groupCollapse.svelte";
   import type { QuickLaunchDockState } from "$lib/types";
   import { restoreTheme, type ThemeMode } from "$lib/theme.svelte";
-  import { restoreAnimation, type AnimationMode } from "$lib/animation.svelte";
+  import { animation, restoreAnimation, type AnimationMode } from "$lib/animation.svelte";
   import { titleBarDragRegion } from "$lib/quickLaunchTitleBar";
+  import { t, tCount } from "$lib/copy";
   import {
     companionWebviewBounds,
     companionZoomForWidth,
@@ -93,7 +102,7 @@
   import Tabs from "$lib/components/Tabs.svelte";
   // Companion WebView2 (ticket 125): direct navigation so X-Frame-Options never blocks
   // (learn.microsoft.com/webview2/concepts/frames). Use Webview API when in Tauri.
-  import { LogicalPosition, LogicalSize } from "@tauri-apps/api/dpi";
+  import { LogicalPosition, LogicalSize, PhysicalPosition, PhysicalSize } from "@tauri-apps/api/dpi";
   import { getCurrentWindow } from "@tauri-apps/api/window";
   import { Webview } from "@tauri-apps/api/webview";
 
@@ -150,7 +159,6 @@
   let runNoticeTimer: ReturnType<typeof setTimeout> | undefined;
   let error = $state("");
   let tab = $state("launch");
-  const SEAM_REASON = "Borders another display — cursor can't stop there";
 
   // Ticket 59: the dock state is never null — while the window floats it
   // carries the target edge/mode the toggle would dock to (`docked: false`),
@@ -276,8 +284,9 @@
   // never lands must say so instead of hanging forever with no pane and no
   // word anywhere (ADR-0022 Companion is a native WebView2 child).
   const COMPANION_BORN_TIMEOUT_MS = 10_000;
-  const COMPANION_BORN_TIMEOUT_MSG =
-    "Couldn't show the companion pane — it never finished loading.";
+  // Compared and set through the same key so a language switch between the
+  // failure and the next sync still clears the line.
+  const bornTimeoutMessage = () => t("quickwindow.paneBornFail");
   let companionSyncRunning = false;
   let companionSyncPending = false;
   // Monotonic id for refreshCompanion runs — a run superseded by a newer one
@@ -360,7 +369,10 @@
     companionWebviewFailed = false;
     companionFailedUrl = null;
     companionFailureDetail = "";
-    companionSwitchAnnouncement = `Switched Companion to ${companionDisplayName(latest)}.`;
+    companionSwitchAnnouncement = t("quickwindow.switchedTo").replace(
+      "{name}",
+      companionDisplayName(latest),
+    );
     void syncCompanionWebview();
   }
 
@@ -369,7 +381,10 @@
     onPending: (site) => {
       companionSwitchingTo = site;
       if (site) {
-        companionSwitchAnnouncement = `Switching Companion to ${companionDisplayName(site)}…`;
+        companionSwitchAnnouncement = t("quickwindow.switchingTo").replace(
+          "{name}",
+          companionDisplayName(site),
+        );
       }
     },
     onApplied: applyCompanionSite,
@@ -383,7 +398,9 @@
         companionPendingTrailKey = null;
       }
       console.error("companion site switch failed", switchError);
-      error = `Couldn't switch Companion to ${companionDisplayName(site)} — ${String(switchError)}`;
+      error = t("quickwindow.switchFail")
+        .replace("{site}", companionDisplayName(site))
+        .replace("{detail}", String(switchError));
     },
     onIdle: () => void refreshCompanion(),
   });
@@ -396,7 +413,7 @@
     ) {
       return;
     }
-    if (error.startsWith("Couldn't switch Companion to ")) error = "";
+    if (error.startsWith(t("quickwindow.switchPrefix"))) error = "";
     if (error.startsWith("Couldn't go back") || error.startsWith("Couldn't go forward")) {
       error = "";
     }
@@ -420,12 +437,12 @@
     }));
     items.push(
       { label: "", separator: true, onselect: () => {} },
-      { label: "Manage in Sprout…", onselect: () => void manageCompanionSites() },
+      { label: t("quickwindow.manageSites"), onselect: () => void manageCompanionSites() },
     );
     return {
       open: true,
       items,
-      label: "Saved Companion sites",
+      label: t("quickwindow.savedSites"),
       anchor: companionSiteTrigger ?? null,
       focusFirst: companionSiteMenuFocusFirst,
       returnTo: companionSiteTrigger ?? null,
@@ -459,7 +476,7 @@
       await openCompanionManager();
     } catch (manageError) {
       console.error("companion manager open failed", manageError);
-      error = `Couldn't open the Companion manager — ${String(manageError)}`;
+      error = t("quickwindow.managerFail").replace("{detail}", String(manageError));
     }
   }
 
@@ -517,25 +534,25 @@
     if (!companionMoreMenuOpen || companionOverflowStage < 1) return null;
     const items: ContextMenuItem[] = [
       {
-        label: "Zoom out",
+        label: t("quickwindow.menuZoomOut"),
         icon: "minus",
         disabled: companionZoomSaving || companionShownZoom <= 0.5,
         onselect: () => void companionZoomStep(-1),
       },
       {
-        label: "Reset zoom",
+        label: t("quickwindow.menuZoomReset"),
         icon: "refresh",
         disabled: companionZoomSaving || companionZoomAuto,
         onselect: () => void companionZoomReset(),
       },
       {
-        label: "Zoom in",
+        label: t("quickwindow.menuZoomIn"),
         icon: "plus",
         disabled: companionZoomSaving || companionShownZoom >= 2,
         onselect: () => void companionZoomStep(1),
       },
       {
-        label: companionMixerOpening ? "Opening volume mixer" : "Volume mixer",
+        label: companionMixerOpening ? t("quickwindow.menuMixerOpening") : t("quickwindow.menuMixer"),
         icon: "sliders",
         disabled: companionMixerOpening,
         onselect: () => void openMixer(),
@@ -543,7 +560,7 @@
     ];
     if (companionOverflowStage >= 2) {
       items.push({
-        label: companionMuted ? "Unmute" : "Mute",
+        label: companionMuted ? t("quickwindow.menuUnmute") : t("quickwindow.menuMute"),
         icon: companionMuted ? "volume-muted" : "volume",
         checked: companionMuted,
         disabled: companionMuteBusy,
@@ -553,7 +570,7 @@
     return {
       open: true,
       items,
-      label: "More Companion actions",
+      label: t("quickwindow.moreMenuLabel"),
       anchor: companionMoreAnchor,
       focusFirst: companionMoreMenuFocusFirst,
       returnTo: companionMoreAnchor,
@@ -677,11 +694,11 @@
         // instead of looking applied (research 0004 rule 5: silence reads
         // as breakage).
         console.error(e);
-        error = `Couldn't save the Companion height for this screen — ${String(e)}`;
+        error = t("settings.companionHeightFail").replace("{detail}", String(e));
       }
     } catch (e) {
       console.error(e);
-      error = `Couldn't save the Companion height — ${String(e)}`;
+      error = t("quickwindow.heightFail").replace("{detail}", String(e));
     }
   }
   async function refreshCompanion() {
@@ -708,8 +725,9 @@
     // unknown screen) stays a silent global fallback as before.
     const RESOLVE_ATTEMPTS = 3;
     const RESOLVE_RETRY_MS = 150;
-    const RESOLVE_FAILED_MSG =
-      "Couldn't read the Companion height for this screen — using the Settings height.";
+    // Set and cleared through the same key so a language switch between the
+    // failure and the next sync still clears the line.
+    const resolveFailedMessage = () => t("quickwindow.heightResolveFail");
     let perMonitor: number | null = null;
     let displayResolved = false;
     for (let attempt = 0; ; attempt++) {
@@ -717,12 +735,12 @@
         const display = await resolveCompanionDisplay();
         if (display) {
           displayResolved = true;
-          if (error === RESOLVE_FAILED_MSG) error = "";
+          if (error === resolveFailedMessage()) error = "";
           try {
             perMonitor = await getCompanionHeightRatio(display);
           } catch (e) {
             console.error(e);
-            error = `Couldn't read the Companion height for this screen — ${String(e)}`;
+            error = t("quickwindow.heightReadFail").replace("{detail}", String(e));
           }
           break;
         }
@@ -734,7 +752,7 @@
       await refreshDock();
     }
     if (!displayResolved && dock.docked && url) {
-      error = RESOLVE_FAILED_MSG;
+      error = resolveFailedMessage();
     }
     // A newer refresh started while this one was awaiting — its results win.
     // Applying these stale ones here would resurrect a pre-save URL after an
@@ -847,7 +865,7 @@
     try {
       await openCompanionExternal(companionUrl);
     } catch (e) {
-      error = `Couldn't open the companion in your browser — ${String(e)}`;
+      error = t("quickwindow.browserOpenFail").replace("{detail}", String(e));
     } finally {
       companionOpeningExternal = false;
     }
@@ -860,7 +878,7 @@
     try {
       await openVolumeMixer();
     } catch (e) {
-      error = `Couldn't open the volume mixer — ${String(e)}`;
+      error = t("quickwindow.mixerFail").replace("{detail}", String(e));
     } finally {
       companionMixerOpening = false;
     }
@@ -877,7 +895,9 @@
       companionPlaying = next.playing;
     } catch (e) {
       console.error(e);
-      error = `Couldn't ${wasMuted ? "unmute" : "mute"} the companion — ${String(e)}`;
+      error = wasMuted
+        ? t("quickwindow.unmuteFail").replace("{detail}", String(e))
+        : t("quickwindow.muteFail").replace("{detail}", String(e));
     } finally {
       companionMuteBusy = false;
     }
@@ -940,7 +960,7 @@
       companionUrlList = list;
     } catch (e) {
       console.error("companion zoom save failed", e);
-      error = `Couldn't save the Companion zoom — ${String(e)}`;
+      error = t("quickwindow.zoomSaveFail").replace("{detail}", String(e));
     } finally {
       companionZoomSaving = false;
     }
@@ -1035,6 +1055,694 @@
     void syncCompanionWebview();
     void persistCompanionRatio();
   }
+
+  // The bezel tab's parked height (spec 214, ADR-0020): the collapsed tab
+  // sits where the user dragged it vertically, remembered per display under
+  // the identity-keyed dock memory beside edge/mode/width. Ratio 0..1 of the
+  // tab's travel, centered until dragged — the clamp mirrors the backend
+  // validation (a broken read centers); every pixel derives from the backend
+  // commands, never JS geometry. The grip sits on the tab it moves (research
+  // 0006 pattern 4); arrows give keyboard/screen-reader parity so drag is
+  // never the only path (research 0008 rule 3).
+  const isBezelDock = $derived(dock.docked && (dock.mode as string) === "bezel");
+  let bezelYRatio = $state(0.5);
+  let bezelDragging = $state(false);
+  function clampBezelYRatio(v: number): number {
+    const f = Number(v);
+    if (!Number.isFinite(f)) return 0.5;
+    return Math.min(1, Math.max(0, f));
+  }
+  // The live dock's monitor as a display id — the same dock→arrangement
+  // match the Companion ratio resolve uses. Null while floating or when the
+  // docked screen is gone: disconnect centers without persisting, so the tab
+  // is never lost off-screen.
+  async function resolveBezelDisplay(): Promise<string | null> {
+    if (!dock.docked || !dock.monitor) return null;
+    try {
+      const displays = await listDisplays();
+      const match =
+        displays.find((d) => d.device_name === dock.monitor) ??
+        (dock.monitor_identity
+          ? displays.find((d) => d.identity === dock.monitor_identity)
+          : undefined);
+      return match?.device_name ?? null;
+    } catch {
+      return null;
+    }
+  }
+  async function refreshBezelY() {
+    // Ordered reads: dock state first (which monitor the dock sits on and
+    // whether it is a bezel tab at all), then that monitor's remembered
+    // ratio — the backend state can lag the window right after a dock toggle.
+    await refreshDock();
+    if (!isBezelDock) return;
+    try {
+      const display = await resolveBezelDisplay();
+      if (!display) {
+        bezelYRatio = 0.5;
+        return;
+      }
+      const stored = await getDisplayBezelYRatio(display);
+      bezelYRatio = clampBezelYRatio(stored ?? 0.5);
+    } catch (e) {
+      console.error(e);
+      bezelYRatio = 0.5;
+    }
+  }
+  async function persistBezelYRatio() {
+    try {
+      const display = await resolveBezelDisplay();
+      if (!display) return;
+      await setDisplayBezelYRatio(display, clampBezelYRatio(bezelYRatio));
+    } catch (e) {
+      console.error(e);
+      error = t("quickwindow.bezelSaveFail").replace("{detail}", String(e));
+    }
+  }
+  // Moves the live tab to `ratio` without persisting — the drag's live pass
+  // and the keyboard nudge share it; the caller persists. The snapped top
+  // comes from the backend's single size source; the drift watchdog skips
+  // bezel overlays, so nothing yanks the tab back mid-drag.
+  // WHY size rides along: position-only tracking would strand a peeked width
+  // on drop with no hover cycle left to collapse it — one rect per placement
+  // keeps every drag deterministic (ADR-0021 single size source, ADR-0019 one
+  // writer wins).
+  function placeBezelTab(ratio: number, startX?: number): Promise<void> {
+    if (!isTauri) return Promise.resolve();
+    return queueBezelMove(`tab:${ratio.toFixed(3)}`, async (gen) => {
+      const display = await resolveBezelDisplay();
+      if (!display || gen !== bezelPlaceGen) return;
+      const displays = await listDisplays();
+      const info = displays.find((d) => d.device_name === display);
+      if (!info || gen !== bezelPlaceGen) return;
+      const win = getCurrentWindow();
+      const [top, collapsedW, tabHeight] = await Promise.all([
+        getBezelTabY(info.y, info.height, clampBezelYRatio(ratio)),
+        getBezelCollapsedWidth(),
+        getBezelTabHeight(info.height),
+      ]);
+      if (gen !== bezelPlaceGen) return;
+      // The drag caches its start X once: re-reading the live position
+      // mid-gesture wobbles against concurrent placements and feeds the
+      // hold-jitter loop the drag report describes.
+      const x = startX ?? (await win.outerPosition()).x;
+      if (gen !== bezelPlaceGen) return;
+      await Promise.all([
+        win.setSize(new PhysicalSize(collapsedW, tabHeight)),
+        win.setPosition(new PhysicalPosition(x, top)),
+      ]);
+    }).catch((e) => {
+      console.error(e);
+    });
+  }
+  function onBezelGripPointerDown(e: PointerEvent) {
+    if (e.button !== 0) return;
+    // Single-flight: a leaked session (a pointerup that never landed, e.g.
+    // released off-window without capture) must never double the next drag —
+    // two sessions answering the same moves park alternating old/new
+    // positions, the hold-jitter shape. Detach any straggler first.
+    endBezelDragListeners();
+    const grip = e.currentTarget as Element;
+    try {
+      grip.setPointerCapture(e.pointerId);
+    } catch {}
+    const startScreenY = e.screenY;
+    const startRatio = bezelYRatio;
+    const startPointerId = e.pointerId;
+    let moved = false;
+    let lastSentRatio = startRatio;
+    let lastScreenY = startScreenY;
+    let settle: Promise<void> = Promise.resolve();
+    // WHY hover dies at press: a lagging window slides under the cursor
+    // mid-gesture, and each boundary cross would otherwise queue a peek/unpeek
+    // placement against the drag's — alternating writers read as teleporting
+    // between the old and new spot (ADR-0019 one writer wins). The held grip
+    // owns the window until release.
+    bezelPeeking = false;
+    cancelBezelUnpeek();
+    // Prefetched once: the monitor's travel in physical px, the window's
+    // scale, and the tab's screen-edge anchor X — so every move is arithmetic.
+    // The X is derived, never re-read: a mid-gesture read can land mid-tween
+    // and pin a stale edge for the rest of the hold. The snapped top still
+    // comes from the backend per move.
+    const geom = (async () => {
+      try {
+        const win = getCurrentWindow();
+        const display = await resolveBezelDisplay();
+        if (!display) return null;
+        const displays = await listDisplays();
+        const info = displays.find((d) => d.device_name === display);
+        if (!info) return null;
+        const [tabHeight, scale, collapsedW] = await Promise.all([
+          getBezelTabHeight(info.height),
+          win.scaleFactor(),
+          getBezelCollapsedWidth(),
+        ]);
+        const travel = Math.max(0, info.height - tabHeight);
+        const startX = dock.edge === "left" ? info.x : info.x + info.width - collapsedW;
+        return { travel, scale, startX };
+      } catch (err) {
+        console.error(err);
+        return null;
+      }
+    })();
+    const onMove = async (ev: PointerEvent) => {
+      // Belongs to this hold: the moving window synthesizes button-free moves
+      // under a stationary cursor, and each one would otherwise steer the drag
+      // back toward the old spot — alternating writers read as teleporting. A
+      // second pointer must never steer either.
+      if ((ev.buttons & 1) === 0 || ev.pointerId !== startPointerId) return;
+      // WHY screenY, never clientY: clientY is viewport-relative, so every
+      // window move under a stationary OS cursor shifts it (clientY =
+      // screenY - windowTop) and the next synthetic held-button move steers
+      // back toward the old spot — the hold-still A<->B teleport loop. screenY
+      // is OS-stable across window moves, so holding still computes no delta.
+      if (!moved && Math.abs(ev.screenY - startScreenY) < 3) return;
+      // Hold-still synthetic moves share the last screenY exactly — they carry
+      // a shifted clientY but zero hand motion, so they never reach the bridge.
+      if (moved && ev.screenY === lastScreenY) return;
+      const g = await geom;
+      if (!g || g.travel <= 0) return;
+      const ratio = clampBezelYRatio(
+        startRatio + ((ev.screenY - startScreenY) * g.scale) / g.travel,
+      );
+      // Tremor below ~1.5 physical px never reaches the bridge: a held button
+      // with a shaky hand would otherwise queue a placement per poll.
+      if (moved && Math.abs(ratio - lastSentRatio) * g.travel < 1.5) return;
+      moved = true;
+      bezelDragging = true;
+      lastSentRatio = ratio;
+      lastScreenY = ev.screenY;
+      bezelYRatio = ratio;
+      settle = placeBezelTab(ratio, g.startX);
+      await settle;
+    };
+    const onUp = async () => {
+      endBezelDragListeners();
+      bezelDragging = false;
+      if (moved) {
+        await settle;
+        await persistBezelYRatio();
+      }
+      // A tap without drag toggles like the tab itself — open stays
+      // click-gated (ADR-0019 bezel amendment).
+      else toggleBezelPanel();
+    };
+    bezelDragMove = onMove;
+    bezelDragUp = onUp;
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+    window.addEventListener("pointercancel", onUp);
+  }
+  // The live drag session's listeners, so a new press can detach a leaked
+  // pair before starting its own (see onBezelGripPointerDown). Plain refs,
+  // never reactive: only compared, never rendered.
+  let bezelDragMove: ((ev: PointerEvent) => void) | null = null;
+  let bezelDragUp: (() => void) | null = null;
+  function endBezelDragListeners() {
+    if (bezelDragMove) window.removeEventListener("pointermove", bezelDragMove);
+    if (bezelDragUp) {
+      window.removeEventListener("pointerup", bezelDragUp);
+      window.removeEventListener("pointercancel", bezelDragUp);
+    }
+    bezelDragMove = null;
+    bezelDragUp = null;
+  }
+  function onBezelGripKeyDown(e: KeyboardEvent) {
+    let next: number;
+    switch (e.key) {
+      case "ArrowUp":
+        next = bezelYRatio - 0.05;
+        break;
+      case "ArrowDown":
+        next = bezelYRatio + 0.05;
+        break;
+      case "Home":
+        next = 0;
+        break;
+      case "End":
+        next = 1;
+        break;
+      default:
+        return;
+    }
+    e.preventDefault();
+    bezelYRatio = clampBezelYRatio(next);
+    void placeBezelTab(bezelYRatio).then(() => persistBezelYRatio());
+  }
+
+  // The bezel open/close interaction: collapsed shows just the tab, a click
+  // toggles the full panel, click-outside and Esc close it. Hover only peeks
+  // wider and can never open — open stays click-gated (ADR-0019 bezel
+  // amendment; research 0011 study D: brushes must not open). Focus loss
+  // alone never closes, so alt-tab and copy-paste out of the dock leave the
+  // panel alone. Every pixel comes from the backend's single size source
+  // (ADR-0021); the driver performs no bezel motion (ADR-0019), so this
+  // placement is the only writer while bezel.
+  let bezelOpen = $state(false);
+  let bezelPeeking = $state(false);
+  // The bezel window-motion sequencer: every bezel window move — a tweened
+  // open/close/peek or one direct drag write — funnels through one chain, so
+  // writes land in request order and a superseded request never paints after
+  // a newer one (the drag-hold jitter shape: a stale move's late setPosition
+  // landing after the live one). Newest wins; the chain never wedges on an
+  // error (ADR-0019: one writer wins).
+  // Plain flags, never reactive: only compared, never rendered.
+  let bezelPlaceGen = 0;
+  let bezelTail: Promise<void> = Promise.resolve();
+  // [DEBUG-bezel-trace] temporary motion trace for the live loop: every
+  // queue/toggle/tween event lands here with a timestamp so a stall shows
+  // exactly which job never settled. Read via CDP, removed before done.
+  const bezelTrace: Array<{ t: number; op: string; gen: number }> = [];
+  (globalThis as any).__bezelTrace = bezelTrace;
+  function traceBezel(op: string) {
+    try {
+      bezelTrace.push({ t: Math.round(performance.now()), op, gen: bezelPlaceGen });
+      if (bezelTrace.length > 400) bezelTrace.splice(0, bezelTrace.length - 400);
+    } catch {}
+  }
+  function queueBezelMove(op: string, run: (gen: number) => Promise<void>): Promise<void> {
+    const gen = ++bezelPlaceGen;
+    traceBezel(`queue:${op}#${gen}`);
+    const job = bezelTail.then(() => {
+      if (gen !== bezelPlaceGen) {
+        traceBezel(`skip:${op}#${gen}`);
+        return;
+      }
+      traceBezel(`start:${op}#${gen}`);
+      return run(gen);
+    });
+    // The tail outlives every job — a refusal in one move must not wedge
+    // every later move. The caller still sees its own outcome.
+    bezelTail = job.catch((e) => {
+      console.error(e);
+    });
+    return job;
+  }
+  // The window tween follows the same motion language as every other surface
+  // (ADR-0034): --dur-slow with --ease-out, read live from the tokens so the
+  // stylesheet stays the single source. Motion off — the app switch or the OS
+  // reduced-motion preference — jumps straight to the end state, like the
+  // Svelte transitions everywhere else.
+  function bezelMotionMs(): number {
+    try {
+      const raw = getComputedStyle(document.documentElement)
+        .getPropertyValue("--dur-slow")
+        .trim();
+      const m = /^([\d.]+)\s*(ms|s)?$/.exec(raw);
+      if (m) {
+        const v = parseFloat(m[1]);
+        if (Number.isFinite(v)) return m[2] === "s" ? v * 1000 : v;
+      }
+    } catch {}
+    return 280;
+  }
+  function bezelMotionEase(): (t: number) => number {
+    try {
+      const raw = getComputedStyle(document.documentElement)
+        .getPropertyValue("--ease-out")
+        .trim();
+      const m =
+        /cubic-bezier\(\s*([\d.]+)\s*,\s*([\d.]+)\s*,\s*([\d.]+)\s*,\s*([\d.]+)\s*\)/.exec(
+          raw,
+        );
+      if (m) return cubicBezierEase(+m[1], +m[2], +m[3], +m[4]);
+    } catch {}
+    return cubicBezierEase(0.22, 1, 0.36, 1);
+  }
+  // The standard cubic-bezier solver behind CSS easing (Newton iterations
+  // with a bisection fallback), so the JS window tween rides the exact token
+  // curve instead of a lookalike.
+  function cubicBezierEase(x1: number, y1: number, x2: number, y2: number): (t: number) => number {
+    const cx = 3 * x1;
+    const bx = 3 * (x2 - x1) - cx;
+    const ax = 1 - cx - bx;
+    const cy = 3 * y1;
+    const by = 3 * (y2 - y1) - cy;
+    const ay = 1 - cy - by;
+    const sampleX = (t: number) => ((ax * t + bx) * t + cx) * t;
+    const sampleY = (t: number) => ((ay * t + by) * t + cy) * t;
+    const sampleDX = (t: number) => (3 * ax * t + 2 * bx) * t + cx;
+    return (x: number) => {
+      if (x <= 0) return 0;
+      if (x >= 1) return 1;
+      let t = x;
+      for (let i = 0; i < 5; i++) {
+        const err = sampleX(t) - x;
+        if (Math.abs(err) < 1e-4) return sampleY(t);
+        const d = sampleDX(t);
+        if (Math.abs(d) < 1e-4) break;
+        t -= err / d;
+      }
+      let lo = 0;
+      let hi = 1;
+      t = x;
+      while (hi - lo > 1e-4) {
+        if (sampleX(t) < x) lo = t;
+        else hi = t;
+        t = (lo + hi) / 2;
+      }
+      return sampleY(t);
+    };
+  }
+  function bezelMotionOn(): boolean {
+    if (animation.mode !== "on") return false;
+    try {
+      if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return false;
+    } catch {}
+    return true;
+  }
+  interface BezelRect {
+    x: number;
+    y: number;
+    w: number;
+    h: number;
+  }
+  // One animation frame, starvation-aware: rAF never fires for an occluded
+  // page, and awaiting it raw would wedge the shared chain behind a frozen
+  // frame — every later toggle/drag queues up with no visible motion, then
+  // floods through at once (the teleport shape). Reports whether the frame
+  // actually ticked so the tween can finish instantly when starved: covered
+  // windows snap correctly rather than wedging.
+  function nextBezelFrame(): Promise<boolean> {
+    return Promise.race([
+      new Promise<true>((r) => requestAnimationFrame(() => r(true))),
+      new Promise<false>((r) => window.setTimeout(() => r(false), 100)),
+    ]);
+  }
+  async function currentBezelRect(): Promise<BezelRect | null> {
+    try {
+      const win = getCurrentWindow();
+      const [pos, size] = await Promise.all([win.outerPosition(), win.innerSize()]);
+      return { x: pos.x, y: pos.y, w: size.width, h: size.height };
+    } catch (e) {
+      console.error(e);
+      return null;
+    }
+  }
+  // Tweens the live window from `from` to `to` on the token curve — the
+  // window counterpart of the panel's CSS arrival. Aborts silently when
+  // superseded (a newer request owns the window now); real failures throw
+  // to the caller.
+  async function tweenBezelWindow(
+    win: ReturnType<typeof getCurrentWindow>,
+    from: BezelRect,
+    to: BezelRect,
+    gen: number,
+    instant = false,
+  ): Promise<void> {
+    // One round trip per frame: size and position issue together, so a slow
+    // bridge still yields frames instead of a slideshow.
+    const applyRect = async (rect: BezelRect) => {
+      await Promise.all([
+        win.setSize(new PhysicalSize(rect.w, rect.h)),
+        win.setPosition(new PhysicalPosition(rect.x, rect.y)),
+      ]);
+    };
+    if (instant || !bezelMotionOn()) {
+      if (gen !== bezelPlaceGen) return;
+      await applyRect(to);
+      return;
+    }
+    const ms = Math.max(1, bezelMotionMs());
+    const ease = bezelMotionEase();
+    const start = performance.now();
+    traceBezel(`tween-start:${from.w}x${from.h}->${to.w}x${to.h}`);
+    for (;;) {
+      if (gen !== bezelPlaceGen) {
+        traceBezel("tween-abort");
+        return;
+      }
+      const t = Math.min(1, (performance.now() - start) / ms);
+      const k = ease(t);
+      const rect = {
+        x: Math.round(from.x + (to.x - from.x) * k),
+        y: Math.round(from.y + (to.y - from.y) * k),
+        w: Math.max(1, Math.round(from.w + (to.w - from.w) * k)),
+        h: Math.max(1, Math.round(from.h + (to.h - from.h) * k)),
+      };
+      await applyRect(rect);
+      if (gen !== bezelPlaceGen || t >= 1) {
+        traceBezel(t >= 1 ? "tween-end" : "tween-abort");
+        return;
+      }
+      // A starved frame (occluded page) lands the end state at once — the
+      // alternative is wedging every queued move behind a frozen tween.
+      if (!(await nextBezelFrame())) {
+        if (gen !== bezelPlaceGen) {
+          traceBezel("tween-abort");
+          return;
+        }
+        traceBezel("tween-starved-jump");
+        await applyRect(to);
+        traceBezel("tween-end");
+        return;
+      }
+    }
+  }
+  let bezelPanelEl: HTMLDivElement | null = $state(null);
+  let bezelTabEl: HTMLButtonElement | null = $state(null);
+  let bezelGripEl: HTMLDivElement | null = $state(null);
+  // One-time entry pulse/glow dismissal: the first tab commitment
+  // (click/Enter/Space) is the honest "seen" — hover is anticipation, not
+  // commitment (research 0020) — and it persists permanently. Local only;
+  // never the database.
+  const BEZEL_PULSE_SEEN_KEY = "sprout.bezel-pulse-seen";
+  let bezelPulse = $state(false);
+  function bezelPulseSeen(): boolean {
+    try {
+      return localStorage.getItem(BEZEL_PULSE_SEEN_KEY) === "1";
+    } catch {
+      return false;
+    }
+  }
+  function markBezelPulseSeen() {
+    try {
+      localStorage.setItem(BEZEL_PULSE_SEEN_KEY, "1");
+    } catch {
+      // Storage unavailable — the pulse simply shows again next entry.
+    }
+    bezelPulse = false;
+  }
+  // The live dock's monitor as full info — the open panel spans the monitor's
+  // full height at the backend-derived open width; the tab spans the
+  // backend-derived tab height at the parked Y. Null while floating or when
+  // the docked screen is gone: same match as the Y resolve beside it.
+  async function resolveBezelMonitor(): Promise<DisplayInfo | null> {
+    if (!dock.docked || !dock.monitor) return null;
+    try {
+      const displays = await listDisplays();
+      return (
+        displays.find((d) => d.device_name === dock.monitor) ??
+        (dock.monitor_identity
+          ? displays.find((d) => d.identity === dock.monitor_identity)
+          : undefined) ??
+        null
+      );
+    } catch {
+      return null;
+    }
+  }
+  // The stored dock width-% the open panel derives on demand: the backend
+  // clamps honestly, so a broken read falls back to its default here.
+  const BEZEL_OPEN_PCT_FALLBACK = 18;
+  async function bezelOpenPct(): Promise<number> {
+    try {
+      const s = await getSettings();
+      const pct = Math.round(Number(s.dock_width_pct));
+      if (Number.isFinite(pct)) return pct;
+    } catch (e) {
+      console.error(e);
+    }
+    return BEZEL_OPEN_PCT_FALLBACK;
+  }
+  // Places the live window for one bezel presentation — collapsed tab, hover
+  // peek, or full open panel. Geometry-only: peeking never flips `bezelOpen`,
+  // so hover can never open the panel. Throws on failure; callers surface it
+  // instead of failing silently (research 0004 rule 5).
+  // Places one bezel presentation. Open and close snap to their computed
+  // targets (the parked Y included); hover peek/unpeek only ever change the
+  // width IN PLACE — edge-anchored, never translating — so a stationary
+  // cursor can never be uncovered mid-hover, which is the enter/leave flap
+  // loop that reads as hover jitter. Every placement tweens on the token
+  // curve through the shared chain; `instant` skips the flight for
+  // re-asserts that must track a synchronous backend move (edge switches),
+  // where flying across the screen would read as a teleport.
+  async function placeBezelRect(
+    kind: "collapsed" | "peek" | "open",
+    hover = false,
+    instant = false,
+  ): Promise<void> {
+    if (!isTauri) return;
+    return queueBezelMove(kind, async (gen) => {
+      const info = await resolveBezelMonitor();
+      if (gen !== bezelPlaceGen) return;
+      // WHY loud instead of a silent no-op: the toggle already flipped the
+      // DOM, so swallowing this strands the open panel in a tab-sized window
+      // (the tab reads as vanished) — the caller rolls back and says so
+      // (ADR-0019 bezel placement stays the single writer).
+      if (!info) throw new Error("bezel monitor is unavailable");
+      const win = getCurrentWindow();
+      const from = await currentBezelRect();
+      if (gen !== bezelPlaceGen) return;
+      if (kind === "open") {
+        const width = await getBezelOpenWidth(info.width, await bezelOpenPct());
+        if (gen !== bezelPlaceGen) return;
+        const to: BezelRect = {
+          x: dock.edge === "left" ? info.x : info.x + info.width - width,
+          y: info.y,
+          w: width,
+          h: info.height,
+        };
+        await tweenBezelWindow(win, from ?? to, to, gen, instant);
+        return;
+      }
+      const width =
+        kind === "peek" ? await getBezelPeekWidth() : await getBezelCollapsedWidth();
+      if (gen !== bezelPlaceGen) return;
+      const tabHeight = await getBezelTabHeight(info.height);
+      if (gen !== bezelPlaceGen) return;
+      // Hover feedback grows/shrinks around the covered point: same Y, same
+      // screen-edge side, width only — plus one fewer round trip, so the
+      // anticipation lands fast. Anything else snaps to the parked tab.
+      let to: BezelRect;
+      if (hover && from && from.w > 0 && from.h > 0) {
+        to = {
+          x: dock.edge === "left" ? from.x : from.x + from.w - width,
+          y: from.y,
+          w: width,
+          h: tabHeight,
+        };
+      } else {
+        const top = await getBezelTabY(info.y, info.height, clampBezelYRatio(bezelYRatio));
+        if (gen !== bezelPlaceGen) return;
+        to = {
+          x: dock.edge === "left" ? info.x : info.x + info.width - width,
+          y: top,
+          w: width,
+          h: tabHeight,
+        };
+      }
+      await tweenBezelWindow(win, from ?? to, to, gen, instant);
+    });
+  }
+  // Hover only peeks wider — the single writer of `bezelPeeking`, and the
+  // only window move it performs is the peek-width rect. Opening is not
+  // reachable from here by construction.
+  // WHY the peek snaps instead of tweening: even a 20→60 px width flight
+  // issues a size+position round trip per frame, and on a busy bridge that
+  // reads as stutter rather than anticipation — so the tab lands in one move
+  // while the CSS hover tint keeps the feedback (ADR-0019 bezel placement
+  // stays the single writer).
+  // WHY the collapse waits out a grace: pressing into the screen-edge wall
+  // jitters across the tab's hit boundary, and each leave/enter pair would
+  // otherwise shrink/grow the live window — visible flicker. The leave only
+  // arms a short collapse; a re-enter before it fires stands it down, so a
+  // wall press keeps the tab expanded (research 0011 studies B and D: the
+  // wall itself is the target, hide grace catches the flicker).
+  const BEZEL_UNPEEK_GRACE_MS = 200;
+  let bezelUnpeekTimer: ReturnType<typeof setTimeout> | undefined;
+  function cancelBezelUnpeek() {
+    if (bezelUnpeekTimer !== undefined) {
+      clearTimeout(bezelUnpeekTimer);
+      bezelUnpeekTimer = undefined;
+    }
+  }
+  async function bezelPeek() {
+    // A held grip owns the window until release — hover queues nothing
+    // mid-gesture (see the press above).
+    if (!isBezelDock || bezelOpen || bezelDragging) return;
+    // A re-enter inside the grace: the armed collapse never landed, so the
+    // window is still peeked — stand the timer down instead of re-placing.
+    if (bezelUnpeekTimer !== undefined) {
+      cancelBezelUnpeek();
+      bezelPeeking = true;
+      return;
+    }
+    if (bezelPeeking) return;
+    traceBezel("hover:peek");
+    bezelPeeking = true;
+    try {
+      await placeBezelRect("peek", false, true);
+    } catch (e) {
+      console.error(e);
+    }
+  }
+  async function bezelUnpeek() {
+    // A held grip owns the window until release — hover queues nothing
+    // mid-gesture (see the press above).
+    if (!bezelPeeking || bezelDragging) return;
+    traceBezel("hover:unpeek");
+    bezelPeeking = false;
+    if (!isBezelDock || bezelOpen) return;
+    cancelBezelUnpeek();
+    bezelUnpeekTimer = setTimeout(() => {
+      bezelUnpeekTimer = undefined;
+      if (!isBezelDock || bezelOpen || bezelPeeking) return;
+      void placeBezelRect("collapsed", true, true).catch((e) => console.error(e));
+    }, BEZEL_UNPEEK_GRACE_MS);
+  }
+  // The shared toggle closer: the tab/peek click is the only opener; Esc,
+  // click-outside and that same click are the only closers. Focus loss never
+  // routes here — focus-loss wiring is deliberately absent by design. The DOM
+  // flips first so the content arrives with the window instead of popping in
+  // after it; a refused move rolls the presentation back, and a superseded
+  // (aborted) move leaves the newer request owning the state. Queued in the
+  // shared chain, so rapid clicks converge instead of swallowing each other.
+  // WHY open/close snap instead of tweening: a full-height window tween issues
+  // a size+position round trip per frame, and on a busy bridge that stretches
+  // the token curve into a 1–2 s half-size stall with the tab stranded
+  // mid-travel — so the window lands in one move while the panel content keeps
+  // its token arrival (ADR-0019 bezel placement stays the single writer).
+  async function setBezelOpen(open: boolean) {
+    if (!isBezelDock || bezelOpen === open) return;
+    traceBezel(open ? "toggle:open" : "toggle:close");
+    bezelPeeking = false;
+    cancelBezelUnpeek();
+    if (!isTauri) {
+      bezelOpen = open;
+      return;
+    }
+    bezelOpen = open;
+    try {
+      await placeBezelRect(open ? "open" : "collapsed", false, true);
+    } catch (e) {
+      console.error(e);
+      // Roll back only when no newer flip landed meanwhile — otherwise the
+      // newer request already owns the presentation.
+      if (bezelOpen === open) bezelOpen = !open;
+      error = `Couldn't ${open ? "open" : "close"} the Quick Launch panel — ${String(e)}`;
+    }
+  }
+  function toggleBezelPanel() {
+    markBezelPulseSeen();
+    void setBezelOpen(!bezelOpen);
+  }
+  function closeBezelPanel() {
+    void setBezelOpen(false);
+  }
+  function onBezelTabKeyDown(event: KeyboardEvent) {
+    if (event.key === "Escape") {
+      event.preventDefault();
+      closeBezelPanel();
+      return;
+    }
+    // Arrows nudge the parked Y like the grip (keyboard parity for the drag)
+    // while collapsed — they never toggle. Inert while open, where the
+    // full-height panel has no parked position to move.
+    if (!bezelOpen) onBezelGripKeyDown(event);
+  }
+
+  // First bezel-mode entry glows once until the first tab commitment, then
+  // never again (discoverability with a permanent dismissal; research 0004
+  // rule 5: state changes need feedback).
+  $effect(() => {
+    if (isBezelDock && !bezelOpen && !bezelPulseSeen()) {
+      bezelPulse = true;
+    } else {
+      bezelPulse = false;
+    }
+  });
 
   // Native WebView2 uses direct navigation so X-Frame-Options never blocks.
   async function syncCompanionWebview() {
@@ -1182,7 +1890,7 @@
           companionFailureDetail = "";
           // A late birth still heals — the timeout banner claimed the error
           // line only because nothing had arrived yet.
-          if (error === COMPANION_BORN_TIMEOUT_MSG) error = "";
+          if (error === bornTimeoutMessage()) error = "";
           // A fresh WebView starts unmuted — push the persisted choice back
           // in before anything audible can leak through.
           void getCompanionAudioState()
@@ -1228,7 +1936,7 @@
         window.setTimeout(() => {
           if (companionWebview === wv && !companionWebviewBorn && !companionWebviewFailed) {
             console.error("companion webview creation timed out", targetUrl);
-            if (!error) error = COMPANION_BORN_TIMEOUT_MSG;
+            if (!error) error = bornTimeoutMessage();
           }
         }, COMPANION_BORN_TIMEOUT_MS);
       } catch (e) {
@@ -1283,6 +1991,7 @@
     load();
     refreshDock();
     refreshCompanion();
+    refreshBezelY();
     // Ticket 42: the run finishes on the backend's background thread — the
     // summary lands as a system notification, this event releases the start
     // affordances (Start all plus ticket 93's entry rows) and posts the
@@ -1304,10 +2013,12 @@
       load();
       refreshDock();
       refreshCompanion();
+      refreshBezelY();
     }).then((fn) => unlisteners.push(fn));
     listen("displays-changed", () => {
       refreshDock();
       refreshCompanion();
+      refreshBezelY();
     }).then((fn) => unlisteners.push(fn));
     // Ticket 61: a background dock failure — a shell-initiated re-assert
     // (ABN_POSCHANGED) or the drift watchdog — surfaces in the window's error
@@ -1327,10 +2038,35 @@
       companionNativeBack = e.payload.can_go_back;
       companionNativeForward = e.payload.can_go_forward;
     }).then((fn) => unlisteners.push(fn));
+    // Bezel close paths: a pointer-down outside the open panel and tab, and
+    // Esc anywhere while open. Focus loss is deliberately not wired — alt-tab
+    // and copy-paste out of the dock move focus without intent to dismiss
+    // (research 0011 study D).
+    const onBezelPointerDown = (event: PointerEvent) => {
+      if (!isBezelDock || !bezelOpen) return;
+      const target = event.target as Node | null;
+      if (!target) return;
+      if (bezelPanelEl?.contains(target)) return;
+      if (bezelTabEl?.contains(target)) return;
+      if (bezelGripEl?.contains(target)) return;
+      closeBezelPanel();
+    };
+    const onBezelKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== "Escape" || !isBezelDock || !bezelOpen) return;
+      // The details dialog owns Esc while it sits above the panel — it
+      // cancels natively into its own onclose.
+      if (detailsAction !== null) return;
+      closeBezelPanel();
+    };
+    window.addEventListener("pointerdown", onBezelPointerDown);
+    window.addEventListener("keydown", onBezelKeyDown);
     return () => {
       unlisteners.forEach((fn) => fn());
+      window.removeEventListener("pointerdown", onBezelPointerDown);
+      window.removeEventListener("keydown", onBezelKeyDown);
       clearTimeout(copiedTimer);
       clearTimeout(runNoticeTimer);
+      cancelBezelUnpeek();
       clearInterval(companionAudioTimer);
       clearInterval(companionSweeper);
       companionSweeper = undefined;
@@ -1403,7 +2139,7 @@
             await live.hide();
           } catch (e2) {
             console.error(e2);
-            error = `Couldn't hide the companion pane — ${String(e2)}`;
+            error = t("quickwindow.paneHideFail").replace("{detail}", String(e2));
           }
         } else if (!live && companionWebview === webview && companionWebviewBorn) {
           // Nothing alive under the label and the cached handle was
@@ -1426,7 +2162,7 @@
               await live.show();
             } catch (e2) {
               console.error(e2);
-              error = `Couldn't restore the companion pane — ${String(e2)}`;
+              error = t("quickwindow.paneRestoreFail").replace("{detail}", String(e2));
             }
           } else if (!live && companionWebview === webview && companionWebviewBorn) {
             // The reported case: the cached handle outlived its child. Drop
@@ -1434,7 +2170,7 @@
             companionWebview = null;
             companionWebviewBorn = false;
           } else if (live) {
-            error = `Couldn't restore the companion pane — ${String(e)}`;
+            error = t("quickwindow.paneRestoreFail").replace("{detail}", String(e));
           }
         }
         await syncCompanionWebview();
@@ -1477,6 +2213,13 @@
   async function refreshDock() {
     try {
       dock = await getQuickLaunchDockState();
+      // WHY the reset: the tab/panel presentation exists only in bezel — the
+      // other modes and floating render the full window (ADR-0011 bezel
+      // amendment).
+      if (!(dock.docked && (dock.mode as string) === "bezel")) {
+        bezelOpen = false;
+        bezelPeeking = false;
+      }
     } catch (e) {
       console.error(e);
     }
@@ -1490,6 +2233,7 @@
       // A fresh dock can sit on another screen — re-resolve the Companion
       // ratio for the monitor it actually landed on.
       await refreshCompanion();
+      await refreshBezelY();
     } catch (e) {
       console.error(e);
       error = String(e);
@@ -1503,6 +2247,17 @@
       // The backend settles the blocked state during the switch (ticket 63) —
       // re-read instead of merging locally.
       await refreshDock();
+      // The backend edge move re-places the collapsed tab — re-assert the
+      // open panel when open so the toggle survives the move. Instant: the
+      // backend already teleported the tab, so flying the panel across the
+      // screen would read as the very teleport it tracks.
+      if (bezelOpen) {
+        try {
+          await placeBezelRect("open", false, true);
+        } catch (e) {
+          console.error(e);
+        }
+      }
     } catch (e) {
       console.error(e);
       error = String(e);
@@ -1518,7 +2273,7 @@
   function withTimeout<T>(pending: Promise<T>, what: string): Promise<T> {
     return new Promise<T>((resolve, reject) => {
       const timer = setTimeout(
-        () => reject(new Error(`${what} did not answer in time`)),
+        () => reject(new Error(t("quickwindow.loadTimeout").replace("{what}", what))),
         LOAD_TIMEOUT_MS
       );
       pending.then(
@@ -1539,16 +2294,16 @@
     try {
       const [entriesResult, actionsResult, clipsResult, settings, lgs, ags, cgs] =
         await Promise.all([
-          withTimeout(listLaunchEntries(), "The launch list"),
-          withTimeout(listQuickActions(), "The quick actions list"),
-          withTimeout(listClips(), "The clips list"),
-          withTimeout(getSettings(), "The settings"),
-          withTimeout(listGroups("launch"), "The launch groups list"),
-          withTimeout(listGroups("action"), "The action groups list"),
-          withTimeout(listGroups("clip"), "The clip groups list"),
+          withTimeout(listLaunchEntries(), t("quickwindow.loadWhatLaunch")),
+          withTimeout(listQuickActions(), t("quickwindow.loadWhatActions")),
+          withTimeout(listClips(), t("quickwindow.loadWhatClips")),
+          withTimeout(getSettings(), t("quickwindow.loadWhatSettings")),
+          withTimeout(listGroups("launch"), t("quickwindow.loadWhatLaunchGroups")),
+          withTimeout(listGroups("action"), t("quickwindow.loadWhatActionGroups")),
+          withTimeout(listGroups("clip"), t("quickwindow.loadWhatClipGroups")),
           // Ticket 98: the shared run-state store — the same one the Quick
           // Actions page reads — seeds itself from the registry here.
-          withTimeout(syncQuickActionRuns(), "The running-actions check"),
+          withTimeout(syncQuickActionRuns(), t("quickwindow.loadWhatRuns")),
         ]);
       entries = entriesResult;
       actions = actionsResult;
@@ -1610,26 +2365,26 @@
     const tabs = [
       {
         id: "launch",
-        label: "Quick Launch",
-        shortLabel: "Launch",
+        label: t("nav.launch"),
+        shortLabel: t("nav.launchShort"),
         icon: "rocket",
-        title: "Quick Launch",
+        title: t("nav.launch"),
       },
       {
         id: "actions",
-        label: "Quick Actions",
-        shortLabel: "Actions",
+        label: t("nav.actions"),
+        shortLabel: t("nav.actionsShort"),
         icon: "terminal",
-        title: "Quick Actions",
+        title: t("nav.actions"),
       },
     ];
     if (clips.filter((c) => (c.show_in_dock ?? true) !== false).length > 0) {
       tabs.push({
         id: "clips",
-        label: "Quick Clips",
-        shortLabel: "Clips",
+        label: t("nav.clips"),
+        shortLabel: t("nav.clipsShort"),
         icon: "copy",
-        title: "Quick Clips",
+        title: t("nav.clips"),
       });
     }
     return tabs;
@@ -1777,7 +2532,7 @@
         await copyClip(clip.id);
       }
       copiedId = clip.id;
-      copiedAnnouncement = `${clipName(clip)} copied.`;
+      copiedAnnouncement = t("common.copiedName").replace("{name}", clipName(clip));
       clearTimeout(copiedTimer);
       copiedTimer = setTimeout(() => (copiedId = null), 1200);
     } catch (e) {
@@ -1791,7 +2546,7 @@
    *  Text rows keep clipTitle untouched. */
   function clipName(clip: Clip): string {
     return clip.image
-      ? clip.name.trim() || "Image"
+      ? clip.name.trim() || t("common.imageName")
       : clipTitle(clip.name, clip.content);
   }
 
@@ -1819,9 +2574,10 @@
 </script>
 
 <svelte:head>
-  <title>Quick Launch</title>
+  <title>{t("nav.launch")}</title>
 </svelte:head>
 
+<!-- svelte-ignore a11y_no_static_element_interactions (root hover intent is pointer-only anticipation; full keyboard parity lives on the tab button below — focus peeks, arrows move it, Enter/Space toggles, Esc closes) -->
 <div
   class="qlw"
   class:qlw--docked={dock.docked}
@@ -1829,7 +2585,64 @@
   class:qlw--docked-right={dock.docked && dock.edge === "right"}
   class:qlw--density-compact={density === "compact"}
   class:qlw--density-large={density === "large"}
+  class:qlw--bezel={isBezelDock}
+  class:qlw--bezel-open={isBezelDock && bezelOpen}
+  onmouseenter={() => void bezelPeek()}
+  onmouseleave={() => void bezelUnpeek()}
 >
+  {#if isBezelDock}
+    <!-- Bezel tab: hover only peeks wider, click toggles the full panel —
+         open stays click-gated (ADR-0019 bezel amendment). The tooltip and
+         the accessible name share one dictionary key (research 0004 rule 4);
+         the peek hint rides along for screen readers while the pulse shows.
+         WHY the hover trigger lives on the window root above, not this
+         button: a wall press clamps onto the window border outside the button,
+         which would read as a leave and flicker — the wall itself is the
+         target (research 0011 study B). Keyboard parity stays here. -->
+    <button
+      type="button"
+      class="qlw__bezel-tab"
+      class:qlw__bezel-tab--peek={bezelPeeking}
+      class:qlw__bezel-tab--pulse={bezelPulse}
+      bind:this={bezelTabEl}
+      aria-expanded={bezelOpen}
+      aria-label={t("dock.bezel.tooltip")}
+      aria-describedby={bezelPulse ? "qlw-bezel-hint" : undefined}
+      title={t("dock.bezel.tooltip")}
+      onclick={toggleBezelPanel}
+      onfocus={() => void bezelPeek()}
+      onblur={() => void bezelUnpeek()}
+      onkeydown={onBezelTabKeyDown}
+    >
+      <Icon name={dock.edge === "left" ? "chevron-right" : "chevron-left"} size={14} />
+      {#if bezelPulse}
+        <span id="qlw-bezel-hint" class="sr-only">{t("dock.bezel.peekHint")}</span>
+      {/if}
+    </button>
+  {/if}
+  {#if isBezelDock}
+    <!-- Bezel tab grip: the collapsed tab parks where the user drags it
+         vertically, per display. Pointer drag moves the tab live and persists
+         on release; arrows/Home/End nudge it for keyboard users. Tooltip and
+         pulse belong to the open/close interaction round. -->
+    <div
+      class="qlw__bezel-grip"
+      class:qlw__bezel-grip--dragging={bezelDragging}
+      role="slider"
+      aria-label={t("quickwindow.bezelPosition")}
+      aria-valuemin={0}
+      aria-valuemax={100}
+      aria-valuenow={Math.round(bezelYRatio * 100)}
+      tabindex={0}
+      bind:this={bezelGripEl}
+      onpointerdown={onBezelGripPointerDown}
+      onkeydown={onBezelGripKeyDown}
+    ></div>
+  {/if}
+  <!-- Bezel panel wrapper: vanishes from layout outside bezel-open
+       (display:contents keeps today's column identical), hides the full
+       window while the tab shows, and carries the open arrival. -->
+  <div class="qlw__bezel-panel" bind:this={bezelPanelEl}>
   <header
     class="qlw__bar"
     data-tauri-drag-region={titleBarDragRegion(dock.docked)}
@@ -1837,8 +2650,8 @@
     <button
       class="qlw__mark"
       type="button"
-      aria-label="Open Sprout"
-      title="Open Sprout"
+      aria-label={t("dock.open.tooltip")}
+      title={t("dock.open.tooltip")}
       aria-busy={openingMain}
       disabled={openingMain}
       data-tauri-drag-region="false"
@@ -1847,19 +2660,19 @@
       <SproutMark size={16} />
     </button>
     {#if !dock.docked}
-      <h1 class="qlw__title">Quick Launch</h1>
+      <h1 class="qlw__title">{t("nav.launch")}</h1>
     {:else}
       <span class="qlw__spacer" aria-hidden="true"></span>
       <IconButton
         icon="chevron-left"
-        label={dock.left_eligible ? "Dock to the left edge" : SEAM_REASON}
+        label={dock.left_eligible ? t("dock.edgeLeft.tooltip") : t("dock.seam.tooltip")}
         quiet
         disabled={dock.edge === "left" || !dock.left_eligible}
         onclick={() => switchEdge("left")}
       />
       <IconButton
         icon="chevron-right"
-        label={dock.right_eligible ? "Dock to the right edge" : SEAM_REASON}
+        label={dock.right_eligible ? t("dock.edgeRight.tooltip") : t("dock.seam.tooltip")}
         quiet
         disabled={dock.edge === "right" || !dock.right_eligible}
         onclick={() => switchEdge("right")}
@@ -1872,14 +2685,14 @@
           ? "dock-left"
           : "dock-right"}
       label={dock.docked
-        ? "Undock — float again"
+        ? t("dock.undock.tooltip")
         : dock.edge === "left"
-          ? "Dock to the left edge"
-          : "Dock to the right edge"}
+          ? t("dock.edgeLeft.tooltip")
+          : t("dock.edgeRight.tooltip")}
       quiet
       onclick={toggleDock}
     />
-    <IconButton icon="x" label="Close window" onclick={close} />
+    <IconButton icon="x" label={t("dock.close.tooltip")} onclick={close} />
   </header>
 
   {#if showBlocked}
@@ -1893,10 +2706,9 @@
         </span>
         <p class="qlw__blocked-text">
           {#if seamBlocked}
-            {SEAM_REASON}
+            {t("dock.seam.tooltip")}
           {:else}
-            {dock.blocked}. Hiding still works — the strip slides on its own
-            while that edge stays busy.
+            {t("quickwindow.blockedNote").replace("{reason}", dock.blocked ?? "")}
           {/if}
         </p>
       </div>
@@ -1905,9 +2717,9 @@
         onclick={() => switchEdge(dock.edge === "left" ? "right" : "left")}
       >
         {#if seamBlocked}
-          Move to outer edge
+          {t("quickwindow.moveOuter")}
         {:else}
-          Move to the {dock.edge === "left" ? "right" : "left"} edge
+          {dock.edge === "left" ? t("quickwindow.moveToRight") : t("quickwindow.moveToLeft")}
         {/if}
       </Button>
     </div>
@@ -1920,7 +2732,7 @@
          stay collection content; the shell owns the card box, states and layout. The lazy icon
          observes the badge (a stable ancestor of the icon slot); no tooltip, as before. -->
     <QuickLaunchRow
-      mainLabel={`Start ${entry.name}`}
+      mainLabel={t("launch.startName").replace("{name}", entry.name)}
       disabled={startInFlight}
       onmain={() => startEntry(entry)}
     >
@@ -1953,7 +2765,7 @@
         {entry.name}
       </span>
       {#if startingEntries.has(entry.id)}
-        <span class="qlw__entry-starting">Starting…</span>
+        <span class="qlw__entry-starting">{t("common.busy.starting")}</span>
       {/if}
     </QuickLaunchRow>
   {/snippet}
@@ -1966,8 +2778,8 @@
          the card box, the split layout and the tip anchoring. -->
     <QuickLaunchRow
       mainLabel={hasNote(action.note)
-        ? `About ${action.name} (has note)`
-        : `About ${action.name}`}
+        ? t("actions.aboutNoteName").replace("{name}", action.name)
+        : t("dialog.aboutName").replace("{name}", action.name)}
       tipId={`qlw-tip-action-${action.id}`}
       tipName={action.name}
       tipBody={action.command}
@@ -1976,7 +2788,7 @@
       <span class="qlw__action-name">{action.name}</span>
       {#if hasNote(action.note)}
         <!-- Content-gated note glyph only — no note content on constrained surfaces (research 0004 rule 3, 0006 pattern 14) -->
-        <span class="qlw__note" aria-hidden="true" title="Has note">
+        <span class="qlw__note" aria-hidden="true" title={t("common.hasNote")}>
           <Icon name="note" size={12} />
         </span>
       {/if}
@@ -2005,7 +2817,7 @@
          Ticket 178: image rows add a token-sized thumbnail and swap the excerpt/tooltip
          for the picture summary — same shell, same copy verb, same Copied flash. -->
     <QuickLaunchRow
-      mainLabel={`Copy ${title} to the clipboard`}
+      mainLabel={t("clips.copyName").replace("{title}", title)}
       tipId={`qlw-tip-clip-${clip.id}`}
       tipName={title}
       tipBody={clip.image ? clipImageMeta(clip.image) : clip.content}
@@ -2025,7 +2837,7 @@
       {/if}
       <span class="qlw__clip-name">{title}</span>
       {#if copiedId === clip.id}
-        <span class="qlw__clip-copied">Copied</span>
+        <span class="qlw__clip-copied">{t("common.copied")}</span>
       {:else if clip.image}
         <span class="qlw__clip-excerpt">{clipImageMeta(clip.image)}</span>
       {:else}
@@ -2045,7 +2857,7 @@
           tabs={qlTabs}
           selected={tab}
           onselect={(id) => (tab = id)}
-          ariaLabel="Quick Launch window sections"
+          ariaLabel={t("quickwindow.tabsLabel")}
         >
       {#snippet panel(id)}
         {#if id === "launch"}
@@ -2056,10 +2868,9 @@
               <span class="qlw__empty-icon" aria-hidden="true">
                 <Icon name="rocket" size={22} />
               </span>
-              <p class="qlw__empty-title">Nothing to launch</p>
+              <p class="qlw__empty-title">{t("quickwindow.emptyLaunch")}</p>
               <p class="qlw__empty-body">
-                Add entries in the main window's Quick Launch page — the
-                tray's left-click opens this window, where Start all lives.
+                {t("quickwindow.emptyLaunchBody")}
               </p>
             </div>
           {:else}
@@ -2067,12 +2878,12 @@
                  scrolls beneath it. -->
             <div class="qlw__launch">
               <p class="qlw__count">
-                {dockEntries.length} {dockEntries.length === 1 ? "entry" : "entries"}
-                in the Quick Launch list.
+                {dockEntries.length === 1 ? tCount("launch.countOne", dockEntries.length) : tCount("launch.countMany", dockEntries.length)}
+                {t("quickwindow.countTail")}
               </p>
               <Button onclick={start} disabled={startInFlight}>
                 <Icon name="play" size={15} />
-                {launching ? "Starting…" : "Start all"}
+                {launching ? t("common.busy.starting") : t("quickwindow.startAll")}
               </Button>
               <div class="qlw__list">
                 {#if !launchGrouped}
@@ -2121,10 +2932,9 @@
               <span class="qlw__empty-icon" aria-hidden="true">
                 <Icon name="terminal" size={22} />
               </span>
-              <p class="qlw__empty-title">No quick actions</p>
+              <p class="qlw__empty-title">{t("quickwindow.emptyActions")}</p>
               <p class="qlw__empty-body">
-                Compose PowerShell commands in the main window's Quick Actions
-                page — they run here, hidden, as the current user.
+                {t("quickwindow.emptyActionsBody")}
               </p>
             </div>
           {:else}
@@ -2216,12 +3026,12 @@
         class="qlw__splitter"
         role="separator"
         aria-orientation="horizontal"
-        aria-label="Resize companion pane"
+        aria-label={t("quickwindow.splitterLabel")}
         aria-valuemin="25"
         aria-valuemax="60"
         aria-valuenow={Math.round(companionRatio * 100)}
         tabindex="0"
-        title="Drag or use arrow keys to resize companion pane (25%–60%)"
+        title={t("quickwindow.splitterHint")}
         onpointerdown={onCompanionSplitterPointerDown}
         onkeydown={onCompanionSplitterKeyDown}
       ></div>
@@ -2235,14 +3045,14 @@
                mixer and mute move behind ⋯. -->
           <IconButton
             icon="chevron-left"
-            label="Back"
+            label={t("quickwindow.back")}
             quiet
             disabled={!companionCanGoBack || companionSwitchingTo !== null || companionHistoryBusy}
             onclick={companionGoBack}
           />
           <IconButton
             icon="chevron-right"
-            label="Forward"
+            label={t("quickwindow.forward")}
             quiet
             disabled={!companionCanGoForward || companionSwitchingTo !== null || companionHistoryBusy}
             onclick={companionGoForward}
@@ -2252,7 +3062,7 @@
                external order untouched. Icon "refresh" is the verified Icon.svelte name. -->
           <IconButton
             icon="refresh"
-            label={companionReloading ? "Reloading companion" : "Reload companion"}
+            label={companionReloading ? t("quickwindow.reloading") : t("quickwindow.reload")}
             quiet
             disabled={companionReloading}
             onclick={() => void companionReload()}
@@ -2265,7 +3075,7 @@
           {#if companionOverflowStage < 1}
             <IconButton
               icon="minus"
-              label="Zoom out companion"
+              label={t("quickwindow.zoomOut")}
               quiet
               disabled={companionZoomSaving || companionShownZoom <= 0.5}
               onclick={() => void companionZoomStep(-1)}
@@ -2274,11 +3084,11 @@
               type="button"
               class="qlw__companion-zoom-pct"
             title={companionZoomAuto
-              ? `Companion zoom ${formatCompanionZoomPct(companionShownZoom)} (automatic)`
-              : `Companion zoom ${formatCompanionZoomPct(companionShownZoom)} (explicit) — activate to reset to automatic`}
+              ? t("quickwindow.zoomPctAuto").replace("{pct}", formatCompanionZoomPct(companionShownZoom))
+              : t("quickwindow.zoomPctExplicit").replace("{pct}", formatCompanionZoomPct(companionShownZoom))}
             aria-label={companionZoomAuto
-              ? `Companion zoom ${formatCompanionZoomPct(companionShownZoom)}, automatic`
-              : `Companion zoom ${formatCompanionZoomPct(companionShownZoom)}, explicit — activate to reset to automatic`}
+              ? t("quickwindow.zoomAriaAuto").replace("{pct}", formatCompanionZoomPct(companionShownZoom))
+              : t("quickwindow.zoomAriaExplicit").replace("{pct}", formatCompanionZoomPct(companionShownZoom))}
             aria-disabled={companionZoomSaving || companionZoomAuto}
             disabled={companionZoomSaving || companionZoomAuto}
             onclick={() => void companionZoomReset()}
@@ -2287,7 +3097,7 @@
           </button>
           <IconButton
             icon="plus"
-            label="Zoom in companion"
+            label={t("quickwindow.zoomIn")}
             quiet
             disabled={companionZoomSaving || companionShownZoom >= 2}
             onclick={() => void companionZoomStep(1)}
@@ -2302,8 +3112,8 @@
               aria-expanded={companionSiteMenuOpen}
               aria-busy={companionSwitchingTo !== null}
               aria-label={companionSwitchingTo
-                ? `Switching Companion to ${companionDisplayName(companionSwitchingTo)}`
-                : `Companion site: ${activeCompanionLabel}. Choose a saved site.`}
+                ? t("quickwindow.switchingTo").replace("{name}", companionDisplayName(companionSwitchingTo))
+                : t("quickwindow.siteTrigger").replace("{label}", activeCompanionLabel)}
               title={activeCompanionSite
                 ? companionPickerLabel(activeCompanionSite)
                 : activeCompanionLabel}
@@ -2312,7 +3122,7 @@
               onkeydown={onCompanionSiteTriggerKeydown}
             >
               <span class="qlw__companion-site-text">
-                {companionSwitchingTo ? "Switching…" : activeCompanionLabel}
+                {companionSwitchingTo ? t("quickwindow.switchingShort") : activeCompanionLabel}
               </span>
               <span class="qlw__companion-site-chevron" aria-hidden="true">
                 <Icon name="chevron" size={13} />
@@ -2331,8 +3141,8 @@
             <span
               class="qlw__companion-playing"
               role="img"
-              aria-label={companionMuted ? "Playing audio (muted)" : "Playing audio"}
-              title={companionMuted ? "Playing audio (muted)" : "Playing audio"}
+              aria-label={companionMuted ? t("quickwindow.playingMuted") : t("quickwindow.playing")}
+              title={companionMuted ? t("quickwindow.playingMuted") : t("quickwindow.playing")}
             >
               <Icon name={companionMuted ? "volume-muted" : "volume"} size={13} />
             </span>
@@ -2340,7 +3150,7 @@
           {#if companionOverflowStage < 2}
             <IconButton
               icon={companionMuted ? "volume-muted" : "volume"}
-              label={companionMuted ? "Unmute companion audio" : "Mute companion audio"}
+              label={companionMuted ? t("quickwindow.unmuteBtn") : t("quickwindow.muteBtn")}
               quiet
               disabled={companionMuteBusy}
               aria-pressed={companionMuted}
@@ -2350,7 +3160,7 @@
           {#if companionOverflowStage < 1}
             <IconButton
               icon="sliders"
-              label={companionMixerOpening ? "Opening volume mixer" : "Open volume mixer"}
+              label={companionMixerOpening ? t("quickwindow.menuMixerOpening") : t("quickwindow.mixerBtn")}
               quiet
               disabled={companionMixerOpening}
               onclick={openMixer}
@@ -2358,7 +3168,7 @@
           {/if}
           <IconButton
             icon="external"
-            label={companionOpeningExternal ? "Opening externally" : "Open externally"}
+            label={companionOpeningExternal ? t("quickwindow.externalOpening") : t("quickwindow.externalBtn")}
             quiet
             disabled={companionOpeningExternal}
             onclick={companionOpenExternal}
@@ -2369,7 +3179,7 @@
                  toggleCompanionMoreMenu. -->
             <IconButton
               icon="dots"
-              label="More companion actions"
+              label={t("quickwindow.moreBtnLabel")}
               quiet
               data-ctx-trigger
               data-ctx-more
@@ -2386,15 +3196,15 @@
           {#if companionWebviewFailed}
             <div class="qlw__companion-failure" role="status">
               <Icon name="monitor" size={20} />
-              <p>This site couldn’t load in Companion.</p>
+              <p>{t("quickwindow.loadFail")}</p>
               <span>
                 {import.meta.env.DEV && companionFailureDetail
                   ? companionFailureDetail
-                  : "It may block embedded browsers."}
+                  : t("quickwindow.loadFailHint")}
               </span>
               <div class="qlw__companion-failure-actions">
-                <Button variant="secondary" onclick={() => void companionRetry()}>Try again</Button>
-                <Button onclick={() => void companionOpenExternal()}>Open externally</Button>
+                <Button variant="secondary" onclick={() => void companionRetry()}>{t("common.retry")}</Button>
+                <Button onclick={() => void companionOpenExternal()}>{t("quickwindow.externalBtn")}</Button>
               </div>
             </div>
           {:else if useWebview}
@@ -2413,7 +3223,7 @@
               bind:this={companionFrameEl}
               class="qlw__companion-frame"
               src={companionUrl}
-              title="Companion"
+              title={t("nav.companion")}
               allow="clipboard-read; clipboard-write; autoplay; encrypted-media; fullscreen"
               sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-popups-to-escape-sandbox"
               onload={handleCompanionLoad}
@@ -2435,7 +3245,7 @@
     <div class="qlw__error-row">
       <p class="qlw__error" role="alert">{error}</p>
       <Button variant="ghost" onclick={() => { load(); refreshDock(); }}>
-        Try again
+        {t("common.retry")}
       </Button>
     </div>
   {/if}
@@ -2456,6 +3266,7 @@
     running={detailsAction ? quickActionRuns.running.has(detailsAction.id) : false}
     stopping={detailsAction ? quickActionRuns.stopping.has(detailsAction.id) : false}
   />
+  </div>
 </div>
 
 <style>
@@ -2552,6 +3363,159 @@
   .qlw--docked-right .qlw__bar {
     padding-left: var(--space-2);
     padding-right: var(--space-2);
+  }
+
+  /* The bezel tab's drag grip: a full-width band atop the collapsed tab it
+     moves (research 0006 pattern 4). Token surfaces only, mirroring the
+     Companion splitter's hover/active/focus treatment. */
+  .qlw__bezel-grip {
+    display: block;
+    width: 100%;
+    flex-shrink: 0;
+    height: 12px;
+    margin: 0;
+    padding: 0;
+    border: 0;
+    border-bottom: 1px solid var(--border);
+    background: var(--bg-sunken);
+    cursor: row-resize;
+    touch-action: none;
+    transition: background var(--dur-fast) var(--ease-out);
+  }
+
+  .qlw__bezel-grip:hover,
+  .qlw__bezel-grip--dragging {
+    background: var(--accent-tint-border);
+  }
+
+  .qlw__bezel-grip:focus-visible {
+    outline: 2px solid var(--ring);
+    outline-offset: -2px;
+  }
+
+  /* The bezel tab speaks the main-app Button secondary vocabulary
+     (ADR-0028): strong border, shared radius, accent on hover — the same
+     quiet control the app uses everywhere, shrunk to an edge strip. The
+     surface fill stays because the tab floats over the desktop, not the
+     app canvas. Hover is anticipation (micro budget); the open arrival is
+     the interruptible spring (ADR-0034). */
+  .qlw__bezel-tab {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex: 1 1 auto;
+    min-height: 0;
+    width: 100%;
+    padding: 0;
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius);
+    background: var(--bg-surface);
+    color: var(--text);
+    cursor: pointer;
+    transition:
+      background var(--dur-fast) var(--ease-out),
+      border-color var(--dur-fast) var(--ease-out),
+      color var(--dur-fast) var(--ease-out);
+  }
+
+  .qlw__bezel-tab:hover,
+  .qlw__bezel-tab--peek {
+    background: var(--bg-hover);
+    border-color: var(--accent);
+    color: var(--accent);
+  }
+
+  .qlw__bezel-tab:focus-visible {
+    outline: 2px solid var(--ring);
+    outline-offset: -2px;
+  }
+
+  /* One-time entry pulse: glow only — box-shadow is paint, never layout — on
+     the slow spring; the shared reduced-motion/off hook collapses it to a
+     static glow. */
+  .qlw__bezel-tab--pulse {
+    border-color: var(--accent-tint-border);
+    animation: qlw-bezel-pulse var(--dur-slow) var(--ease-spring) infinite alternate;
+  }
+
+  @keyframes qlw-bezel-pulse {
+    from {
+      box-shadow: 0 0 0 0 transparent;
+    }
+    to {
+      box-shadow: var(--ring-glow);
+    }
+  }
+
+  /* Bezel-open row: the tab stays on the screen-edge side as the close
+     affordance beside the full panel — mirrored per edge, so a right-docked
+     panel never jumps to the left side on open. */
+  .qlw--bezel-open {
+    flex-direction: row;
+  }
+
+  .qlw--bezel-open.qlw--docked-right {
+    flex-direction: row-reverse;
+  }
+
+  .qlw--bezel-open .qlw__bezel-tab {
+    flex: 0 0 auto;
+    width: auto;
+    align-self: stretch;
+  }
+
+  /* The panel wrapper vanishes from layout outside bezel-open
+     (display:contents keeps today's column identical); collapsed bezel hides
+     it so only the tab is operable; open arrives on the slow spring. */
+  .qlw__bezel-panel {
+    display: contents;
+  }
+
+  .qlw--bezel:not(.qlw--bezel-open) .qlw__bezel-panel {
+    display: none;
+  }
+
+  .qlw--bezel-open .qlw__bezel-panel {
+    display: flex;
+    flex-direction: column;
+    flex: 1 1 0%;
+    min-width: 0;
+    min-height: 0;
+    animation: qlw-bezel-panel-in var(--dur-slow) var(--ease-spring);
+  }
+
+  @keyframes qlw-bezel-panel-in {
+    from {
+      opacity: 0;
+      transform: translateX(calc(-1 * var(--space-2)));
+    }
+    to {
+      opacity: 1;
+      transform: none;
+    }
+  }
+
+  /* The arrival slides in from the docked edge — mirrored, like the row. */
+  @keyframes qlw-bezel-panel-in-right {
+    from {
+      opacity: 0;
+      transform: translateX(var(--space-2));
+    }
+    to {
+      opacity: 1;
+      transform: none;
+    }
+  }
+
+  .qlw--bezel-open.qlw--docked-right .qlw__bezel-panel {
+    animation-name: qlw-bezel-panel-in-right;
+  }
+
+  /* While the full-height panel shows there is no parked tab to move — the
+     grip sits on the tab it moves (research 0006 pattern 4) — so it steps
+     aside instead of fighting the toggle over one gesture. */
+  .qlw--bezel-open .qlw__bezel-grip {
+    display: none;
   }
 
   .qlw__title {

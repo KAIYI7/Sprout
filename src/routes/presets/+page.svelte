@@ -18,6 +18,7 @@
     type ContextMenuState,
     type MenuRequest,
   } from "$lib/components/ContextMenu.svelte";
+  import { t, tCount } from "$lib/copy";
 
   let presets = $state<PresetRecord[]>([]);
   let loading = $state(true);
@@ -41,7 +42,7 @@
     if (!launchImport.path) return;
     const path = launchImport.path;
     launchImport.path = null;
-    doImport(path, "The preset you opened has been imported.");
+    doImport(path, t("presets.importedOpened"));
   });
 
   async function load() {
@@ -79,7 +80,7 @@
     const forked = {
       ...record,
       id: slugify(`${record.name} copy`),
-      name: `${record.name} (copy)`,
+      name: `${record.name}${t("presets.forkSuffix")}`,
       version: "1",
       imported: false,
     };
@@ -94,7 +95,10 @@
       const result = await importPreset(path);
       importWarning = result.warning ?? "";
       flash(
-        `${successMessage} ${result.preset.name} v${result.preset.version} is in your library. Imported presets are stored as authored; fork it to edit.`,
+        t("presets.importFlash")
+          .replace("{lead}", successMessage)
+          .replace("{name}", result.preset.name)
+          .replace("{version}", result.preset.version),
       );
       animateRack = true;
       await load();
@@ -111,28 +115,33 @@
 
   async function importViaDialog() {
     const picked = await open({
-      title: "Import a Sprout preset",
+      title: t("presets.importTitle"),
       multiple: false,
       directory: false,
-      filters: [{ name: "Sprout preset", extensions: ["sprout.json", "json"] }],
+      filters: [{ name: t("presets.fileFilter"), extensions: ["sprout.json", "json"] }],
     });
     if (typeof picked !== "string") return;
-    await doImport(picked, "Imported.");
+    await doImport(picked, t("presets.importedShort"));
   }
 
   async function exportViaDialog(record: PresetRecord) {
     const path = await saveDialog({
-      title: `Export ${record.name} as .sprout.json`,
+      title: t("presets.exportTitle").replace("{name}", record.name),
       defaultPath: `${record.name}.sprout.json`,
-      filters: [{ name: "Sprout preset", extensions: ["sprout.json"] }],
+      filters: [{ name: t("presets.fileFilter"), extensions: ["sprout.json"] }],
     });
     if (!path) return;
     try {
       await exportPreset(path, record.id);
-      flash(`Exported ${record.name} v${record.version} to ${path}`);
+      flash(
+        t("presets.exportedFlash")
+          .replace("{name}", record.name)
+          .replace("{version}", record.version)
+          .replace("{path}", path),
+      );
     } catch (e) {
       console.error(e);
-      error = `Couldn't export ${record.name}. Please try again.`;
+      error = t("presets.exportFail").replace("{name}", record.name);
     }
   }
 
@@ -150,10 +159,10 @@
       const isEdit = !!editing && presets.some((p) => p.id === editing?.id);
       if (isEdit) {
         await updatePreset(record);
-        flash(`Saved ${record.name}.`);
+        flash(t("common.savedName").replace("{name}", record.name));
       } else {
         await createPreset(record);
-        flash(`Added ${record.name} to your library.`);
+        flash(t("presets.addedFlash").replace("{name}", record.name));
         animateRack = true;
       }
       formOpen = false;
@@ -170,12 +179,12 @@
     const name = deleting.name;
     try {
       await deletePreset(deleting.id);
-      flash(`Removed ${name} from your library.`);
+      flash(t("presets.removedFlash").replace("{name}", name));
       deleting = null;
       await load();
     } catch (e) {
       console.error(e);
-      error = `Couldn't remove ${name}. Please try again.`;
+      error = t("common.removeFail").replace("{name}", name);
     }
   }
 
@@ -191,24 +200,24 @@
     }
     const items: ContextMenuItem[] = [
       {
-        label: "Plan with this",
+        label: t("menu.planWithThis"),
         icon: "play",
         onselect: () => goto(`/plan?presets=${encodeURIComponent(record.name)}`),
       },
     ];
     if (!record.imported) {
-      items.push({ label: "Edit", icon: "pencil", onselect: () => openEdit(record) });
+      items.push({ label: t("common.edit"), icon: "pencil", onselect: () => openEdit(record) });
     }
     items.push({
-      label: record.imported ? "Fork to edit" : "Fork",
+      label: record.imported ? t("menu.forkToEdit") : t("menu.fork"),
       icon: "copy",
       onselect: () => openFork(record),
     });
-    items.push({ label: "Export", icon: "export", onselect: () => exportViaDialog(record) });
+    items.push({ label: t("menu.export"), icon: "export", onselect: () => exportViaDialog(record) });
     // Ticket 106's ordering standard: destruction last, separated.
     items.push({ label: "", separator: true, onselect: () => {} });
     items.push({
-      label: "Remove",
+      label: t("common.remove"),
       icon: "trash",
       danger: true,
       onselect: () => (deleting = record),
@@ -216,7 +225,7 @@
     menu = {
       presetId: record.id,
       open: true,
-      label: `Actions for ${record.name}`,
+      label: t("packet.actionsFor").replace("{name}", record.name),
       focusFirst: request.kind === "anchor" ? request.focusFirst : false,
       returnTo: request.returnTo,
       ...(request.kind === "cursor"
@@ -228,19 +237,19 @@
 </script>
 
 <section class="presets" aria-labelledby="presets-title">
-  <PageHeader titleId="presets-title" title="Presets">
+  <PageHeader titleId="presets-title" title={t("nav.presets")}>
     {#snippet actions()}
       <Button variant="secondary" onclick={importViaDialog} disabled={importing}>
-        <Icon name="folder" size={15} /> Import
+        <Icon name="folder" size={15} /> {t("presets.import")}
       </Button>
       <Button onclick={openAdd}>
         <Icon name="plus" size={15} />
-        Compose preset
+        {t("presets.compose")}
       </Button>
     {/snippet}
     {#snippet subtitle()}
-      {presets.length} preset{presets.length === 1 ? "" : "s"}.
-      Right-click a card or open its ⋯ menu to edit, fork, export, or remove.
+      {presets.length === 1 ? tCount("presets.countOne", presets.length) : tCount("presets.countMany", presets.length)}
+      {t("presets.hintRight")}
     {/snippet}
   </PageHeader>
 
@@ -257,21 +266,19 @@
   {#if loading && presets.length === 0}
     <p class="sifting" aria-live="polite">Loading…</p>
   {:else if loadFailed}
-    <EmptyState icon="x" title="Couldn't read the library">
-      <p>Couldn't read the presets from
+    <EmptyState icon="x" title={t("common.libraryReadFail")}>
+      <p>{t("presets.dbBody")}
         <span class="mono">%LOCALAPPDATA%\Sprout\sprout.db</span>.</p>
-      <p>The file may be missing or locked by another process. Close the app, check the file,
-        then relaunch.</p>
+      <p>{t("common.dbLockedHint")}</p>
       <div class="empty-cta">
-        <Button variant="secondary" onclick={load}>Try again</Button>
+        <Button variant="secondary" onclick={load}>{t("common.retry")}</Button>
       </div>
     </EmptyState>
   {:else if presets.length === 0}
-    <EmptyState title="No presets yet">
-      <p>A preset is a named set of requirements that describes a machine setup. Compose one from
-        the products in your library, then plan it against this machine.</p>
+    <EmptyState title={t("presets.noPresets")}>
+      <p>{t("presets.emptyBody")}</p>
       <div class="empty-cta">
-        <Button onclick={openAdd}><span aria-hidden="true">+</span> Compose your first preset</Button>
+        <Button onclick={openAdd}><span aria-hidden="true">+</span> {t("presets.composeFirst")}</Button>
       </div>
     </EmptyState>
   {:else}
@@ -302,15 +309,14 @@
 
 <ConfirmDialog
   open={deleting !== null}
-  title="Remove preset?"
-  confirmLabel="Remove"
+  title={t("presets.removeTitle")}
+  confirmLabel={t("common.remove")}
   danger
   onconfirm={confirmDelete}
   oncancel={() => (deleting = null)}
 >
   <p>
-    <strong>{deleting?.name}</strong> (v{deleting?.version}) will be removed from the library.
-    To get it back, compose it again or import its .sprout.json file.
+    <strong>{deleting?.name}</strong> (v{deleting?.version}){t("presets.removeBodyTail")}
   </p>
 </ConfirmDialog>
 

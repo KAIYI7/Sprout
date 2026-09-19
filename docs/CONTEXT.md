@@ -1,4 +1,4 @@
-# Sprout
+﻿# Sprout
 
 A Windows desktop app for composing, running, and sharing software-installation presets. Replaces the legacy PowerShell setup package, which passed the release parity gate and was removed at v1 (see `docs/release/parity-checklist.md`).
 
@@ -97,6 +97,14 @@ _Avoid_: Miniature window, palette, tray menu
 **Quick Launch dock**:
 The Quick Launch window's docked form — a little window that can be pinned [Win32 AppBar] to the left or right side of a screen. **Fixed** keeps a thin strip always visible and squeezes other windows. **Auto-hide** hides completely [off-screen, no handle] and slides in [~0.18 s ease-out] only when you push the mouse into that screen's outer wall and hold a moment — otherwise other windows keep their full size, even if the system says that edge is busy. Whether it is pinned or floating is remembered for each screen [per-monitor] and restored when Sprout starts — even on auto-start [ADR-0013]. Never part of Presets or exports.
 _Avoid_: Sidebar, tray bar, launcher bar
+
+**Bezel tab**:
+A planned third Quick Launch dock mode beside Fixed and Auto-hide, showing only a small edge tab until clicked ([spec 214](../.scratch/sprout-app/issues/214-bezel-tab-dock-mode-copy-i18n-spec.md)).
+_Avoid_: Sidebar, tray bar
+
+**Bezel Y position**:
+A planned per-display memory of where the bezel tab parks vertically — the dragged height as a fraction 0..1 of the tab's travel, restored on redock ([spec 214](../.scratch/sprout-app/issues/214-bezel-tab-dock-mode-copy-i18n-spec.md)).
+_Avoid_: Sidebar, tray bar
 
 **Dock visibility**:
 Whether one Launch entry, Quick Action, or Clip appears in the Quick Launch dock. Any item can be hidden from the dock from its own row menu or edit dialog ("Hide from dock" / "Show in dock", per-item, research 0006 pattern 4) while staying fully listed, editable, and individually runnable in the main app. Dock visibility does not disable an item; planned main-app matching batch scope is specified in [166](../.scratch/sprout-app/issues/166-field-cleanup-dock-filter-companion-navigation-spec.md). A group whose members are all hidden drops its section in the dock and keeps it in the main app. The flag travels in whole-app backup; backups without it read as visible. Not to be confused with `show_window` (console visibility) or `auto_run` (startup runs).
@@ -215,3 +223,7 @@ _Avoid_: CSS variable (implementation), transition value
 **Presence activity**:
 The static Discord Rich Presence text Sprout shows while it runs: `details: "Using Sprout"`, `state` following a fixed section allowlist (default `"Composing presets"`), plus a session-start timestamp for the elapsed clock. No preset/action names, paths, counts, or run states; silent no-op when Discord is closed; cleared on actual exit. Display only; never part of Presets, backups, or exports.
 _Avoid_: User status, dynamic presence
+
+**Copy dictionary**:
+A planned file-based English source of truth for Settings, dock, and presence copy (`src/lib/copy/en.json`, keyed `section.key`) with English fallback per key — identical text reuses one key and translation later is a file swap ([spec 214](../.scratch/sprout-app/issues/214-bezel-tab-dock-mode-copy-i18n-spec.md)). Files only; never the database.
+_Avoid_: Database-backed copy, inline duplicate literals

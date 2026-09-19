@@ -2,21 +2,22 @@
   import { page } from "$app/state";
   import "../lib/styles/tokens.css";
   import Icon from "$lib/components/Icon.svelte";
+  import { t } from "$lib/copy";
 </script>
 
 <svelte:head>
-  <title>Something went wrong — Sprout</title>
+  <title>{t("error.docTitle")}</title>
 </svelte:head>
 
 <main class="error">
   <div class="error__card">
     <span class="error__status">{page.status}</span>
-    <h1 class="error__title">The page could not be loaded</h1>
+    <h1 class="error__title">{t("error.title")}</h1>
     <p class="error__detail">
-      {page.error?.message ?? "An unexpected error occurred."}
+      {page.error?.message ?? t("error.unexpected")}
     </p>
     <a class="error__home" href="/">
-      <Icon name="seedling" size={15} /> Back to Quick Launch
+      <Icon name="seedling" size={15} /> {t("error.home")}
     </a>
   </div>
 </main>

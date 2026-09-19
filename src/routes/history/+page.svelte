@@ -6,7 +6,7 @@
     RunStatus,
     RunSummary,
   } from "$lib/types";
-  import { runOutcomeLabel, runStatusLabel } from "$lib/types";
+  import { runOutcomeLabelText, runStatusLabelText } from "$lib/types";
   import { formatDuration, formatTimestampShort } from "$lib/format";
   import { getRun, listRuns } from "$lib/api";
   import { goto } from "$app/navigation";
@@ -17,6 +17,7 @@
   import PageHeader from "$lib/components/PageHeader.svelte";
   import Badge from "$lib/components/Badge.svelte";
   import Notice from "$lib/components/Notice.svelte";
+  import { t } from "$lib/copy";
 
   let runs = $state<RunSummary[]>([]);
   let loading = $state(true);
@@ -73,7 +74,7 @@
   }
 
   function outcomeLabel(outcome: RunSummary["outcome"]): string {
-    return runOutcomeLabel[outcome];
+    return runOutcomeLabelText(outcome);
   }
 
   /** "Open in Plan" carries the run's stored preset names to the Plan page,
@@ -99,8 +100,7 @@
       if (record) {
         detail = record;
       } else {
-        error =
-          "The run finished but left no results — check the run folder under %LOCALAPPDATA%\\Sprout\\logs\\runs.";
+        error = t("run.noResults");
       }
     } catch (e) {
       error = String(e);
@@ -150,15 +150,14 @@
 </script>
 
 <section class="history" aria-labelledby="history-title">
-  <PageHeader titleId="history-title" title="History">
+  <PageHeader titleId="history-title" title={t("nav.history")}>
     {#snippet actions()}
       <Button variant="secondary" onclick={load} disabled={loading}>
-        <Icon name="refresh" size={13} /> Refresh
+        <Icon name="refresh" size={13} /> {t("common.refresh")}
       </Button>
     {/snippet}
     {#snippet subtitle()}
-      Run records are kept indefinitely; raw log files expire per the retention setting.
-      Open a run to see its per-requirement results.
+      {t("history.subtitle")}
     {/snippet}
   </PageHeader>
 
@@ -169,22 +168,20 @@
   {#if loading}
     <p class="sifting" aria-live="polite">Loading…</p>
   {:else if loadFailed}
-    <EmptyState icon="x" title="Couldn't read the run history">
-      <p>Couldn't read the run history from
+    <EmptyState icon="x" title={t("history.dbTitle")}>
+      <p>{t("history.dbBody")}
         <span class="mono">%LOCALAPPDATA%\Sprout\sprout.db</span>.</p>
-      <p>The file may be missing or locked by another process. Close the app, check the file,
-        then relaunch.</p>
+      <p>{t("common.dbLockedHint")}</p>
       <p class="error-detail">{error}</p>
       <div class="empty-cta">
-        <Button variant="secondary" onclick={load}>Try again</Button>
+        <Button variant="secondary" onclick={load}>{t("common.retry")}</Button>
       </div>
     </EmptyState>
   {:else if runs.length === 0}
-    <EmptyState title="No runs yet">
-      <p>Nothing has been applied to this machine yet. Plan a preset and run it; the outcome
-        is recorded here.</p>
+    <EmptyState title={t("history.noRuns")}>
+      <p>{t("history.noRunsBody")}</p>
       <div class="empty-cta">
-        <Button onclick={() => goto("/plan")}>Plan your first run</Button>
+        <Button onclick={() => goto("/plan")}>{t("history.planFirst")}</Button>
       </div>
     </EmptyState>
   {:else}
@@ -213,40 +210,37 @@
           </button>
 
           <button type="button" class="runs__open-plan" onclick={() => openInPlan(run)}>
-            <Icon name="play" size={12} /> Open in Plan
+            <Icon name="play" size={12} /> {t("history.openInPlan")}
           </button>
 
           {#if open}
             <div class="runs__detail" id="run-detail-{run.id}" aria-live="polite">
               {#if detailLoading}
-                <p class="sifting">Opening the run…</p>
+                <p class="sifting">{t("history.opening")}</p>
               {:else if detail}
                 <header class="detail__head">
                   <p class="detail__sub">
-                    Started {formatTimestampShort(detail.started_at)} · ran for
-                    {formatDuration(detail.finished_at - detail.started_at)}
+                    {t("history.startedFor").replace("{start}", formatTimestampShort(detail.started_at)).replace("{dur}", formatDuration(detail.finished_at - detail.started_at))}
                   </p>
                   {#if detail.outcome === "with_notes"}
                     <p class="detail__note detail__note--notes">
-                      {detailGroups?.["skipped_unmanaged"]?.length ?? 0} unmanaged
-                      product{detailGroups?.["skipped_unmanaged"]?.length === 1 ? "" : "s"} installed
-                      outside winget need manual attention — the rest applied.
+                      {(detailGroups?.["skipped_unmanaged"]?.length ?? 0) === 1
+                        ? t("history.notesDetailOne").replace("{count}", String(detailGroups?.["skipped_unmanaged"]?.length ?? 0))
+                        : t("history.notesDetailMany").replace("{count}", String(detailGroups?.["skipped_unmanaged"]?.length ?? 0))}
                     </p>
                   {:else if detail.outcome === "failed"}
                     <p class="detail__note detail__note--failed">
-                      Some requirements failed — re-run to retry them; already-finished requirements
-                      are skipped.
+                      {t("history.noteFailed")}
                     </p>
                   {:else if detail.outcome === "cancelled"}
                     <p class="detail__note detail__note--cancelled">
-                      Stopped after the current step — re-run to finish the rest; completed
-                      requirements are skipped.
+                      {t("history.noteCancelled")}
                     </p>
                   {/if}
                 </header>
 
                 {#if detail.results.length === 0}
-                  <p class="detail__none">Nothing ran; the run was cancelled before any requirement started.</p>
+                  <p class="detail__none">{t("history.nothingRan")}</p>
                 {:else}
                   <ul class="detail__groups">
                     {#each statusOrder as status}
@@ -254,7 +248,7 @@
                       {#if items.length > 0}
                         <li class="detail__group">
                           <p class="detail__group-head">
-                            <Badge tone={runStatusTone(status)}>{runStatusLabel[status]}</Badge>
+                            <Badge tone={runStatusTone(status)}>{runStatusLabelText(status)}</Badge>
                             <span class="detail__group-count">{items.length}</span>
                           </p>
                           <ul class="detail__group-list">
@@ -262,7 +256,7 @@
                               <li class="detail__item">
                                 <span class="detail__item-name">{item.product_name}</span>
                                 {#if item.reboot_required}
-                                  <span class="detail__item-note">reboot required — restart, then re-run to finish</span>
+                                  <span class="detail__item-note">{t("run.rebootRequired")}</span>
                                 {/if}
                                 {#if status === "failed" || status === "timed_out"}
                                   <span class="detail__item-detail">{item.detail}</span>
@@ -282,9 +276,9 @@
                     {/each}
                   </ul>
                 {/if}
-              {:else}
-                <p class="sifting">Nothing to show.</p>
-              {/if}
+                {:else}
+                  <p class="sifting">{t("history.nothingToShow")}</p>
+                {/if}
             </div>
           {/if}
         </li>

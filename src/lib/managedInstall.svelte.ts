@@ -18,6 +18,7 @@ import {
   aiRemoveManaged,
 } from "$lib/api";
 import type { ManagedInstallProgress } from "$lib/types";
+import { t } from "$lib/copy";
 
 /** Keep in step with `MANAGED_INSTALL_PROGRESS_EVENT` in
  *  `src-tauri/src/ai_managed.rs`. */
@@ -144,8 +145,7 @@ export async function startManagedInstall(modelId: string): Promise<void> {
 export function cancelManagedInstall(): void {
   void aiCancelManagedInstall().catch(() => {});
   if (managedInstall.status === "installing") {
-    managedInstall.notice =
-      "Cancelling installation; staged files will not be activated.";
+    managedInstall.notice = t("managed.cancelling");
     managedInstall.updatedAt = Date.now();
   }
 }
@@ -169,7 +169,7 @@ export function reconcileManagedInstall(serverActive: boolean): void {
   if (serverActive) return;
   if (Date.now() - managedInstall.updatedAt < 3000) return;
   managedInstall.status = "interrupted";
-  managedInstall.error = "Interrupted — safe to retry.";
+  managedInstall.error = t("managed.interrupted");
   managedInstall.updatedAt = Date.now();
 }
 
@@ -190,8 +190,8 @@ export function dismissManagedInstall(): void {
  *  Ticket 191 settles the tier-first row copy; the status line reuses this
  *  one helper so the two cannot disagree. */
 export function managedTierLabel(modelId: string): string {
-  if (modelId === "lightweight-candidate") return "Lightweight";
-  if (modelId === "stronger-candidate") return "Stronger";
+  if (modelId === "lightweight-candidate") return t("managed.tierLight");
+  if (modelId === "stronger-candidate") return t("managed.tierStrong");
   return modelId;
 }
 
@@ -209,7 +209,7 @@ export function managedModelParams(modelId: string): string {
  *  `4096` reads as `4 GB RAM`, anything under a gig stays in MB. */
 export function formatManagedRam(memoryNeedsMb: number | null): string {
   if (memoryNeedsMb === null || !Number.isFinite(memoryNeedsMb) || memoryNeedsMb < 0) {
-    return "RAM pending";
+    return t("managed.ramPending");
   }
   if (memoryNeedsMb >= 1024) {
     const gib = memoryNeedsMb / 1024;
@@ -229,7 +229,7 @@ export function managedActiveRowLabel(model: {
   memory_needs_mb: number | null;
 }): string {
   const size =
-    model.download_size_bytes === null ? "size pending" : formatManagedBytes(model.download_size_bytes);
+    model.download_size_bytes === null ? t("managed.sizePending") : formatManagedBytes(model.download_size_bytes);
   return `${managedTierLabel(model.id)} — ${managedModelParams(model.id)} · ${size} · ${formatManagedRam(model.memory_needs_mb)}`;
 }
 
@@ -256,12 +256,14 @@ export function formatManagedBytes(bytes: number): string {
 /** `up 40s` / `up 3m` / `up 2h 5m` for the Running status line. */
 export function formatManagedUptime(uptimeSecs: number | null): string {
   if (uptimeSecs === null || !Number.isFinite(uptimeSecs) || uptimeSecs < 0) {
-    return "up just now";
+    return t("managed.upNow");
   }
   const total = Math.floor(uptimeSecs);
-  if (total < 60) return `up ${total}s`;
+  if (total < 60) return t("managed.upSecs").replace("{n}", String(total));
   const minutes = Math.floor(total / 60);
-  if (minutes < 60) return `up ${minutes}m`;
+  if (minutes < 60) return t("managed.upMins").replace("{n}", String(minutes));
   const hours = Math.floor(minutes / 60);
-  return `up ${hours}h ${minutes % 60}m`;
+  return t("managed.upHours")
+    .replace("{n}", String(hours))
+    .replace("{m}", String(minutes % 60));
 }

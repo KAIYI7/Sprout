@@ -10,6 +10,7 @@
   import TestResult from "./TestResult.svelte";
   import Disclosure from "./Disclosure.svelte";
   import InfoTip from "./InfoTip.svelte";
+  import { t } from "$lib/copy";
 
   let {
     open,
@@ -76,11 +77,11 @@
 
   async function submit() {
     if (!name.trim()) {
-      error = "Give the entry a name.";
+      error = t("commandform.nameFirst");
       return;
     }
     if (!command.trim()) {
-      error = "The command must not be empty.";
+      error = t("commandform.cmdEmpty");
       return;
     }
     saving = true;
@@ -95,7 +96,7 @@
         desktop_id: null,
         show_in_dock: showInDock,
       });
-      await onsave(`${name.trim()} added to Quick Launch.`);
+      await onsave(t("launch.addedFlash").replace("{name}", name.trim()));
     } catch (e) {
       console.error(e);
       error = String(e);
@@ -105,7 +106,7 @@
   }
 </script>
 
-<Dialog {open} title="Add a command" onclose={oncancel} width={560} focusTarget="#command-name">
+<Dialog {open} title={t("commandform.addTitle")} onclose={oncancel} width={560} focusTarget="#command-name">
   <form
     class="form"
     onsubmit={(e) => {
@@ -115,18 +116,18 @@
   >
     <TextInput
       id="command-name"
-      label="Name"
+      label={t("common.name")}
       required
-      placeholder="e.g. dev server…"
+      placeholder={t("commandform.namePh")}
       value={name}
       onchange={onNameInput}
     />
 
     <div class="field">
       <div class="field__label-row">
-        <label class="field__label" for="command-shell">Shell</label>
-        <InfoTip label="How the shell works">
-          <p>PowerShell runs scripts in Windows PowerShell 5.1. CMD uses the Windows command shell. Direct exe starts an executable without expanding shell variables.</p>
+        <label class="field__label" for="command-shell">{t("qdetails.shell")}</label>
+        <InfoTip label={t("commandform.shellHow")}>
+          <p>{t("commandform.shellBody")}</p>
         </InfoTip>
       </div>
       <Select
@@ -142,13 +143,13 @@
     </div>
 
     <div class="field">
-      <label class="field__label" for="command-line">Command</label>
+      <label class="field__label" for="command-line">{t("qdetails.command")}</label>
       <textarea
         id="command-line"
         name="command"
         class="field__cmd"
         rows="3"
-        placeholder={shell === "none" ? 'e.g. C:\\Tools\\dev-server.exe --port 8080…' : shell === "powershell" ? 'e.g. Start-Process notepad.exe…' : 'e.g. start "" http://localhost:3000…'}
+        placeholder={shell === "none" ? t("commandform.cmdPhNone") : shell === "powershell" ? t("commandform.cmdPhPowershell") : t("commandform.cmdPhCmd")}
         autocomplete="off"
         spellcheck="false"
         value={command}
@@ -160,22 +161,22 @@
       <Disclosure
         open={detailsOpen}
         controls="command-details-body"
-        label="Details"
+        label={t("actionform.details")}
         onclick={() => (detailsOpen = !detailsOpen)}
       />
       <div id="command-details-body" class="advanced__body" hidden={!detailsOpen}>
         <Checkbox
           checked={showWindow}
           onchange={(v) => (showWindow = v)}
-          title="Show a window"
-          hint="Commands run without a console window by default."
+          title={t("commandform.showWindow")}
+          hint={t("commandform.showWindowHint")}
         />
 
         <Checkbox
           checked={showInDock}
           onchange={(v) => (showInDock = v)}
-          title="Show in dock"
-          hint="Uncheck to keep it in the main app only."
+          title={t("common.showInDock")}
+          hint={t("common.showInDockHint")}
         />
 
         <TestResult
@@ -194,10 +195,10 @@
 
     <div class="form__actions">
       <Button variant="secondary" onclick={oncancel} disabled={saving || testing}>
-        Cancel
+        {t("common.cancel")}
       </Button>
       <Button kind="submit" disabled={saving || testing}>
-        {saving ? "Adding…" : "Add command"}
+        {saving ? t("common.busy.adding") : t("commandform.addBtn")}
       </Button>
     </div>
   </form>

@@ -97,7 +97,8 @@ describe("Companion saved-site picker", () => {
     expect(ROUTE_SOURCE).toContain("overflow-wrap: anywhere");
     expect(ROUTE_SOURCE).toContain('aria-live="polite"');
     expect(ROUTE_SOURCE).toContain('aria-busy={companionSwitchingTo !== null}');
-    expect(ROUTE_SOURCE).toContain('{companionSwitchingTo ? "Switching…"');
+    expect(ROUTE_SOURCE).toContain('t("quickwindow.switchingShort")');
+    expect(ROUTE_SOURCE).toContain('t("quickwindow.switchingTo")');
   });
 
   it("serializes rapid requests and applies only the newest successful site", async () => {
@@ -232,7 +233,7 @@ describe("Companion dock picker cap (first five + manage row)", () => {
   });
 
   it("ends the dock menu with a management row into the full manager", () => {
-    expect(ROUTE_SOURCE).toContain("Manage in Sprout…");
+    expect(ROUTE_SOURCE).toContain('t("quickwindow.manageSites")');
     expect(ROUTE_SOURCE).toContain("manageCompanionSites");
     expect(ROUTE_SOURCE).toContain("openCompanionManager");
     const menuAt = ROUTE_SOURCE.indexOf("const companionSiteMenu");

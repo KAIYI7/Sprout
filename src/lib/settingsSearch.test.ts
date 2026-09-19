@@ -15,6 +15,8 @@ const SETTINGS_SOURCE = readFileSync(
 const SNAPSHOT: SettingsSearchSnapshot = {
   themeMode: "system",
   themeLabel: "System",
+  language: "en",
+  languageLabel: "English",
   animation: "on",
   animationLabel: "On",
   nativeFrame: "off",
@@ -27,6 +29,7 @@ const SNAPSHOT: SettingsSearchSnapshot = {
   dockMode: "auto-hide",
   dockEdge: "left",
   dockState: "floating",
+  bezelYRatioPct: 50,
   dockWidthPct: 18,
   dockDensity: "default",
   revealDwellMs: 200,
@@ -50,6 +53,12 @@ describe("settings search index", () => {
   it("surfaces the theme knob for theme, light, and dark alike", () => {
     for (const query of ["theme", "light", "dark"]) {
       expect(matchedIds(query)).toContain("theme");
+    }
+  });
+
+  it("surfaces the language knob for language and Chinese queries alike", () => {
+    for (const query of ["language", "中文"]) {
+      expect(matchedIds(query)).toContain("language");
     }
   });
 
@@ -132,6 +141,17 @@ describe("settings filter resolution", () => {
     expect([...visibleKnobIds].sort()).toEqual(["dock-width", "per-monitor"]);
   });
 
+  it("surfaces the bezel tab position knob for bezel without stealing width", () => {
+    expect(matchedIds("bezel")).toContain("bezel-y");
+    expect(matchedIds("bezel")).toContain("dock-mode");
+    expect(matchedIds("bezel")).toContain("per-monitor");
+    expect(matchedIds("tab position")).toContain("bezel-y");
+    expect(matchedIds("50%")).toContain("bezel-y");
+    for (const query of ["width", "18%"]) {
+      expect(matchedIds(query)).not.toContain("bezel-y");
+    }
+  });
+
   it("falls back to the whole Companion group for mute, which no knob owns", () => {
     const { visibleKnobIds, wholeGroups } = resolved("mute");
     expect(wholeGroups).toEqual(new Set(["companion"]));
@@ -171,8 +191,8 @@ describe("settings filter resolution", () => {
 
 describe("settings groups + filter contract", () => {
   it("renders the five groups through the shared accordion, headers bare", () => {
-    for (const label of ["General", "Dock", "Companion", "Backup & housekeeping", "AI assistance"]) {
-      expect(SETTINGS_SOURCE).toContain(`name="${label}"`);
+    for (const key of ['t("settings.group.general")', 't("settings.group.dock")', 't("nav.companion")', 't("settings.group.backup")', 't("settings.group.ai")']) {
+      expect(SETTINGS_SOURCE).toContain(`name={${key}}`);
     }
     expect(SETTINGS_SOURCE).toContain("GroupAccordion");
     // Collapsed summaries were removed on review: search covers findability,
@@ -184,7 +204,7 @@ describe("settings groups + filter contract", () => {
   it("filters from the header toolbar slot through the shared search input", () => {
     expect(SETTINGS_SOURCE).toContain("{#snippet toolbar()}");
     expect(SETTINGS_SOURCE).toContain("SearchInput");
-    expect(SETTINGS_SOURCE).toContain("Nothing matches");
+    expect(SETTINGS_SOURCE).toContain('t("common.noMatchFor")');
     expect(SETTINGS_SOURCE).toContain("resolveSettingsFilter");
     expect(SETTINGS_SOURCE).not.toContain("filter-row");
   });
@@ -197,7 +217,7 @@ describe("settings groups + filter contract", () => {
   it("lets the dirty bar own saving — no static Save button", () => {
     expect(SETTINGS_SOURCE).not.toContain("Save settings");
     expect(SETTINGS_SOURCE).not.toContain("form__actions");
-    expect(SETTINGS_SOURCE).toContain('aria-label="Unsaved changes"');
+    expect(SETTINGS_SOURCE).toContain('t("settings.dirtyTitle")');
     expect(SETTINGS_SOURCE).toContain("Discard");
   });
 

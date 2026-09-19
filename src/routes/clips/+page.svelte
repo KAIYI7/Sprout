@@ -52,6 +52,7 @@
   import PageFeaturesButton from "$lib/components/PageFeaturesButton.svelte";
   import PageHeader from "$lib/components/PageHeader.svelte";
   import SearchInput from "$lib/components/SearchInput.svelte";
+  import { t, tCount } from "$lib/copy";
 
   let clips = $state<Clip[]>([]);
   let loading = $state(true);
@@ -88,7 +89,7 @@
    *  that image Clips don't carry. Text rows keep clipTitle untouched. */
   function clipName(clip: Clip): string {
     return clip.image
-      ? clip.name.trim() || "Image"
+      ? clip.name.trim() || t("common.imageName")
       : clipTitle(clip.name, clip.content);
   }
 
@@ -100,7 +101,6 @@
   // collection key and feedback channels.
   const groups = createCollectionGroups({
     collection: "clip",
-    noun: "clips",
     host: {
       begin() {
         error = "";
@@ -188,7 +188,7 @@
       }
       // The write landed — now the flash may honestly say Copied.
       copiedId = clip.id;
-      copiedAnnouncement = `${clipName(clip)} copied.`;
+      copiedAnnouncement = t("common.copiedName").replace("{name}", clipName(clip));
       clearTimeout(copiedTimer);
       copiedTimer = setTimeout(() => (copiedId = null), 1200);
     } catch (e) {
@@ -205,7 +205,7 @@
     error = "";
     try {
       await deleteClip(clip.id);
-      flash("Clip deleted.");
+      flash(t("clips.removedFlash"));
       await load();
     } catch (e) {
       console.error(e);
@@ -246,8 +246,8 @@
       const title = clipName(clip);
       flash(
         visible
-          ? `"${title}" will show in the dock.`
-          : `"${title}" hidden from the dock — still here and copyable.`
+          ? t("clips.dockShown").replace("{title}", title)
+          : t("clips.dockHidden").replace("{title}", title),
       );
       await load();
     } catch (e) {
@@ -303,7 +303,7 @@
     return new Promise((resolve, reject) => {
       const reader = new FileReader();
       reader.onerror = () =>
-        reject(new Error("that file couldn't be read"));
+        reject(new Error(t("clips.imgErrReadShort")));
       reader.onload = () => resolve(String(reader.result ?? ""));
       reader.readAsDataURL(file);
     });
@@ -314,27 +314,27 @@
   async function takeImageFile(file: File) {
     imgError = "";
     if (file.type !== "image/png" && file.type !== "image/jpeg") {
-      imgError = "Only PNG and JPEG images can be kept as clips.";
+      imgError = t("clips.imgErrType");
       return;
     }
     if (file.size > CLIP_IMAGE_MAX_BYTES) {
-      imgError = "That image is over the 5 MB limit — pick a smaller file.";
+      imgError = t("clips.imgErrSize");
       return;
     }
     if (file.size === 0) {
-      imgError = "That file has no image data.";
+      imgError = t("clips.imgErrEmpty");
       return;
     }
     try {
       imgDataUrl = await readFileAsDataUrl(file);
     } catch (e) {
       console.error(e);
-      imgError = `That file couldn't be read — ${e instanceof Error ? e.message : String(e)}`;
+      imgError = t("clips.imgErrRead").replace("{detail}", e instanceof Error ? e.message : String(e));
       return;
     }
     imgBytes = imgDataUrl.split(",", 2)[1] ?? "";
     if (!imgBytes) {
-      imgError = "That file couldn't be read — try again.";
+      imgError = t("clips.imgErrReadRetry");
       imgDataUrl = "";
       return;
     }
@@ -349,7 +349,7 @@
       f.type.startsWith("image/")
     );
     if (!file) {
-      imgError = "No image in the clipboard — copy a PNG or JPEG first.";
+      imgError = t("clips.imgErrNoClip");
       return;
     }
     e.preventDefault();
@@ -360,8 +360,8 @@
     imgError = "";
     if (!imgBytes) {
       imgError = imgEditing
-        ? "That clip lost its image — close and try again."
-        : "Paste an image or choose a file first.";
+        ? t("clips.imgErrLost")
+        : t("clips.imgErrFirst");
       return;
     }
     imgSaving = true;
@@ -369,11 +369,11 @@
       if (imgEditing) {
         await updateClipImage(imgEditing.id, imgName.trim(), imgShowInDock);
         imgOpen = false;
-        flash(`"${imgName.trim() || "Image"}" saved.`);
+        flash(t("clips.imgSavedFlash").replace("{name}", imgName.trim() || t("common.imageName")));
       } else {
         const created = await createClipImage(imgName.trim(), imgBytes);
         imgOpen = false;
-        flash(`"${clipName(created)}" added to Quick Clips.`);
+        flash(t("clips.imgAddedFlash").replace("{name}", clipName(created)));
       }
       await load();
     } catch (e) {
@@ -389,9 +389,8 @@
    *  reverted when the save fails. */
   const featureItems = $derived([
     {
-      label: "Groups",
-      description:
-        "Bucket clips into named sections you order yourself. Groups and assignments are kept while off.",
+      label: t("features.groupsLabel"),
+      description: t("features.groupsDesc").replace("{noun}", t("collection.clips.many")),
       value: groups.enabled,
       onchange: () => groups.toggle(),
     },
@@ -435,26 +434,26 @@
     const index = slice.indexOf(clip);
     const items: ContextMenuItem[] = [
       {
-        label: "Edit",
+        label: t("common.edit"),
         icon: "pencil",
         onselect: () => (clip.image ? openImgEdit(clip) : openEdit(clip)),
       },
     ];
     if (groups.enabled) {
       items.push({
-        label: "Move to group",
+        label: t("menu.moveToGroup"),
         icon: "folder",
         children: groups.moveToGroupChildren(clip, title),
       });
     }
     items.push({
-      label: (clip.show_in_dock ?? true) ? "Hide from dock" : "Show in dock",
+      label: (clip.show_in_dock ?? true) ? t("menu.hideFromDock") : t("common.showInDock"),
       icon: (clip.show_in_dock ?? true) ? "eye-off" : "eye",
       onselect: () => toggleDockVisibility(clip),
     });
     items.push(
       {
-        label: "Move up",
+        label: t("menu.moveUp"),
         icon: "chevron-up",
         // Filtered neighbors are not saved neighbors: refuse to reorder
         // through them rather than write a surprising order.
@@ -462,14 +461,14 @@
         onselect: () => move(clip.id, clips.indexOf(slice[index - 1])),
       },
       {
-        label: "Move down",
+        label: t("menu.moveDown"),
         icon: "chevron-down",
         disabled: index >= slice.length - 1 || reorderBlocked,
         onselect: () => move(clip.id, clips.indexOf(slice[index + 1])),
       },
       { label: "", separator: true, onselect: () => {} },
       {
-        label: "Remove",
+        label: t("common.remove"),
         icon: "trash",
         danger: true,
         onselect: () => (deleting = clip),
@@ -478,7 +477,7 @@
     menu = {
       clipId: clip.id,
       open: true,
-      label: `Actions for ${title}`,
+      label: t("packet.actionsFor").replace("{name}", title),
       anchor,
       focusFirst: viaKeyboard,
       returnTo: anchor,
@@ -504,7 +503,7 @@
       ? {
           ...groupMenu,
           items: groupMenu.items.map((item) =>
-            item.label === "Move up" || item.label === "Move down"
+            item.label === t("menu.moveUp") || item.label === t("menu.moveDown")
               ? { ...item, disabled: true }
               : item
           ),
@@ -550,7 +549,7 @@
 </script>
 
 <svelte:head>
-  <title>Quick Clips — Sprout</title>
+  <title>{t("nav.clips")} — Sprout</title>
 </svelte:head>
 
 {#snippet clipRow(clip: Clip)}
@@ -559,7 +558,7 @@
     <button
       type="button"
       class="rack__main"
-      aria-label={`Copy ${title} to the clipboard`}
+      aria-label={t("clips.copyName").replace("{title}", title)}
       onclick={() => copy(clip)}
     >
       <span class="rack__badge" aria-hidden="true">
@@ -578,7 +577,7 @@
       {/if}
       <span class="rack__name">{title}</span>
       {#if copiedId === clip.id}
-        <span class="rack__copied">Copied</span>
+        <span class="rack__copied">{t("common.copied")}</span>
       {:else if clip.image}
         <span class="rack__content">{clipImageMeta(clip.image)}</span>
       {:else}
@@ -588,14 +587,14 @@
     {#if !isDockVisible(clip)}
       <!-- The dock-hidden annotation (ADR-0028): informational only — the
            clip stays fully copyable here; only the dock filters it out. -->
-      <span class="rack__dock" title="Hidden from dock">
+      <span class="rack__dock" title={t("common.hiddenFromDock")}>
         <Icon name="eye-off" size={12} />
-        <span>Hidden from dock</span>
+        <span>{t("common.hiddenFromDock")}</span>
       </span>
     {/if}
     <IconButton
       icon="dots"
-      label={`Actions for ${title}`}
+      label={t("packet.actionsFor").replace("{name}", title)}
       quiet
       data-ctx-trigger
       onclick={(e) =>
@@ -609,30 +608,29 @@
 {/snippet}
 
 <section class="clips" aria-labelledby="clips-title">
-  <PageHeader titleId="clips-title" title="Quick Clips">
+  <PageHeader titleId="clips-title" title={t("nav.clips")}>
     {#snippet actions()}
       <Button onclick={openAdd} disabled={busy}>
         <Icon name="plus" size={15} />
-        Add
+        {t("common.add")}
       </Button>
       <!-- The second create stays secondary: one primary per header row
            (research 0005 rule 2) — Add is this page's main verb. -->
       <Button variant="secondary" onclick={openImgAdd} disabled={busy}>
         <Icon name="plus" size={15} />
-        Add image
+        {t("clips.addImage")}
       </Button>
     {/snippet}
     {#snippet subtitle()}
-      {clips.length} {clips.length === 1 ? "clip" : "clips"}.
-      Click a clip to put it back on your clipboard — text or image. The Quick Launch
-      window's Quick Clips tab copies them too, once any exist.
+      {clips.length === 1 ? tCount("clips.countOne", clips.length) : tCount("clips.countMany", clips.length)}
+      {t("clips.subBody")}
     {/snippet}
     {#snippet toolbar()}
       <div class="toolbar">
         <SearchInput
           value={filter}
-          placeholder="Search name or text…"
-          ariaLabel="Search clips"
+          placeholder={t("clips.searchPh")}
+          ariaLabel={t("clips.searchLabel")}
           onchange={(v) => (filter = v)}
         />
         {#if showDockFilter}
@@ -644,7 +642,7 @@
       </div>
     {/snippet}
     {#snippet features()}
-      <PageFeaturesButton label="Quick Clips features" items={featureItems} />
+      <PageFeaturesButton label={t("clips.featuresLabel")} items={featureItems} />
     {/snippet}
   </PageHeader>
 
@@ -657,53 +655,49 @@
 
   {#if reorderBlocked && clips.length > 0}
     <p class="reorder-note">
-      Reordering is paused while filters are active.
+      {t("launch.reorderPaused")}
       <button
         type="button"
         class="reorder-note__clear"
         onclick={clearFilters}
       >
-        Clear filters
+        {t("common.clearFilters")}
       </button>
-      to reorder.
+      {t("launch.reorderTail")}
     </p>
   {/if}
 
   {#if loading && clips.length === 0}
     <p class="sifting" aria-live="polite">Loading…</p>
   {:else if loadFailed}
-    <Notice tone="error">Could not load the clip list.</Notice>
+    <Notice tone="error">{t("clips.loadFail")}</Notice>
   {:else if clips.length === 0}
-    <EmptyState icon="copy" title="No clips yet">
+    <EmptyState icon="copy" title={t("clips.noClips")}>
       <p>
-        Press <strong>Add</strong> and paste the text you re-type most — support
-        replies, commands, addresses — or <strong>Add image</strong> for a
-        PNG/JPEG picture. Clicking a clip puts it back on
-        your clipboard. Once one clip exists, a Quick Clips tab appears in the
-        Quick Launch window for two-click copying from the tray.
+        {t("common.emptyPress")}<strong>{t("common.add")}</strong>{t("clips.emptyBodyB")}<strong>{t("clips.addImage")}</strong>{t("clips.emptyBodyC")}
       </p>
     </EmptyState>
   {:else if matchedCount === 0 && filter.trim() !== ""}
-    <EmptyState icon="search" title={`Nothing matches “${filter.trim()}”`}>
-      <p>Search looks at clip names and their text (images by name).</p>
+    <EmptyState icon="search" title={t("common.noMatchFor").replace("{query}", filter.trim())}>
+      <p>{t("clips.searchLooks")}</p>
       {#if dockVisibility !== "all"}
         <div class="empty-cta">
           <Button variant="secondary" onclick={() => (dockVisibility = "all")}>
-            Show all
+            {t("common.showAll")}
           </Button>
         </div>
       {/if}
     </EmptyState>
   {:else if matchedCount === 0}
-    <EmptyState icon="search" title="No clips match this filter.">
+    <EmptyState icon="search" title={t("clips.noFilterTitle")}>
       {#if dockVisibility === "hidden"}
-        <p>No clips are hidden from the dock right now.</p>
+        <p>{t("clips.noHiddenNow")}</p>
       {:else}
-        <p>Every clip is hidden from the dock.</p>
+        <p>{t("clips.everyHidden")}</p>
       {/if}
       <div class="empty-cta">
         <Button variant="secondary" onclick={() => (dockVisibility = "all")}>
-          Show all
+          {t("common.showAll")}
         </Button>
       </div>
     </EmptyState>
@@ -726,7 +720,7 @@
         {#snippet actions()}
           <IconButton
             icon="dots"
-            label={`Actions for group ${section.group.name}`}
+            label={t("groups.menuLabel").replace("{name}", section.group.name)}
             quiet
             data-ctx-trigger
             onclick={(e) =>
@@ -743,7 +737,7 @@
           {/each}
           {#if section.rows.length === 0}
             <li class="rack__hint">
-              No clips here yet — use a clip's ⋯ menu to move one in.
+              {t("clips.emptyGroupHint")}
             </li>
           {/if}
         </ul>
@@ -764,30 +758,28 @@
 
 <ConfirmDialog
   open={deleting !== null}
-  title="Delete clip?"
-  confirmLabel="Delete"
+  title={t("clips.deleteTitle")}
+  confirmLabel={t("common.delete")}
   danger
   onconfirm={remove}
   oncancel={() => (deleting = null)}
 >
   <p>
-    <strong>{deleting ? clipName(deleting) : ""}</strong>
-    will be removed from this page and from the Quick Launch window's Quick
-    Clips tab. {#if deleting?.image}The image is deleted.{:else}The text is deleted.{/if}
+    <strong>{deleting ? clipName(deleting) : ""}</strong>{t("clips.deleteBodyTail")}
+    {#if deleting?.image}{t("clips.deleteImgNote")}{:else}{t("clips.deleteTextNote")}{/if}
   </p>
 </ConfirmDialog>
 
 <ConfirmDialog
   open={groups.removing !== null}
-  title="Remove group?"
-  confirmLabel="Remove"
+  title={t("dialog.removeGroupTitle")}
+  confirmLabel={t("common.remove")}
   danger
   onconfirm={() => groups.removeGroup()}
   oncancel={() => groups.cancelRemove()}
 >
   <p>
-    <strong>{groups.removing?.name}</strong> will be deleted. Its clips will
-    not be — they return to the ungrouped list.
+    <strong>{groups.removing?.name}</strong>{t("dialog.removeGroupBody").replace("{noun}", t("collection.clips.many"))}
   </p>
 </ConfirmDialog>
 
@@ -797,7 +789,7 @@
   error={groups.nameError}
   saving={groups.savingName}
   inputId="clip-group-name"
-  placeholder="e.g. Support replies"
+  placeholder={t("clips.groupEx")}
   ondraft={(v) => (groups.nameDraft = v)}
   onsubmit={() => groups.submitName()}
   onclose={() => groups.cancelNaming()}
@@ -819,7 +811,7 @@
      name — the details surface for image Clips on this page. -->
 <Dialog
   open={imgOpen}
-  title={imgEditing ? "Edit image clip" : "Add an image clip"}
+  title={imgEditing ? t("clips.imgTitleEdit") : t("clips.imgTitleAdd")}
   onclose={() => (imgOpen = false)}
   width={560}
   focusTarget="#clip-image-name"
@@ -827,8 +819,7 @@
   <div class="imgform" onpaste={handleImgPaste}>
     {#if !imgEditing}
       <p class="imgform__hint">
-        Paste a PNG or JPEG from your clipboard anywhere in this dialog, or
-        choose a file — up to 5 MB, one picture per clip.
+        {t("clips.imgHint")}
       </p>
       <div class="imgform__pick">
         <Button
@@ -837,7 +828,7 @@
           disabled={imgSaving}
         >
           <Icon name="plus" size={15} />
-          Choose file…
+          {t("clips.chooseFile")}
         </Button>
         <input
           bind:this={imgFile}
@@ -860,8 +851,8 @@
         class="imgform__preview"
         src={imgDataUrl}
         alt={imgEditing
-          ? `Image saved as ${imgEditing.name.trim() || "Image"}`
-          : "Preview of the image to save"}
+          ? t("clips.imgAltSaved").replace("{name}", imgEditing.name.trim() || t("common.imageName"))
+          : t("clips.imgPreviewAlt")}
       />
       {#if imgMeta}
         <p class="imgform__meta">{imgMeta}</p>
@@ -870,16 +861,15 @@
 
     <TextInput
       id="clip-image-name"
-      label="Name"
-      placeholder="Optional — untitled images show as “Image”"
+      label={t("common.name")}
+      placeholder={t("clips.imgNamePh").replace("{image}", t("common.imageName"))}
       value={imgName}
       onchange={(v) => (imgName = v)}
-      info="How naming works"
+      info={t("dialog.namingHow")}
     >
       {#snippet infobody()}
         <p>
-          Optional. An unnamed image is listed as “Image”, so you never have
-          to invent a name.
+          {t("clips.imgNamingBody").replace("{image}", t("common.imageName"))}
         </p>
       {/snippet}
     </TextInput>
@@ -887,8 +877,8 @@
     <Checkbox
       checked={imgShowInDock}
       onchange={(v) => (imgShowInDock = v)}
-      title="Show in dock"
-      hint="Uncheck to keep it in the main app only."
+      title={t("common.showInDock")}
+      hint={t("common.showInDockHint")}
     />
 
     {#if imgError}
@@ -901,16 +891,16 @@
         onclick={() => (imgOpen = false)}
         disabled={imgSaving}
       >
-        Cancel
+        {t("common.cancel")}
       </Button>
       <Button onclick={() => void saveImage()} disabled={imgSaving}>
         {imgSaving
           ? imgEditing
-            ? "Saving…"
-            : "Adding…"
+            ? t("common.busy.saving")
+            : t("common.busy.adding")
           : imgEditing
-            ? "Save changes"
-            : "Add image clip"}
+            ? t("common.saveChanges")
+            : t("clips.imgAdd")}
       </Button>
     </div>
   </div>

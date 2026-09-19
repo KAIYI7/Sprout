@@ -2,6 +2,7 @@
   import type { LaunchCommandTest } from "$lib/types";
   import Button from "./Button.svelte";
   import Icon from "./Icon.svelte";
+  import { t } from "$lib/copy";
 
   let {
     open,
@@ -38,7 +39,7 @@
 
   async function runTest() {
     if (!command.trim()) {
-      onerror("Type a command first.");
+      onerror(t("test.typeFirst"));
       return;
     }
     if (validate) {
@@ -67,30 +68,28 @@
   <div class="test__row">
     <Button variant="secondary" disabled={testing || !command.trim()} onclick={runTest}>
       <Icon name="play" size={13} />
-      {testing ? "Testing…" : "Test"}
+      {testing ? t("common.busy.testing") : t("test.run")}
     </Button>
     <p class="test__note">
-      Runs the command timeboxed (20 s) and reports the exit code and output —
-      a command that outlives the box is interactive, not headless-verifiable.
+      {t("test.note")}
     </p>
   </div>
   {#if tested && !testing}
     {#if test?.timed_out}
       <div class="test__result test__result--timeout" role="status">
         <p class="test__verdict">
-          Timed out — not headless-verifiable. The command is interactive
-          (or hangs); it was killed after 20 s.
+          {t("test.timeoutBody")}
         </p>
       </div>
     {:else}
       <div class="test__result" role="status">
         <p class="test__verdict">
-          Exit code: <strong class="mono">{test?.exit_code ?? "—"}</strong>
+          {t("test.exitCode")} <strong class="mono">{test?.exit_code ?? "—"}</strong>
           {test?.exit_code === 0
-            ? " — started cleanly."
+            ? t("test.startedOk")
             : test?.exit_code === null
-              ? " — could not start."
-              : " — the command reported a failure."}
+              ? t("test.noStart")
+              : t("test.cmdFailed")}
         </p>
         {#if test?.output.trim()}
           <pre class="test__output">{test?.output}</pre>

@@ -1,6 +1,7 @@
 <script lang="ts">
   import Icon from "./Icon.svelte";
   import IconButton from "./IconButton.svelte";
+  import { t } from "$lib/copy";
 
   /** One opt-in feature behind the page-features menu: what it is called,
    *  what enabling it does, and the switch itself. `onchange` receives the
@@ -146,7 +147,7 @@
                 class="feature__word"
                 class:feature__word--on={item.value}
               >
-                {item.value ? "On" : "Off"}
+                {item.value ? t("common.on") : t("common.off")}
               </span>
               <span class="feature__track" class:on={item.value}>
                 <span class="feature__knob"></span>

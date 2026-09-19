@@ -7,6 +7,7 @@
  * file Download removes this module plus its dialog/page wiring.
  */
 
+import { t } from "./copy";
 /** Decodes backend base64 file bytes to raw bytes for saving or zipping. */
 export function base64ToBytes(b64: string): Uint8Array {
   const bin = atob(b64);
@@ -64,7 +65,7 @@ export function buildStoredZip(entries: ZipEntry[]): Uint8Array {
   const encoder = new TextEncoder();
   const names = entries.map((entry) => {
     if (!entry.filename || entry.filename.includes("/") || entry.filename.includes("\\")) {
-      throw new Error(`'${entry.filename}' is not a plain file name.`);
+      throw new Error(t("files.badName").replace("{name}", entry.filename));
     }
     return encoder.encode(entry.filename);
   });
@@ -139,11 +140,11 @@ export function downloadFilters(filename: string): { name: string; extensions: s
   const dot = filename.lastIndexOf(".");
   const ext = dot > 0 ? filename.slice(dot + 1).toLowerCase() : "";
   if (!ext || /[^a-z0-9]/.test(ext)) {
-    return [{ name: "All files", extensions: ["*"] }];
+    return [{ name: t("files.allFiles"), extensions: ["*"] }];
   }
   return [
-    { name: `${ext.toUpperCase()} file`, extensions: [ext] },
-    { name: "All files", extensions: ["*"] },
+    { name: t("files.extFile").replace("{ext}", ext.toUpperCase()), extensions: [ext] },
+    { name: t("files.allFiles"), extensions: ["*"] },
   ];
 }
 

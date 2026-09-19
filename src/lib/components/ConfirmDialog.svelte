@@ -2,6 +2,7 @@
   import type { Snippet } from "svelte";
   import Dialog from "./Dialog.svelte";
   import Button from "./Button.svelte";
+  import { t } from "$lib/copy";
 
   let {
     open,
@@ -38,7 +39,7 @@
       {@render children()}
     </div>
     <div class="confirm__actions">
-      <Button variant="secondary" onclick={oncancel}>Cancel</Button>
+      <Button variant="secondary" onclick={oncancel}>{t("common.cancel")}</Button>
       <Button
         class="confirm__danger"
         variant={danger ? "danger" : "primary"}

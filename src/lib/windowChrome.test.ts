@@ -82,10 +82,10 @@ describe("UnifiedHeader drag + button contract", () => {
   });
 
   it("labels all three window buttons and swaps the maximize glyph", () => {
-    expect(HEADER_SOURCE).toContain('label="Minimize"');
-    expect(HEADER_SOURCE).toContain('label="Close"');
+    expect(HEADER_SOURCE).toContain('t("chrome.minimize")');
+    expect(HEADER_SOURCE).toContain('t("common.close")');
     expect(HEADER_SOURCE).toMatch(
-      /label=\{maximized \? "Restore" : "Maximize"\}/,
+      /label=\{maximized \? t\("chrome\.restore"\) : t\("chrome\.maximize"\)\}/,
     );
     expect(HEADER_SOURCE).toMatch(/icon=\{maximized \? "restore" : "square"\}/);
   });

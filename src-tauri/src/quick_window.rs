@@ -362,6 +362,13 @@ fn on_appbar_pos_changed(app: &AppHandle, hwnd: HWND) {
     let Some(edge_u32) = appbar::edge_constant(&current.edge) else {
         return;
     };
+    if current.mode == "bezel" {
+        // Overlay tab with no reservation and no auto-hide registration
+        // (ADR-0011/0019 bezel amendments): a work-area change moves nothing —
+        // the tab anchors to the monitor edge, and there is no engagement to
+        // retry. Retrying auto-hide here would wrongly enable it.
+        return;
+    }
     if current.mode == "auto-hide" {
         // Overlay (ticket 63): there is no reservation to maintain — the
         // driver owns the strip's geometry. Just keep the registration
@@ -458,7 +465,9 @@ fn report_dock_error(app: &AppHandle, message: &str) {
 /// engagement keeps the requested mode — it is never rewritten to "fixed" —
 /// and records the refusal as a transient blocked state the window surfaces;
 /// success clears any stale block. The per-monitor memory is never touched
-/// here, so a refused dock does not poison every later dock.
+/// here, so a refused dock does not poison every later dock. Bezel passes
+/// false (ADR-0011 bezel amendment): the tab overlays with a zero-width
+/// reservation and no auto-hide registration.
 fn apply_dock_mode(app: &AppHandle, hwnd: HWND, edge: &str, mode: &str) {
     let edge_u32 = appbar::edge_constant(edge).expect("validated edge");
     match appbar::set_autohide(hwnd, edge_u32, mode == "auto-hide") {
@@ -487,6 +496,12 @@ pub fn open(app: &AppHandle) -> tauri::Result<()> {
     )
     .title("Sprout — Quick Launch")
     .decorations(false)
+    // No shadow: a shadowed undecorated window reports a client area smaller
+    // than its frame, and the bezel tab is narrower than that inset — the
+    // client inverts, WebView2 loses its paint/click surface, and tao's
+    // shadow compensation wraps into an overflow abort (ADR-0011: the dock
+    // window is a screen-edge utility, never a floating card).
+    .shadow(false)
     .resizable(false)
     .skip_taskbar(true)
     .inner_size(WINDOW_WIDTH as f64, WINDOW_HEIGHT as f64)
@@ -618,6 +633,20 @@ fn resolve_dock_width_pct(
     }
 }
 
+/// Resolves the bezel tab Y ratio for `monitor` the way `dock(None)` does
+/// (spec 214, ADR-0020): the monitor's remembered parked height, falling
+/// back to vertical center — a disconnected or resized display never
+/// strands the tab off-screen. Pure — never persists anything.
+fn resolve_bezel_y_ratio(conn: &Connection, identity: Option<&str>, monitor: &str) -> f64 {
+    let ratio = db::load_bezel_y_ratio_identified(conn, identity, monitor)
+        .unwrap_or(crate::constants::window::BEZEL_Y_RATIO_DEFAULT);
+    if settings::validate_bezel_y_ratio(ratio).is_ok() {
+        ratio
+    } else {
+        crate::constants::window::BEZEL_Y_RATIO_DEFAULT
+    }
+}
+
 /// The effective docked-strip width for `hwnd`'s monitor at `pct` % in `mode`
 /// (ticket 128; per-mode caps in ADR-0021): % of the monitor's full width
 /// (`rcMonitor` — never the work area, which a fixed dock shrinks and would
@@ -721,7 +750,7 @@ pub fn dock(app: &AppHandle, edge: Option<&str>) -> Result<(), String> {
         .ok_or_else(|| "Quick Launch window is not open".to_string())?;
     let hwnd = window.hwnd().map_err(|e| e.to_string())?;
     let state = app.state::<AppState>();
-    let (edge, mode, width, monitor, identity) = {
+    let (edge, mode, width, monitor, identity, y_ratio) = {
         let conn = state.db.lock().map_err(|e| e.to_string())?;
         let settings = settings::load(&conn);
         let (monitor, identity) = monitor_refs(hwnd.0)?;
@@ -742,6 +771,9 @@ pub fn dock(app: &AppHandle, edge: Option<&str>) -> Result<(), String> {
         // full width, floored at 340, capped at the resolved mode's cap.
         let pct = resolve_dock_width_pct(&conn, &settings, identity.as_deref(), &monitor);
         let width = dock_width_for_hwnd(hwnd.0, pct, &mode);
+        // The tab's remembered parked height for this display, centered until
+        // the user drags it (spec 214, ADR-0020 identity-first memory).
+        let y_ratio = resolve_bezel_y_ratio(&conn, identity.as_deref(), &monitor);
         // Memory is written under the hardware-identity key when one
         // resolved, so replugging the panel elsewhere keeps its preference
         // (ticket 110).
@@ -749,7 +781,8 @@ pub fn dock(app: &AppHandle, edge: Option<&str>) -> Result<(), String> {
         let _ = db::save_dock_edge(&conn, key, &edge);
         let _ = db::save_dock_mode(&conn, key, &mode);
         let _ = db::save_dock_width_pct(&conn, key, pct);
-        (edge, mode, width, monitor, identity)
+        let _ = db::save_bezel_y_ratio(&conn, key, y_ratio);
+        (edge, mode, width, monitor, identity, y_ratio)
     };
     // The dock state is recorded BEFORE the OS calls: auto-hide can hide the
     // window the moment it is enabled (losing focus), and the blur handler
@@ -780,8 +813,15 @@ pub fn dock(app: &AppHandle, edge: Option<&str>) -> Result<(), String> {
     // Ticket 63: only `fixed` reserves workspace space. Auto-hide registers
     // without reserving and spans the monitor's own edge — other windows keep
     // their full size whether the strip is hidden or slid out over them
-    // (overlay, taskbar parity); the driver owns its motion.
-    let rect = if mode == "auto-hide" {
+    // (overlay, taskbar parity); the driver owns its motion. Bezel likewise
+    // reserves nothing (ADR-0011 bezel amendment) but parks a collapsed tab
+    // protruding from the edge instead of the full strip — the driver's settle
+    // pass records the zero-width reservation for it.
+    let rect = if mode == "bezel" {
+        let monitor = appbar::monitor_rect(hwnd.0)
+            .ok_or_else(|| "cannot find the monitor rectangle".to_string())?;
+        appbar::bezel_collapsed_rect(monitor, edge_u32, y_ratio)
+    } else if mode == "auto-hide" {
         let monitor = appbar::monitor_rect(hwnd.0)
             .ok_or_else(|| "cannot find the monitor rectangle".to_string())?;
         appbar::appbar_rect(monitor, edge_u32, width)
@@ -800,7 +840,9 @@ pub fn dock(app: &AppHandle, edge: Option<&str>) -> Result<(), String> {
             }
         }
     };
-    if let Err(e) = reshape(&window, rect, mode == "auto-hide") {
+    // Overlay modes live in the topmost band so later windows never cover
+    // them; fixed keeps the non-topmost taskbar behavior.
+    if let Err(e) = reshape(&window, rect, mode == "auto-hide" || mode == "bezel") {
         // The bar was registered but could not be placed — release it so the
         // edge is never left occupied by a half-docked window.
         appbar::remove(hwnd.0);
@@ -862,6 +904,53 @@ fn reposition(app: &AppHandle, edge: Option<&str>) -> Result<(), String> {
                 // edge on its settle pass; `last_rect` still describes the
                 // old edge and must not be trusted as an animation endpoint.
                 d.settled = None;
+            }
+        }
+        return Ok(());
+    }
+    if current.mode == "bezel" {
+        // Bezel edge switch (ADR-0011 bezel amendment): the tab is an overlay
+        // with a zero-width reservation, so the move releases the old edge's
+        // registration, records the zero reservation on the new edge, and
+        // places the collapsed tab synchronously — the driver is inert for
+        // bezel and performs no slide. The tab keeps its remembered parked
+        // height on the new edge (spec 214, ADR-0020).
+        if current.edge != edge {
+            let old_edge_u32 = appbar::edge_constant(&current.edge).expect("validated edge");
+            let _ = appbar::set_autohide(hwnd.0, old_edge_u32, false);
+        }
+        let Some(monitor) = appbar::monitor_rect(hwnd.0) else {
+            return Err("cannot find the monitor rectangle".to_string());
+        };
+        // The overlay works regardless of the grant, so a refused shrink is
+        // tolerated — the tab still places (ADR-0019 workspace-release caveat).
+        let _ = appbar::reserve(hwnd.0, edge_u32, appbar::autohide_reservation(monitor, edge_u32));
+        let y_ratio = match state.db.lock() {
+            Ok(conn) => {
+                resolve_bezel_y_ratio(&conn, current.identity.as_deref(), &current.monitor)
+            }
+            Err(_) => crate::constants::window::BEZEL_Y_RATIO_DEFAULT,
+        };
+        let tab = appbar::bezel_collapsed_rect(monitor, edge_u32, y_ratio);
+        if let Err(e) = reshape(&window, tab, true) {
+            // The reservation moved to the new edge but the window did not — a
+            // half-docked bar: release the AppBar and report instead of leaving
+            // the overlap (ticket 61).
+            appbar::remove(hwnd.0);
+            *state.dock.lock().map_err(|err| err.to_string())? = None;
+            return Err(e);
+        }
+        record_last_rect(app, Some(tab));
+        apply_dock_mode(app, hwnd.0, &edge, &current.mode);
+        {
+            let conn = state.db.lock().map_err(|e| e.to_string())?;
+            let key = memory_key(current.identity.as_deref(), &current.monitor);
+            let _ = db::save_dock_edge(&conn, key, &edge);
+        }
+        if let Ok(mut dock) = state.dock.lock() {
+            if let Some(d) = dock.as_mut() {
+                d.edge = edge;
+                d.last_rect = Some(tab);
             }
         }
         return Ok(());
@@ -973,8 +1062,8 @@ pub fn undock(app: &AppHandle) -> Result<(), String> {
 }
 
 /// Re-applies the docked window's visibility mode (ticket 57): switches the
-/// live window between "auto-hide" and "fixed" without undocking — the mode
-/// change from the Settings screen lands immediately. No-op while floating.
+/// live window between "auto-hide", "fixed", and "bezel" without undocking —
+/// the mode change from the Settings screen lands immediately. No-op while floating.
 /// The mode is persisted to the monitor's dock memory so the window's own
 /// future docks stay aligned.
 ///
@@ -1067,13 +1156,25 @@ pub fn apply_settings(app: &AppHandle, settings: &settings::Settings) -> Result<
     Ok(())
 }
 
+/// Whether a width save must leave every placement to the driver: a mode
+/// transition is still in flight, so a synchronous move here would race the
+/// settle pass on the same window — the torn-window shape behind white,
+/// stuck bars on mode switches. The settle pass re-derives the width from
+/// the memory saved above, so yielding loses nothing (ADR-0019: the driver
+/// owns motion; flips settle there, never beside it).
+fn defers_width_to_driver(settled: Option<&str>, mode: &str) -> bool {
+    settled != Some(mode)
+}
+
 /// Re-thickens a live docked strip to `settings.dock_width_pct` (ticket 128):
-/// the Settings width save lands without reopening the window, on both modes.
+/// the Settings width save lands without reopening the window, on every mode.
 /// Fixed re-reserves and places synchronously (the driver is inert while
 /// fixed, so this thread is the only writer); auto-hide only retargets
 /// `last_rect` — the driver slides to the new thickness within a tick, and
 /// the per-tick reconciliation covers it even if this retarget races a slide.
-/// No-op while floating (the palette stays 340) or when the width already
+/// Bezel only aligns memory — the collapsed tab's width is constant, so there
+/// is no geometry to retarget; the open panel derives the stored % on demand
+/// when opened (spec 214). No-op while floating (the palette stays 340) or when the width already
 /// matches. The monitor's memory is aligned with the applied % so a later
 /// redock on this screen keeps it.
 fn apply_width(app: &AppHandle, settings: &settings::Settings) -> Result<(), String> {
@@ -1107,17 +1208,27 @@ fn apply_width(app: &AppHandle, settings: &settings::Settings) -> Result<(), Str
         let key = memory_key(current.identity.as_deref(), &current.monitor);
         let _ = db::save_dock_width_pct(&conn, key, pct);
     }
+    if defers_width_to_driver(current.settled.as_deref(), &current.mode) {
+        return Ok(());
+    }
     let Some(edge_u32) = appbar::edge_constant(&current.edge) else {
         return Ok(());
     };
+    if current.mode == "bezel" {
+        // The collapsed tab's width is constant (single size source) — the
+        // memory save above is the whole update; the open panel derives the
+        // stored % on demand when opened (spec 214), so no geometry moves here.
+        return Ok(());
+    }
     if current.mode == "auto-hide" {
         // Single-writer: place nothing here — retarget the full rect and let
-        // the driver animate to it (see `autohide_tick`'s width pass).
+        // the driver animate to it (see `autohide_tick`'s width pass). A
+        // bezel tab's short height never becomes the strip's (see
+        // `preserve_granted_vertical`).
         if let Some(monitor) = appbar::monitor_rect(hwnd) {
             let mut full = appbar::appbar_rect(monitor, edge_u32, width);
             if let Some(granted) = current.last_rect {
-                full.top = granted.top;
-                full.bottom = granted.bottom;
+                full = appbar::preserve_granted_vertical(full, granted);
             }
             record_last_rect(app, Some(full));
         }
@@ -1159,14 +1270,14 @@ fn apply_width(app: &AppHandle, settings: &settings::Settings) -> Result<(), Str
 }
 
 /// Whether a Settings save must hand the dock back to the driver: anything
-/// but a converged auto-hide dock. A dock-irrelevant save (Companion URL,
-/// timeouts, …) on converged auto-hide must not reset the settle or
+/// but a converged overlay dock. A dock-irrelevant save (Companion URL,
+/// timeouts, …) on converged auto-hide or bezel must not reset the settle or
 /// re-probe the shell — the spurious settle re-logs reservation grants and
 /// the re-probe can surface a refusal the change had nothing to do with.
 /// Real transitions converge through `apply_settings`, which registers on
 /// its own paths; converged fixed keeps its explicit re-placement below.
 fn needs_reestablish(live_edge: &str, live_mode: &str, stored_edge: &str, stored_mode: &str) -> bool {
-    live_edge != stored_edge || live_mode != stored_mode || live_mode != "auto-hide"
+    live_edge != stored_edge || live_mode != stored_mode || live_mode == "fixed"
 }
 
 /// Reconciles the live Quick Launch window from the fully persisted settings,
@@ -1214,6 +1325,7 @@ pub fn reconcile_saved_settings(app: &AppHandle) -> Result<(), String> {
         stored.dock_width_pct = width_pct;
     }
 
+    let before_dock = docked_state(app).map(|d| (d.edge, d.mode));
     apply_settings(app, &stored)?;
 
     // A previous settle can be visually stale even when its mode string is
@@ -1221,8 +1333,12 @@ pub fn reconcile_saved_settings(app: &AppHandle) -> Result<(), String> {
     // request to re-establish the persisted geometry, so hand ownership back
     // to the driver once — but never for a converged auto-hide dock (see
     // `needs_reestablish`): the driver already owns its placement and
-    // re-probing only re-logs a foreign-held slot.
-    if is_docked(app) {
+    // re-probing only re-logs a foreign-held slot. A save that moved nothing
+    // skips the tail entirely: re-placing a converged bar only replays the
+    // flip-time churn (flicker, torn resizes) the single writer exists to
+    // prevent (ADR-0019).
+    let moved = docked_state(app).map(|d| (d.edge, d.mode)) != before_dock;
+    if moved && is_docked(app) {
         let current = docked_state(app)
             .ok_or_else(|| "Quick Launch window is not docked".to_string())?;
         if needs_reestablish(&current.edge, &current.mode, &stored.dock_edge, &stored.dock_mode) {
@@ -1288,8 +1404,10 @@ fn reshape(window: &tauri::Window, rect: RECT, topmost: bool) -> Result<(), Stri
 /// moved (Win+Shift+→), a monitor reconnected, a stray resize — re-docks it
 /// (re-query, re-set, atomic placement). A single transient divergence never
 /// yanks the bar: the re-dock only fires after two consecutive divergent
-/// ticks. Auto-hide bars are skipped entirely (ticket 63): they reserve no
-/// space and their driver pulls a drifted window back within one tick.
+/// ticks. Auto-hide and bezel bars are skipped entirely (ticket 63, ADR-0011
+/// bezel amendment): they reserve no space and a drifted overlay is pulled
+/// back by the driver (auto-hide) or re-settled on its next transition
+/// (bezel) — the watchdog must never fight an overlay.
 /// Failures are logged and surfaced in the window via
 /// `quick-launch-dock-error` — never silent.
 pub fn start_drift_guard(app: AppHandle) {
@@ -1314,10 +1432,11 @@ fn drift_check(app: &AppHandle, consecutive: &mut u32) -> Result<bool, String> {
     let Some(current) = docked_state(app) else {
         return Ok(false);
     };
-    if current.mode == "auto-hide" {
-        // Overlay (ticket 63): nothing to heal — the bar reserves no space,
-        // and a drifted window is pulled back to its target by the driver
-        // within one tick.
+    if current.mode == "auto-hide" || current.mode == "bezel" {
+        // Overlays (ticket 63, ADR-0011 bezel amendment): nothing to heal —
+        // neither bar reserves space. A drifted auto-hide window is pulled
+        // back to its target by the driver within one tick; a drifted bezel
+        // tab is re-placed by its next settle (mode/edge/width change).
         *consecutive = 0;
         return Ok(false);
     }
@@ -1470,7 +1589,8 @@ fn record_settled(app: &AppHandle, mode: &str) {
 
 /// The driver's one-time settle pass for a pending mode transition (ticket
 /// 66): performs the reservation change the flip needs — shrink to the sliver
-/// entering auto-hide, full-strip reservation + atomic placement entering
+/// entering auto-hide, zero reservation plus collapsed-tab placement entering
+/// bezel, full-strip reservation + atomic placement entering
 /// fixed — while never racing another placement writer (this runs on the
 /// driver thread alone). Failures are logged / surfaced in the window, never
 /// fatal: the caller marks the mode settled regardless so a refused
@@ -1478,7 +1598,9 @@ fn record_settled(app: &AppHandle, mode: &str) {
 ///
 /// Entering auto-hide deliberately places nothing here: the motion logic in
 /// [`autohide_tick`] slides the strip from wherever it is to its target,
-/// replacing the old inline teleport with the intended motion.
+/// replacing the old inline teleport with the intended motion. Entering bezel
+/// places synchronously instead: the driver performs no slide for bezel, so
+/// nothing else would place the tab.
 fn settle_mode(app: &AppHandle, current: &DockState) {
     let Some(window) = quick_launch_window(app) else {
         return;
@@ -1526,6 +1648,51 @@ fn settle_mode(app: &AppHandle, current: &DockState) {
                 }
             }
             record_last_rect(app, Some(full));
+        }
+        return;
+    }
+    if current.mode == "bezel" {
+        // Entering bezel (ADR-0011/0019 bezel amendments): hand the workspace
+        // back with the zero-width reservation, then place the collapsed tab
+        // synchronously — the driver performs no slide for bezel, so nothing
+        // else will place it. The tab restores its remembered parked height
+        // for this display, centered until the user drags it (spec 214,
+        // ADR-0020). A refused shrink is tolerated: the overlay works
+        // regardless (ADR-0019 workspace-release caveat).
+        if let Some(monitor) = appbar::monitor_rect(hwnd.0) {
+            let reservation = appbar::autohide_reservation(monitor, edge_u32);
+            match appbar::reserve(hwnd.0, edge_u32, reservation) {
+                Ok(granted) => {
+                    if appbar::rects_diverged(granted, reservation, 4) {
+                        eprintln!(
+                            "bezel: unexpected reservation grant — keeping window placement only"
+                        );
+                    }
+                }
+                Err(e) => {
+                    eprintln!("bezel: could not release the strip reservation: {e}");
+                }
+            }
+            let tab = appbar::bezel_collapsed_rect(
+                monitor,
+                edge_u32,
+                match app.state::<AppState>().db.lock() {
+                    Ok(conn) => {
+                        resolve_bezel_y_ratio(&conn, current.identity.as_deref(), &current.monitor)
+                    }
+                    Err(_) => crate::constants::window::BEZEL_Y_RATIO_DEFAULT,
+                },
+            );
+            // Single-writer handshake (ticket 66): an undock/close landing
+            // between the flip and this settle abandons the placement.
+            if !docked_state(app).is_some() {
+                return;
+            }
+            if let Err(e) = appbar::place(hwnd.0, tab, true) {
+                report_dock_error(app, &format!("Could not settle the bezel tab: {e}"));
+                return;
+            }
+            record_last_rect(app, Some(tab));
         }
         return;
     }
@@ -1591,7 +1758,9 @@ fn settle_mode(app: &AppHandle, current: &DockState) {
 }
 
 /// One auto-hide driver tick (ticket 63). Acts only while docked with mode
-/// "auto-hide" — floating windows never hide, `fixed` strips never move.
+/// "auto-hide" — floating windows never hide, `fixed` strips never move, and
+/// `bezel` tabs settle (zero reservation + collapsed placement) then return
+/// with no slide (ADR-0019 bezel amendment).
 /// Everything is recomputed from live state each tick, so docks, edge
 /// switches, and monitor changes are picked up within one tick.
 ///
@@ -1611,7 +1780,7 @@ fn autohide_tick(
     // syscalls (a SetWindowPos issued here is delivered through the main
     // thread's message pump; blocking that pump on a lock the sender waits
     // on would deadlock).
-    let Some(current) = docked_state(app) else {
+    let Some(mut current) = docked_state(app) else {
         *anim = None;
         *shown = None;
         *reveal_gate = appbar::RevealGate::default();
@@ -1620,11 +1789,23 @@ fn autohide_tick(
     if current.settled.as_deref() != Some(current.mode.as_str()) {
         settle_mode(app, &current);
         record_settled(app, &current.mode);
+        // The settle just wrote the post-transition rect (full strip for
+        // auto-hide, collapsed tab for bezel). The snapshot above still holds
+        // the pre-transition rect — bezel->auto-hide would otherwise keep the
+        // tab's top/bottom, and the width pass below would preserve them into
+        // a short "full", breaking hover reveal. Re-read so motion uses the
+        // settled geometry.
+        if let Some(fresh) = docked_state(app) {
+            current = fresh;
+        }
     }
     if current.mode != "auto-hide" {
         // Fixed mode: the strip stays put at its full rect (the settle pass
-        // above reserved and placed it on the switch); the driver forgets its
-        // slide state.
+        // above reserved and placed it on the switch); bezel likewise returns
+        // here — its settle pass placed the collapsed tab and there is no
+        // slide and no reveal gate for bezel (ADR-0019; open stays click-gated
+        // per the bezel spec). The driver forgets its slide
+        // state for both.
         *anim = None;
         *shown = None;
         *reveal_gate = appbar::RevealGate::default();
@@ -1668,10 +1849,10 @@ fn autohide_tick(
         if (full.right - full.left - remembered).abs() > 1 {
             full = appbar::appbar_rect(monitor, edge_u32, remembered);
             // Keep the top/bottom the shell granted — only the thickness
-            // follows the slider.
+            // follows the slider. A bezel tab's short height never becomes
+            // the strip's (see `preserve_granted_vertical`).
             if let Some(granted) = current.last_rect {
-                full.top = granted.top;
-                full.bottom = granted.bottom;
+                full = appbar::preserve_granted_vertical(full, granted);
             }
             record_last_rect(app, Some(full));
         }
@@ -1850,6 +2031,17 @@ mod tests {
             resolve_dock_prefs(&conn, &settings, None, r"\\.\DISPLAY1").unwrap();
         assert_eq!(edge, settings::DEFAULT_DOCK_EDGE);
         assert_eq!(mode, settings::DEFAULT_DOCK_MODE);
+        // A broken stored mode falls back the same way — and bezel, the third
+        // mode (spec 214), round-trips through per-monitor memory like the
+        // other two (unknown-mode fallback behavior unchanged).
+        db::save_dock_mode(&conn, r"\\.\DISPLAY1", "overlay").unwrap();
+        let (_, mode) =
+            resolve_dock_prefs(&conn, &settings, None, r"\\.\DISPLAY1").unwrap();
+        assert_eq!(mode, settings::DEFAULT_DOCK_MODE);
+        db::save_dock_mode(&conn, r"\\.\DISPLAY1", "bezel").unwrap();
+        let (_, mode) =
+            resolve_dock_prefs(&conn, &settings, None, r"\\.\DISPLAY1").unwrap();
+        assert_eq!(mode, "bezel");
     }
 
     #[test]
@@ -1918,6 +2110,60 @@ mod tests {
         assert_eq!(
             resolve_dock_width_pct(&conn, &settings, None, r"\\.\DISPLAY1"),
             settings::DEFAULT_DOCK_WIDTH_PCT
+        );
+    }
+
+    #[test]
+    fn width_save_defers_to_the_driver_while_a_settle_is_pending() {
+        // A width save landing mid-flip must not place: the settle pass owns
+        // the window until it converges, and a second synchronous writer is
+        // the torn-window shape behind white, stuck bars (ADR-0019).
+        assert!(defers_width_to_driver(None, "fixed"));
+        assert!(defers_width_to_driver(Some("bezel"), "fixed"));
+        assert!(defers_width_to_driver(None, "bezel"));
+        // A converged dock applies widths on its own path — nothing to defer.
+        assert!(!defers_width_to_driver(Some("fixed"), "fixed"));
+        assert!(!defers_width_to_driver(Some("bezel"), "bezel"));
+        assert!(!defers_width_to_driver(Some("auto-hide"), "auto-hide"));
+    }
+
+    #[test]
+    fn bezel_y_ratio_centers_until_dragged_then_restores_per_monitor() {
+        // A fresh database remembers nothing — the tab centers; a dragged
+        // tab restores on its own display while other displays stay centered
+        // (ADR-0020 identity-first memory).
+        let dir = test_dir();
+        let conn = db::init_at(&dir).unwrap();
+        assert_eq!(
+            resolve_bezel_y_ratio(&conn, None, r"\\.\DISPLAY1"),
+            crate::constants::window::BEZEL_Y_RATIO_DEFAULT
+        );
+        db::save_bezel_y_ratio(&conn, r"\\.\DISPLAY1", 0.25).unwrap();
+        assert_eq!(resolve_bezel_y_ratio(&conn, None, r"\\.\DISPLAY1"), 0.25);
+        assert_eq!(
+            resolve_bezel_y_ratio(&conn, None, r"\\.\DISPLAY2"),
+            crate::constants::window::BEZEL_Y_RATIO_DEFAULT
+        );
+    }
+
+    #[test]
+    fn bezel_y_ratio_prefers_identity_and_centers_on_broken_values() {
+        // Identity rows win over device-name rows, so a replugged panel keeps
+        // its parked height; a broken stored value centers instead of parking
+        // the tab off-screen.
+        let dir = test_dir();
+        let conn = db::init_at(&dir).unwrap();
+        db::save_bezel_y_ratio(&conn, "edid-1234-5678", 0.2).unwrap();
+        db::save_bezel_y_ratio(&conn, r"\\.\DISPLAY1", 0.8).unwrap();
+        assert_eq!(
+            resolve_bezel_y_ratio(&conn, Some("edid-1234-5678"), r"\\.\DISPLAY1"),
+            0.2
+        );
+        assert_eq!(resolve_bezel_y_ratio(&conn, None, r"\\.\DISPLAY1"), 0.8);
+        db::save_bezel_y_ratio(&conn, r"\\.\DISPLAY1", 2.5).unwrap();
+        assert_eq!(
+            resolve_bezel_y_ratio(&conn, None, r"\\.\DISPLAY1"),
+            crate::constants::window::BEZEL_Y_RATIO_DEFAULT
         );
     }
 
@@ -2130,13 +2376,18 @@ mod tests {
     }
 
     #[test]
-    fn reestablish_only_leaves_converged_autohide_alone() {
+    fn reestablish_only_leaves_converged_overlays_alone() {
         // A dock-irrelevant save (Companion URL, timeouts, …) on a converged
-        // auto-hide dock must not kick the driver or re-probe the shell.
+        // overlay dock must not kick the driver or re-probe the shell.
         assert!(!needs_reestablish("right", "auto-hide", "right", "auto-hide"));
+        // Bezel reserves nothing either (ADR-0011 bezel amendment), so a
+        // converged bezel dock is left alone the same way.
+        assert!(!needs_reestablish("right", "bezel", "right", "bezel"));
         // Genuine divergence always re-establishes…
         assert!(needs_reestablish("right", "auto-hide", "left", "auto-hide"));
         assert!(needs_reestablish("right", "auto-hide", "right", "fixed"));
+        assert!(needs_reestablish("right", "bezel", "left", "bezel"));
+        assert!(needs_reestablish("right", "bezel", "right", "fixed"));
         assert!(needs_reestablish("left", "fixed", "right", "auto-hide"));
         // …and converged fixed keeps its explicit re-placement.
         assert!(needs_reestablish("right", "fixed", "right", "fixed"));

@@ -13,6 +13,7 @@
   import Badge from "$lib/components/Badge.svelte";
   import ConfirmDialog from "$lib/components/ConfirmDialog.svelte";
   import Select from "$lib/components/Select.svelte";
+  import { t } from "$lib/copy";
 
   // Companion manager — machine-local only, never in Preset exports (the settings
   // row itself never travels in backups either). Reuses PageHeader / Dialog /
@@ -40,22 +41,22 @@
     return normalizeCompanionSites(list);
   }
   function validateInput(url: string): string | null {
-    const t = url.trim();
-    if (!t) return "Enter an https:// URL.";
-    if (!t.toLowerCase().startsWith("https://")) return "Companion URL must be https://";
-    if (t.includes(" ")) return "Companion URL must be a valid https:// URL.";
+    const trimmed = url.trim();
+    if (!trimmed) return t("companion.urlEmpty");
+    if (!trimmed.toLowerCase().startsWith("https://")) return t("companion.urlScheme");
+    if (trimmed.includes(" ")) return t("companion.urlValid");
     return null;
   }
   function duplicateUrl(url: string, except: number | null): string | null {
     const key = companionUrlKey(url);
     const hit = sites.find((s, i) => i !== except && companionUrlKey(s.url) === key);
-    return hit ? `"${url.trim()}" is already saved.` : null;
+    return hit ? t("companion.dupeUrl").replace("{url}", url.trim()) : null;
   }
   function duplicateName(name: string, except: number | null): string | null {
-    const t = name.trim();
-    if (!t) return null;
-    const hit = sites.find((s, i) => i !== except && s.name.trim().toLowerCase() === t.toLowerCase());
-    return hit ? `"${t}" is already used as a site name.` : null;
+    const trimmed = name.trim();
+    if (!trimmed) return null;
+    const hit = sites.find((s, i) => i !== except && s.name.trim().toLowerCase() === trimmed.toLowerCase());
+    return hit ? t("companion.dupeName").replace("{name}", trimmed) : null;
   }
   function flash(msg: string) {
     notice = msg;
@@ -67,7 +68,7 @@
     }, 3200);
   }
   function flashAdded(site: CompanionSite) {
-    notice = `Added ${companionDisplayName(site)}`;
+    notice = t("companion.addedFlash").replace("{name}", companionDisplayName(site));
     noticeSiteUrl = site.url;
     clearTimeout(noticeTimer);
     noticeTimer = setTimeout(() => {
@@ -83,7 +84,7 @@
       activeUrl = url;
       error = "";
       const saved = sites.find((s) => s.url.toLowerCase() === url.toLowerCase());
-      flash(`Enabled ${companionDisplayName(saved ?? { url, name: "", ua: "mobile" })}`);
+      flash(t("companion.enabledFlash").replace("{name}", companionDisplayName(saved ?? { url, name: "", ua: "mobile" })));
     } catch (e) {
       error = String(e);
     }
@@ -189,7 +190,7 @@
       formOpen = false;
       formError = "";
       error = "";
-      flash("Saved.");
+      flash(t("companion.savedFlash"));
     } catch (e) { formError = String(e); }
   }
   async function removeUrl(idx: number) {
@@ -200,7 +201,7 @@
       if (activeUrl && removed.url.toLowerCase() === activeUrl.toLowerCase()) {
         activeUrl = null;
       }
-      flash(`Removed ${companionDisplayName(removed)}`);
+      flash(t("companion.removedFlash").replace("{name}", companionDisplayName(removed)));
     } catch (e) { error = String(e); }
   }
   async function moveUrl(idx: number, dir: -1 | 1) {
@@ -217,17 +218,17 @@
 </script>
 
 <svelte:head>
-  <title>Companion — Sprout</title>
+  <title>{t("nav.companion")} — Sprout</title>
 </svelte:head>
 
 <section class="companion" aria-labelledby="companion-title">
-  <PageHeader titleId="companion-title" title="Companion">
+  <PageHeader titleId="companion-title" title={t("nav.companion")}>
     {#snippet actions()}
-      <Button variant="secondary" onclick={() => goto("/settings")}>Back to Settings</Button>
-      <Button onclick={startAdd}>Add site</Button>
+      <Button variant="secondary" onclick={() => goto("/settings")}>{t("companion.backToSettings")}</Button>
+      <Button onclick={startAdd}>{t("companion.addSite")}</Button>
     {/snippet}
     {#snippet subtitle()}
-      Add, edit, and arrange the sites available to Companion. Companion data stays on this PC.
+      {t("companion.subtitle")}
     {/snippet}
   </PageHeader>
 
@@ -239,7 +240,7 @@
       <Notice tone="ok">
         {notice}
         {#snippet action()}
-          <Button onclick={() => void enableNoticedSite()}>Enable now</Button>
+          <Button onclick={() => void enableNoticedSite()}>{t("companion.enableNow")}</Button>
         {/snippet}
       </Notice>
     {:else}
@@ -253,7 +254,7 @@
     <section class="saved-sites" aria-labelledby="saved-sites-title">
       <div class="saved-sites__header">
         <div>
-          <h2 id="saved-sites-title" class="saved-sites__title">Saved sites</h2>
+          <h2 id="saved-sites-title" class="saved-sites__title">{t("settings.companion-sites.label")}</h2>
         </div>
         <span class="saved-sites__count">{sites.length}</span>
       </div>
@@ -267,29 +268,29 @@
                   <span class="saved-row__url" title={site.url}>{site.url}</span>
                 {/if}
                 {#if site.ua === "desktop"}
-                  <span class="saved-row__url">Desktop identity</span>
+                  <span class="saved-row__url">{t("companion.desktopBadge")}</span>
                 {/if}
               </span>
               {#if activeUrl && activeUrl.toLowerCase() === site.url.toLowerCase()}
-                <Badge tone="accent">Active</Badge>
+                <Badge tone="accent">{t("companion.activeBadge")}</Badge>
               {/if}
-              <Button variant="ghost" onclick={() => startEdit(idx)}>Edit</Button>
-              <IconButton icon="chevron-up" label="Move up" quiet onclick={() => moveUrl(idx, -1)} disabled={idx===0} />
-              <IconButton icon="chevron-down" label="Move down" quiet onclick={() => moveUrl(idx, 1)} disabled={idx===sites.length-1} />
-              <Button variant="ghost" onclick={() => (removeIndex = idx)}>Remove</Button>
+              <Button variant="ghost" onclick={() => startEdit(idx)}>{t("common.edit")}</Button>
+              <IconButton icon="chevron-up" label={t("menu.moveUp")} quiet onclick={() => moveUrl(idx, -1)} disabled={idx===0} />
+              <IconButton icon="chevron-down" label={t("menu.moveDown")} quiet onclick={() => moveUrl(idx, 1)} disabled={idx===sites.length-1} />
+              <Button variant="ghost" onclick={() => (removeIndex = idx)}>{t("common.remove")}</Button>
             </li>
           {/each}
         </ul>
       {:else}
-        <EmptyState icon="monitor" title="No companion URLs yet">
-          <p>Add an https:// site to make it available in the dock.</p>
+        <EmptyState icon="monitor" title={t("companion.noSites")}>
+          <p>{t("companion.noSitesBody")}</p>
         </EmptyState>
       {/if}
     </section>
   {/if}
 </section>
 
-<Dialog open={formOpen} title={editIndex === null ? "Add companion site" : "Edit companion site"} onclose={cancelEdit}>
+<Dialog open={formOpen} title={editIndex === null ? t("companion.addTitle") : t("companion.editTitle")} onclose={cancelEdit}>
   <form
     class="site-form"
     onsubmit={(event) => {
@@ -298,7 +299,7 @@
       else void saveEdit();
     }}
   >
-    <label class="site-form__label" for="companion-site-name">Site name</label>
+    <label class="site-form__label" for="companion-site-name">{t("companion.nameLabel")}</label>
     <input
       id="companion-site-name"
       name="companion-site-name"
@@ -306,13 +307,13 @@
       type="text"
       autocomplete="off"
       spellcheck="false"
-      placeholder="My music…"
+      placeholder={t("companion.namePh")}
       value={nameDraft}
       oninput={(event) => (nameDraft = (event.target as HTMLInputElement).value)}
       aria-describedby="companion-site-name-hint"
     />
-    <p id="companion-site-name-hint" class="site-form__hint">Optional — shown in pickers instead of the address.</p>
-    <label class="site-form__label" for="companion-site-url">Site URL</label>
+    <p id="companion-site-name-hint" class="site-form__hint">{t("companion.nameHint")}</p>
+    <label class="site-form__label" for="companion-site-url">{t("companion.urlLabel")}</label>
     <input
       id="companion-site-url"
       name="companion-site-url"
@@ -321,7 +322,7 @@
       inputmode="url"
       autocomplete="off"
       spellcheck="false"
-      placeholder="https://music.youtube.com…"
+      placeholder={t("companion.urlPh")}
       value={siteDraft}
       oninput={(event) => (siteDraft = (event.target as HTMLInputElement).value)}
       aria-describedby={formError ? "companion-site-error" : "companion-site-hint"}
@@ -329,31 +330,31 @@
     {#if formError}
       <p id="companion-site-error" class="site-form__error" role="alert">{formError}</p>
     {:else}
-      <p id="companion-site-hint" class="site-form__hint">Use the full https:// address.</p>
+      <p id="companion-site-hint" class="site-form__hint">{t("companion.urlHint")}</p>
     {/if}
-    <label class="site-form__label" for="companion-site-ua">Site identity</label>
+    <label class="site-form__label" for="companion-site-ua">{t("companion.uaLabel")}</label>
     <Select
       id="companion-site-ua"
       variant="small"
       value={uaDraft}
       onchange={(v) => (uaDraft = v === "desktop" ? "desktop" : "mobile")}
       options={[
-        { value: "mobile", label: "Mobile — narrow-dock layout" },
-        { value: "desktop", label: "Desktop — desktop-only sites" },
+        { value: "mobile", label: t("companion.uaMobile") },
+        { value: "desktop", label: t("companion.uaDesktop") },
       ]}
     />
-    <p class="site-form__hint">Desktop-only sites (e.g. Teams for Web) need the Desktop identity; everything else stays Mobile.</p>
+    <p class="site-form__hint">{t("companion.uaHint")}</p>
     <div class="site-form__actions">
-      <Button variant="ghost" type="button" onclick={cancelEdit}>Cancel</Button>
-      <Button kind="submit">{editIndex === null ? "Add site" : "Save changes"}</Button>
+      <Button variant="ghost" type="button" onclick={cancelEdit}>{t("common.cancel")}</Button>
+      <Button kind="submit">{editIndex === null ? t("companion.addSite") : t("common.saveChanges")}</Button>
     </div>
   </form>
 </Dialog>
 
 <ConfirmDialog
   open={removeIndex !== null}
-  title="Remove saved site?"
-  confirmLabel="Remove site"
+  title={t("companion.removeTitle")}
+  confirmLabel={t("companion.removeConfirm")}
   danger
   oncancel={() => (removeIndex = null)}
   onconfirm={() => {
@@ -362,7 +363,7 @@
     if (index !== null) void removeUrl(index);
   }}
 >
-  <p>This removes the site from Companion. You can add it again later.</p>
+  <p>{t("companion.removeBody")}</p>
 </ConfirmDialog>
 
 <style>

@@ -23,6 +23,8 @@
     SECTION_LABEL_BY_ROUTE,
     sectionLabelForRoute,
   } from "$lib/windowChrome";
+  import { englishCopy, t } from "$lib/copy";
+  import { startLocale } from "$lib/copy/locale.svelte";
   import { launchImport } from "$lib/launchImport.svelte";
   import { startRunAwareness } from "$lib/runAwareness.svelte";
   import { startTheme } from "$lib/theme.svelte";
@@ -48,11 +50,13 @@
 
   // The theme store (ticket 31) applies its cached mode at import, before the
   // first paint; this wires the OS listener and backend reconciliation. The
-  // animation store applies its cached switch the same way.
+  // animation store applies its cached switch the same way. The locale store
+  // applies its cached language and re-reads the backend, in every window.
   $effect(() => {
     startTheme();
     startAnimation();
     startNativeFrame();
+    startLocale();
   });
 
   // The run-awareness poller (ticket 18) lives at the layout level, so the
@@ -94,16 +98,18 @@
   });
 
   // The Discord section report (ADR-0033) reads the shared route map — the
-  // same labels the unified header breadcrumbs, so presence and chrome can
-  // never disagree. Fixed state text only, session clock untouched.
+  // same keys the unified header breadcrumbs, so presence and chrome can
+  // never disagree. The pipe vocabulary stays English while the header
+  // translates: wording-locked fixed text only, session clock untouched.
   let lastPresenceState = "";
   $effect(() => {
     if (isQuickLaunchWindow) return;
     const state =
-      SECTION_LABEL_BY_ROUTE[page.route.id ?? "/"] ?? "Composing presets";
+      SECTION_LABEL_BY_ROUTE[page.route.id ?? "/"] ??
+      englishCopy["presence.state.presets"];
     if (state === lastPresenceState) return;
     lastPresenceState = state;
-    setPresenceStatus("Using Sprout", state).catch(() => {});
+    setPresenceStatus(englishCopy["presence.details"], state).catch(() => {});
   });
 
   // The unified header reflects the live maximized state instead of tracking
@@ -194,7 +200,7 @@
       />
     {/if}
     <div class="shell">
-      <a class="skip-link" href="#main">Skip to content</a>
+      <a class="skip-link" href="#main">{t("chrome.skipLink")}</a>
       <NavRail />
       <div class="stage">
         <RunBanner />

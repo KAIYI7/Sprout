@@ -60,6 +60,7 @@ import type { Group, LaunchCommandTest, QuickAction, QuickActionShell } from "$l
   import Notice from "./Notice.svelte";
   import Select from "./Select.svelte";
   import TestResult from "./TestResult.svelte";
+  import { t } from "$lib/copy";
 
   let {
     open,
@@ -306,7 +307,7 @@ import type { Group, LaunchCommandTest, QuickAction, QuickActionShell } from "$l
     const trimmed = value.trim();
     if (!trimmed) return null;
     if (!/^[A-Za-z]:[\\/]/.test(trimmed) && !/^\\\\/.test(trimmed)) {
-      return `'${trimmed}' is not an absolute path — the working directory must be a full path like D:\Work`;
+      return t("actionform.cwdError").replace("{path}", trimmed);
     }
     return null;
   }
@@ -318,7 +319,7 @@ import type { Group, LaunchCommandTest, QuickAction, QuickActionShell } from "$l
   async function runCheck() {
     if (checking) return;
     if (!preCheck.trim()) {
-      error = "Type a pre-action check first.";
+      error = t("actionform.preCheckFirst");
       return;
     }
     const badCwd = cwdError(cwd);
@@ -345,7 +346,7 @@ import type { Group, LaunchCommandTest, QuickAction, QuickActionShell } from "$l
     if (aiPending) return;
     if (!aiRequest.trim()) {
       aiOutcome = null;
-      aiNotice = "Describe what the action should do, then generate.";
+      aiNotice = t("actionform.describeFirst");
       return;
     }
     aiPending = true;
@@ -385,7 +386,7 @@ import type { Group, LaunchCommandTest, QuickAction, QuickActionShell } from "$l
   async function regenerateWithClarification() {
     const selection = clarifyFree.trim() || clarifyPick.trim();
     if (!selection) {
-      aiNotice = "Pick a choice or describe it below, then continue.";
+      aiNotice = t("actionform.clarifyFirst");
       return;
     }
     // The chain carries every prior answer forward, and the aspect key tells
@@ -436,7 +437,7 @@ import type { Group, LaunchCommandTest, QuickAction, QuickActionShell } from "$l
     const base =
       lastNarrowed && chainedFrom === aiRequest.trim() ? lastNarrowed : aiRequest.trim();
     if (!base) {
-      aiNotice = "Describe what the action should do, then generate.";
+      aiNotice = t("actionform.describeFirst");
       return;
     }
     if (aiPending) return;
@@ -486,7 +487,7 @@ import type { Group, LaunchCommandTest, QuickAction, QuickActionShell } from "$l
     aiRequestId = null;
     aiSeq += 1;
     aiPending = false;
-    aiNotice = "Generation cancelled — nothing saved.";
+    aiNotice = t("actionform.genCancelled");
   }
 
   async function applyDraft() {
@@ -496,7 +497,7 @@ import type { Group, LaunchCommandTest, QuickAction, QuickActionShell } from "$l
     aiApplied = { shell: aiOutcome.draft.shell, command: aiOutcome.draft.command };
     aiNotice = "";
     error = "";
-    manualNotice = "Applied — review and save.";
+    manualNotice = t("actionform.appliedManual");
     aiView = "manual";
     await tick();
     document.getElementById("qa-command")?.focus();
@@ -543,12 +544,12 @@ import type { Group, LaunchCommandTest, QuickAction, QuickActionShell } from "$l
     if (diagPending || !action) return;
     if (!command.trim()) {
       diagOutcome = null;
-      diagNotice = "The saved script is empty — nothing to diagnose.";
+      diagNotice = t("actionform.diagEmpty");
       return;
     }
     if (!diagError.trim()) {
       diagOutcome = null;
-      diagNotice = "Paste the error output to diagnose, then try again.";
+      diagNotice = t("actionform.diagPasteFirst");
       return;
     }
     diagPending = true;
@@ -591,7 +592,7 @@ import type { Group, LaunchCommandTest, QuickAction, QuickActionShell } from "$l
     diagRequestId = null;
     diagSeq += 1;
     diagPending = false;
-    diagNotice = "Diagnosis cancelled — nothing saved.";
+    diagNotice = t("actionform.diagCancelled");
   }
 
   function diagKeydown(event: KeyboardEvent) {
@@ -629,7 +630,7 @@ import type { Group, LaunchCommandTest, QuickAction, QuickActionShell } from "$l
     diagConflict = "";
     diagNotice = "";
     error = "";
-    manualNotice = "Revision applied — review and save.";
+    manualNotice = t("actionform.revisionApplied");
     aiView = "manual";
     await tick();
     document.getElementById("qa-command")?.focus();
@@ -724,7 +725,7 @@ import type { Group, LaunchCommandTest, QuickAction, QuickActionShell } from "$l
   async function runFind() {
     if (findPending) return;
     if (!findQuery.trim()) {
-      findNotice = "Type an app or file name, then find.";
+      findNotice = t("actionform.findFirst");
       return;
     }
     findPending = true;
@@ -737,7 +738,7 @@ import type { Group, LaunchCommandTest, QuickAction, QuickActionShell } from "$l
       findOutcome = outcome;
       findPick = outcome.matches.length === 1 ? outcome.matches[0].ref_id : "";
       if (outcome.matches.length === 0) {
-        findNotice = outcome.notice ?? "No match.";
+        findNotice = outcome.notice ?? t("actionform.noMatch");
       }
     } catch (e) {
       console.error(e);
@@ -751,13 +752,13 @@ import type { Group, LaunchCommandTest, QuickAction, QuickActionShell } from "$l
   function cancelFind() {
     findSeq += 1;
     findPending = false;
-    findNotice = "Search cancelled — nothing saved.";
+    findNotice = t("actionform.findCancelled");
   }
 
   async function useTarget() {
     const pick = findOutcome?.matches.find((m) => m.ref_id === findPick);
     if (!pick) {
-      findNotice = "Pick a match first.";
+      findNotice = t("actionform.pickFirst");
       return;
     }
     try {
@@ -792,8 +793,7 @@ import type { Group, LaunchCommandTest, QuickAction, QuickActionShell } from "$l
     if (!filePreview) return;
     try {
       await aiApproveDisclosure(filePreview.ref_id, ["name", "path", "contents"]);
-      findNotice =
-        "Recorded. Nothing is sent anywhere by this build — a later cloud step must ask again before uploading.";
+      findNotice = t("actionform.disclosureRecorded");
     } catch (e) {
       console.error(e);
       findNotice = String(e);
@@ -811,11 +811,11 @@ import type { Group, LaunchCommandTest, QuickAction, QuickActionShell } from "$l
 
   async function submit() {
     if (!name.trim()) {
-      error = "Give the action a name.";
+      error = t("actionform.nameFirst");
       return;
     }
     if (!command.trim()) {
-      error = "The command must not be empty.";
+      error = t("commandform.cmdEmpty");
       return;
     }
     const badCwd = cwdError(cwd);
@@ -829,7 +829,7 @@ import type { Group, LaunchCommandTest, QuickAction, QuickActionShell } from "$l
     const trimmedPreCheck = preCheck.trim() || null;
     const trimmedPreFix = preFix.trim() || null;
     if (!trimmedPreCheck && trimmedPreFix) {
-      error = "A pre-action fix needs a pre-action check — add a check command or clear the fix.";
+      error = t("actionform.fixNeedsCheck");
       return;
     }
     // Content applied from a draft and then edited is rechecked before it
@@ -843,7 +843,7 @@ import type { Group, LaunchCommandTest, QuickAction, QuickActionShell } from "$l
       try {
         const verdict = await aiCheckCandidate(shell, command.trim());
         if (verdict.verdict !== "allow") {
-          error = `${verdict.message} Discard the draft below to save this as your own manual text instead.`;
+          error = `${verdict.message}${t("actionform.recheckSuffix")}`;
           return;
         }
       } catch (e) {
@@ -884,7 +884,7 @@ import type { Group, LaunchCommandTest, QuickAction, QuickActionShell } from "$l
     const creatingGroup = placing && groupPick === NEW_GROUP;
     const trimmedGroupName = newGroupName.trim();
     if (creatingGroup && !trimmedGroupName) {
-      error = "Give the new group a name.";
+      error = t("actionform.groupNameFirst");
       return;
     }
     saving = true;
@@ -920,7 +920,7 @@ import type { Group, LaunchCommandTest, QuickAction, QuickActionShell } from "$l
             await assignToGroup("action", action.id, Number(groupPick));
           }
         }
-        await onsave(`${name.trim()} saved.`);
+        await onsave(t("actionform.savedFlash").replace("{name}", name.trim()));
       } else {
         const created = await createQuickAction({
           name: name.trim(),
@@ -956,7 +956,7 @@ import type { Group, LaunchCommandTest, QuickAction, QuickActionShell } from "$l
             await assignToGroup("action", created.id, Number(groupPick));
           }
         }
-        await onsave(`${name.trim()} added to Quick Actions.`);
+        await onsave(t("actionform.addedFlash").replace("{name}", name.trim()));
       }
     } catch (e) {
       console.error(e);
@@ -1005,8 +1005,8 @@ import type { Group, LaunchCommandTest, QuickAction, QuickActionShell } from "$l
     !suggestOpen
       ? ""
       : suggestItems.length === 1 && suggestItems[0] === "<FilesDir>"
-        ? "One suggestion: the attached-files folder."
-        : `${suggestItems.length} attached-file suggestions.`,
+        ? t("actionform.suggestOne")
+        : t("actionform.suggestMany").replace("{count}", String(suggestItems.length)),
   );
 
   function fileSizeOf(name: string): number {
@@ -1038,11 +1038,11 @@ import type { Group, LaunchCommandTest, QuickAction, QuickActionShell } from "$l
   function readPickedFile(file: File): Promise<string> {
     return new Promise((resolve, reject) => {
       const reader = new FileReader();
-      reader.onerror = () => reject(new Error("that file couldn't be read"));
+      reader.onerror = () => reject(new Error(t("clips.imgErrReadShort")));
       reader.onload = () => {
         const url = String(reader.result ?? "");
         const bytes = url.split(",", 2)[1] ?? "";
-        if (!bytes) reject(new Error("that file couldn't be read — try again."));
+        if (!bytes) reject(new Error(t("actionform.fileReadRetry")));
         else resolve(bytes);
       };
       reader.readAsDataURL(file);
@@ -1060,7 +1060,7 @@ import type { Group, LaunchCommandTest, QuickAction, QuickActionShell } from "$l
       for (const file of picked) {
         const base = file.name.split(/[\\/]/).pop()?.trim() ?? "";
         if (!base) {
-          filesError = "One picked file has no usable name — skipped.";
+          filesError = t("actionform.fileNoName");
           continue;
         }
         if (
@@ -1068,17 +1068,18 @@ import type { Group, LaunchCommandTest, QuickAction, QuickActionShell } from "$l
             (row) => row.filename.toLowerCase() === base.toLowerCase(),
           )
         ) {
-          filesError = `'${base}' is already attached to this action.`;
+          filesError = t("actionform.fileDupe").replace("{name}", base);
           continue;
         }
         if (file.size > QUICK_ACTION_FILE_MAX_BYTES) {
-          filesError = `'${base}' is ${formatActionFileBytes(file.size)} — files must stay at or under 5 MB.`;
+          filesError = t("actionform.fileTooBig")
+            .replace("{name}", base)
+            .replace("{size}", formatActionFileBytes(file.size));
           continue;
         }
         const used = fileRows.reduce((n, row) => n + row.size, 0);
         if (used + file.size > QUICK_ACTION_FILES_MAX_BYTES) {
-          filesError =
-            "These files would exceed the 20 MB per-action limit — remove one first.";
+          filesError = t("actionform.filesTooMany");
           continue;
         }
         let bytesBase64: string;
@@ -1086,7 +1087,9 @@ import type { Group, LaunchCommandTest, QuickAction, QuickActionShell } from "$l
           bytesBase64 = await readPickedFile(file);
         } catch (e) {
           console.error(e);
-          filesError = `'${base}' couldn't be read — ${e instanceof Error ? e.message : String(e)}`;
+          filesError = t("actionform.fileReadFail")
+            .replace("{name}", base)
+            .replace("{detail}", e instanceof Error ? e.message : String(e));
           continue;
         }
         // An edit persists straight away (the row exists); an add stages in
@@ -1104,7 +1107,7 @@ import type { Group, LaunchCommandTest, QuickAction, QuickActionShell } from "$l
               },
             ];
             sortFileRows();
-            filesAnnouncement = `Attached ${meta.filename}.`;
+            filesAnnouncement = t("actionform.fileAttached").replace("{name}", meta.filename);
           } catch (e) {
             console.error(e);
             filesError = String(e);
@@ -1114,8 +1117,8 @@ import type { Group, LaunchCommandTest, QuickAction, QuickActionShell } from "$l
             ...fileRows,
             { id: null, filename: base, size: file.size, bytesBase64 },
           ];
-          sortFileRows();
-          filesAnnouncement = `Attached ${base}.`;
+            sortFileRows();
+            filesAnnouncement = t("actionform.fileAttached").replace("{name}", base);
         }
       }
     } finally {
@@ -1127,14 +1130,14 @@ import type { Group, LaunchCommandTest, QuickAction, QuickActionShell } from "$l
     filesError = "";
     if (row.id === null) {
       fileRows = fileRows.filter((r) => r !== row);
-      filesAnnouncement = `Removed ${row.filename}.`;
+      filesAnnouncement = t("actionform.fileRemoved").replace("{name}", row.filename);
       return;
     }
     filesBusy = true;
     try {
       await removeQuickActionFile(row.id);
       fileRows = fileRows.filter((r) => r !== row);
-      filesAnnouncement = `Removed ${row.filename}.`;
+      filesAnnouncement = t("actionform.fileRemoved").replace("{name}", row.filename);
     } catch (e) {
       console.error(e);
       filesError = String(e);
@@ -1155,7 +1158,8 @@ import type { Group, LaunchCommandTest, QuickAction, QuickActionShell } from "$l
     filesBusy = true;
     try {
       const result = await downloadSingleFile(row.id, row.filename);
-      if (result === "saved") filesAnnouncement = `Downloaded ${row.filename}.`;
+      if (result === "saved")
+        filesAnnouncement = t("actionform.fileDownloaded").replace("{name}", row.filename);
     } catch (e) {
       console.error(e);
       filesError = String(e);
@@ -1171,7 +1175,10 @@ import type { Group, LaunchCommandTest, QuickAction, QuickActionShell } from "$l
     try {
       const result = await downloadFilesZip(action.id, action.name);
       if (result === "saved") {
-        filesAnnouncement = `Downloaded all ${persistedFileCount} files.`;
+        filesAnnouncement = t("actionform.filesDownloadedAll").replace(
+          "{count}",
+          String(persistedFileCount),
+        );
       }
     } catch (e) {
       console.error(e);
@@ -1242,7 +1249,7 @@ import type { Group, LaunchCommandTest, QuickAction, QuickActionShell } from "$l
    *  file's size for a file — a `<FilesDir>\<name>` path reads back through
    *  its filename so every row stays distinguishable. */
   function suggestDetail(item: string): string {
-    if (item === "<FilesDir>") return "attached-files folder for this run";
+    if (item === "<FilesDir>") return t("actionform.suggestFolderDetail");
     const name = item.startsWith("<FilesDir>\\")
       ? item.slice("<FilesDir>\\".length)
       : item;
@@ -1267,7 +1274,7 @@ import type { Group, LaunchCommandTest, QuickAction, QuickActionShell } from "$l
 
 <Dialog
   {open}
-  title={editing ? "Edit quick action" : "Add a quick action"}
+  title={editing ? t("actionform.editTitle") : t("actionform.addTitle")}
   onclose={oncancel}
   width={560}
   focusTarget={aiReady && !editing ? "#qa-ai-request" : undefined}
@@ -1283,7 +1290,7 @@ import type { Group, LaunchCommandTest, QuickAction, QuickActionShell } from "$l
       <!-- Two exclusive views (ADR-0028): tabs top-right on-surface, absent
            when unready. Add opens AI-first, Edit opens manual-first; flips
            are instant with both labels visible for scent. -->
-      <div class="viewtabs" role="tablist" aria-label="Quick action editor view" tabindex="-1" onkeydown={viewTabsKeydown}>
+      <div class="viewtabs" role="tablist" aria-label={t("actionform.viewLabel")} tabindex="-1" onkeydown={viewTabsKeydown}>
         <button
           id="tab-ai"
           type="button"
@@ -1295,7 +1302,7 @@ import type { Group, LaunchCommandTest, QuickAction, QuickActionShell } from "$l
           class:active={aiView === "ai"}
           onclick={() => selectView("ai")}
         >
-          AI draft
+          {t("actionform.viewAi")}
         </button>
         <button
           id="tab-manual"
@@ -1308,7 +1315,7 @@ import type { Group, LaunchCommandTest, QuickAction, QuickActionShell } from "$l
           class:active={aiView === "manual"}
           onclick={() => selectView("manual")}
         >
-          Manual
+          {t("actionform.viewManual")}
         </button>
       </div>
     {/if}
@@ -1324,9 +1331,9 @@ import type { Group, LaunchCommandTest, QuickAction, QuickActionShell } from "$l
              gap and strand it 48px below (research 0023). -->
         <div class="field">
           <div class="field__label-row">
-            <label class="field__label" for="qa-ai-request">Describe what to do</label>
-            <InfoTip label="How AI drafting works">
-              <p>Only what you type here is sent — nothing is read from disk or the app. Drafts never run; you review and save each one.</p>
+            <label class="field__label" for="qa-ai-request">{t("actionform.describeLabel")}</label>
+            <InfoTip label={t("actionform.draftHow")}>
+              <p>{t("actionform.draftBody")}</p>
             </InfoTip>
           </div>
           <textarea
@@ -1335,7 +1342,7 @@ import type { Group, LaunchCommandTest, QuickAction, QuickActionShell } from "$l
             class="field__cmd"
             rows="3"
             maxlength="2000"
-            placeholder="e.g. show the status of the print spooler service"
+            placeholder={t("actionform.describePh")}
             autocomplete="off"
             spellcheck="true"
             value={aiRequest}
@@ -1344,11 +1351,11 @@ import type { Group, LaunchCommandTest, QuickAction, QuickActionShell } from "$l
           ></textarea>
           <div class="ai__actions">
             {#if aiPending}
-              <p class="ai__status" role="status">Drafting…</p>
-              <Button type="button" variant="ghost" onclick={cancelDraft}>Cancel</Button>
+              <p class="ai__status" role="status">{t("actionform.drafting")}</p>
+              <Button type="button" variant="ghost" onclick={cancelDraft}>{t("common.cancel")}</Button>
             {:else}
               <Button type="button" variant="secondary" onclick={() => void generateDraft()}>
-                Generate draft
+                {t("actionform.genDraft")}
               </Button>
             {/if}
           </div>
@@ -1360,20 +1367,20 @@ import type { Group, LaunchCommandTest, QuickAction, QuickActionShell } from "$l
         {#if aiOutcome}
           <div id="ai-outcome" tabindex="-1" class="ai__outcome">
             {#if aiDraft}
-              <p class="ai__flag">Not run — review before saving.</p>
+              <p class="ai__flag">{t("actionform.notRun")}</p>
               <p class="ai__shell">{quickActionShellLabel[aiDraft.shell]}</p>
               <p class="ai__command">{aiDraft.command}</p>
               {#if aiDraft.assumptions.length > 0}
-                <p class="ai__meta">Assumes: {aiDraft.assumptions.join("; ")}</p>
+                <p class="ai__meta">{t("actionform.assumes").replace("{items}", aiDraft.assumptions.join("; "))}</p>
               {/if}
               {#if aiDraft.affected_targets.length > 0}
-                <p class="ai__meta">Touches: {aiDraft.affected_targets.join("; ")}</p>
+                <p class="ai__meta">{t("actionform.touches").replace("{items}", aiDraft.affected_targets.join("; "))}</p>
               {/if}
               {#if aiDraft.explanation}
                 <p class="ai__explanation">{aiDraft.explanation}</p>
               {/if}
               {#if prereqsChecking}
-                <p class="ai__status" role="status">Checking prerequisites…</p>
+                <p class="ai__status" role="status">{t("actionform.checkingPrereqs")}</p>
               {/if}
               {#each prereqRows as line (line.key)}
                 {#if line.status === "present"}
@@ -1384,21 +1391,21 @@ import type { Group, LaunchCommandTest, QuickAction, QuickActionShell } from "$l
               {/each}
               <div class="ai__actions">
                 {#if aiAppliedCurrent}
-                  <p class="ai__status" role="status">Applied — review and save in Manual.</p>
+                  <p class="ai__status" role="status">{t("actionform.appliedInManual")}</p>
                 {:else}
                   <Button type="button" variant="secondary" onclick={() => void applyDraft()}>
-                    Use this draft
+                    {t("actionform.useDraft")}
                   </Button>
                 {/if}
-                <Button type="button" variant="ghost" onclick={dismissDraft}>Dismiss</Button>
+                <Button type="button" variant="ghost" onclick={dismissDraft}>{t("common.dismiss")}</Button>
               </div>
             {:else if aiClarify}
               <Notice tone="warn">{aiClarify.message}</Notice>
               <p class="ai__meta">
-                Question {clarifyRound + 1} — each question is asked once; or draft anyway below.
+                {t("actionform.clarifyRound").replace("{n}", String(clarifyRound + 1))}
               </p>
               {#if aiClarifyChoices.length > 0}
-                <div class="find__list" role="radiogroup" aria-label="Clarification choices">
+                <div class="find__list" role="radiogroup" aria-label={t("actionform.clarifyChoices")}>
                   {#each aiClarifyChoices as choice (choice)}
                     <label class="find__row">
                       <input
@@ -1414,7 +1421,7 @@ import type { Group, LaunchCommandTest, QuickAction, QuickActionShell } from "$l
                 </div>
                 {#if aiClarifyAspect === "unknown-prerequisite"}
                   {#if prereqsChecking}
-                    <p class="ai__status" role="status">Checking prerequisites…</p>
+                    <p class="ai__status" role="status">{t("actionform.checkingPrereqs")}</p>
                   {/if}
                   {#each prereqRows as line (line.key)}
                     {#if line.status === "present"}
@@ -1426,14 +1433,14 @@ import type { Group, LaunchCommandTest, QuickAction, QuickActionShell } from "$l
                 {/if}
                 <div class="field">
                   <div class="field__label-row">
-                    <label class="field__label" for="qa-clarify-free">Or describe it yourself</label>
+                    <label class="field__label" for="qa-clarify-free">{t("actionform.describeYourself")}</label>
                   </div>
                   <textarea
                     id="qa-clarify-free"
                     class="field__cmd"
                     rows="2"
                     maxlength="2000"
-                    placeholder="e.g. the full folder path"
+                    placeholder={t("actionform.clarifyPh")}
                     autocomplete="off"
                     spellcheck="true"
                     value={clarifyFree}
@@ -1443,27 +1450,27 @@ import type { Group, LaunchCommandTest, QuickAction, QuickActionShell } from "$l
                 </div>
                 <div class="ai__actions">
                   <Button type="button" variant="secondary" onclick={() => void regenerateWithClarification()}>
-                    Continue
+                    {t("actionform.continue")}
                   </Button>
                   <Button type="button" variant="ghost" onclick={() => void draftAnyway()}>
-                    Draft anyway
+                    {t("actionform.draftAnyway")}
                   </Button>
-                  <Button type="button" variant="ghost" onclick={dismissDraft}>Dismiss</Button>
+                  <Button type="button" variant="ghost" onclick={dismissDraft}>{t("common.dismiss")}</Button>
                 </div>
               {:else}
                 <div class="ai__actions">
-                  <Button type="button" variant="ghost" onclick={dismissDraft}>Dismiss</Button>
+                  <Button type="button" variant="ghost" onclick={dismissDraft}>{t("common.dismiss")}</Button>
                 </div>
               {/if}
             {:else if aiRefusal}
               <Notice tone="warn">{aiRefusal}</Notice>
               <div class="ai__actions">
-                <Button type="button" variant="ghost" onclick={dismissDraft}>Dismiss</Button>
+                <Button type="button" variant="ghost" onclick={dismissDraft}>{t("common.dismiss")}</Button>
               </div>
             {:else if aiFailure}
               <Notice tone="error">{aiFailure}</Notice>
               <div class="ai__actions">
-                <Button type="button" variant="ghost" onclick={dismissDraft}>Dismiss</Button>
+                <Button type="button" variant="ghost" onclick={dismissDraft}>{t("common.dismiss")}</Button>
               </div>
             {/if}
           </div>
@@ -1477,9 +1484,9 @@ import type { Group, LaunchCommandTest, QuickAction, QuickActionShell } from "$l
                the same way Describe owns Generate (research 0023). -->
           <div class="field">
             <div class="field__label-row">
-              <label class="field__label" for="qa-diag-error">Diagnose a failure</label>
-              <InfoTip label="How AI diagnosis works">
-                <p>Uses the current script plus the error you paste — nothing else is collected, and nothing runs. A proposal stays separate until you accept and save it.</p>
+              <label class="field__label" for="qa-diag-error">{t("actionform.diagLabel")}</label>
+              <InfoTip label={t("actionform.diagHow")}>
+                <p>{t("actionform.diagBody")}</p>
               </InfoTip>
             </div>
             <textarea
@@ -1488,7 +1495,7 @@ import type { Group, LaunchCommandTest, QuickAction, QuickActionShell } from "$l
               class="field__cmd"
               rows="3"
               maxlength="8000"
-              placeholder="e.g. paste the error output from the last run"
+              placeholder={t("actionform.diagPh")}
               autocomplete="off"
               spellcheck="false"
               value={diagError}
@@ -1497,11 +1504,11 @@ import type { Group, LaunchCommandTest, QuickAction, QuickActionShell } from "$l
             ></textarea>
             <div class="ai__actions">
               {#if diagPending}
-                <p class="ai__status" role="status">Diagnosing…</p>
-                <Button type="button" variant="ghost" onclick={cancelDiagnose}>Cancel</Button>
+                <p class="ai__status" role="status">{t("actionform.diagnosing")}</p>
+                <Button type="button" variant="ghost" onclick={cancelDiagnose}>{t("common.cancel")}</Button>
               {:else}
                 <Button type="button" variant="secondary" onclick={() => void diagnose()}>
-                  Diagnose
+                  {t("actionform.diagnose")}
                 </Button>
               {/if}
             </div>
@@ -1516,50 +1523,50 @@ import type { Group, LaunchCommandTest, QuickAction, QuickActionShell } from "$l
           {#if diagOutcome}
             <div id="diag-outcome" tabindex="-1" class="ai__outcome">
               {#if diagRevision}
-                <p class="ai__flag">Not run — review before accepting.</p>
+                <p class="ai__flag">{t("actionform.notRunAccept")}</p>
                 {#if diagRevision.explanation}
                   <p class="ai__explanation">{diagRevision.explanation}</p>
                 {/if}
                 <p class="ai__shell">{quickActionShellLabel[diagRevision.shell]}</p>
                 <p class="ai__command">{diagRevision.command}</p>
                 {#if diagRevision.cwd}
-                  <p class="ai__meta">Working directory: {diagRevision.cwd}</p>
+                  <p class="ai__meta">{t("actionform.workingDirMeta").replace("{cwd}", diagRevision.cwd)}</p>
                 {/if}
                 {#if diagRevision.note}
-                  <p class="ai__meta">Proposed note: {diagRevision.note}</p>
+                  <p class="ai__meta">{t("actionform.proposedNote").replace("{note}", diagRevision.note)}</p>
                 {/if}
                 {#if diagRevision.assumptions.length > 0}
-                  <p class="ai__meta">Assumes: {diagRevision.assumptions.join("; ")}</p>
+                  <p class="ai__meta">{t("actionform.assumes").replace("{items}", diagRevision.assumptions.join("; "))}</p>
                 {/if}
                 {#if diagRevision.affected_targets.length > 0}
-                  <p class="ai__meta">Touches: {diagRevision.affected_targets.join("; ")}</p>
+                  <p class="ai__meta">{t("actionform.touches").replace("{items}", diagRevision.affected_targets.join("; "))}</p>
                 {/if}
-                <p class="ai__meta">Accepting changes only the reviewed fields — name, group, stop settings, and pre-action gates stay as they are. Auto-run is {autoRun ? "on" : "off"} for this action and stays that way.</p>
+                <p class="ai__meta">{t("actionform.acceptNote").replace("{state}", autoRun ? t("common.on") : t("common.off"))}</p>
                 <div class="ai__actions">
                   <Button type="button" variant="secondary" onclick={() => void applyRevision()}>
-                    Accept revision
+                    {t("actionform.acceptRevision")}
                   </Button>
-                  <Button type="button" variant="ghost" onclick={dismissRevision}>Dismiss</Button>
+                  <Button type="button" variant="ghost" onclick={dismissRevision}>{t("common.dismiss")}</Button>
                 </div>
               {:else if diagExplanationOnly}
                 <p class="ai__explanation">{diagExplanationOnly}</p>
                 <div class="ai__actions">
-                  <Button type="button" variant="ghost" onclick={dismissRevision}>Dismiss</Button>
+                  <Button type="button" variant="ghost" onclick={dismissRevision}>{t("common.dismiss")}</Button>
                 </div>
               {:else if diagRefusal}
                 <Notice tone="warn">{diagRefusal}</Notice>
                 <div class="ai__actions">
-                  <Button type="button" variant="ghost" onclick={dismissRevision}>Dismiss</Button>
+                  <Button type="button" variant="ghost" onclick={dismissRevision}>{t("common.dismiss")}</Button>
                 </div>
               {:else if diagClarify}
                 <Notice tone="warn">{diagClarify.message}</Notice>
                 <div class="ai__actions">
-                  <Button type="button" variant="ghost" onclick={dismissRevision}>Dismiss</Button>
+                  <Button type="button" variant="ghost" onclick={dismissRevision}>{t("common.dismiss")}</Button>
                 </div>
               {:else if diagFailure}
                 <Notice tone="error">{diagFailure}</Notice>
                 <div class="ai__actions">
-                  <Button type="button" variant="ghost" onclick={dismissRevision}>Dismiss</Button>
+                  <Button type="button" variant="ghost" onclick={dismissRevision}>{t("common.dismiss")}</Button>
                 </div>
               {/if}
             </div>
@@ -1568,22 +1575,22 @@ import type { Group, LaunchCommandTest, QuickAction, QuickActionShell } from "$l
 
         {#if boundTarget}
           <div class="ai__outcome">
-            <p class="ai__flag">Not run — review before saving.</p>
+            <p class="ai__flag">{t("actionform.notRun")}</p>
             <p class="ai__shell">{quickActionShellLabel[boundTarget.shell]}</p>
             <p class="ai__command">{boundTarget.command}</p>
-            <p class="ai__meta">Opens: {boundTarget.target}</p>
+            <p class="ai__meta">{t("actionform.opensTarget").replace("{target}", boundTarget.target)}</p>
             {#if boundTarget.warning}
               <Notice tone="warn">{boundTarget.warning}</Notice>
             {/if}
             <div class="ai__actions">
-              <Button type="button" variant="ghost" onclick={dismissBound}>Dismiss</Button>
+              <Button type="button" variant="ghost" onclick={dismissBound}>{t("common.dismiss")}</Button>
             </div>
           </div>
         {/if}
 
         <div class="form__actions">
           <Button type="button" variant="secondary" onclick={oncancel} disabled={aiPending}>
-            Cancel
+            {t("common.cancel")}
           </Button>
         </div>
       </div>
@@ -1601,16 +1608,16 @@ import type { Group, LaunchCommandTest, QuickAction, QuickActionShell } from "$l
              no smooth-scroll library. -->
         <p class="ai-setup">
           {#if aiSetupKind === "managed"}
-            No managed model is on right now — <button
+            {t("actionform.aiUnreadyManaged")}<button
               type="button"
               class="ai-setup__link"
-              onclick={() => void onsetupai?.()}>Enable it</button
+              onclick={() => void onsetupai?.()}>{t("actionform.aiEnableIt")}</button
             >
           {:else}
             <button
               type="button"
               class="ai-setup__link"
-              onclick={() => void onsetupai?.()}>Set up AI assistance in Settings</button
+              onclick={() => void onsetupai?.()}>{t("actionform.aiSetupLink")}</button
             >
           {/if}
         </p>
@@ -1624,19 +1631,19 @@ import type { Group, LaunchCommandTest, QuickAction, QuickActionShell } from "$l
 
     <TextInput
       id="qa-name"
-      label="Name"
+      label={t("common.name")}
       required
       autofocus={!aiReady || editing}
-      placeholder="e.g. docker start"
+      placeholder={t("actionform.namePh")}
       value={name}
       onchange={(v) => (name = v)}
     />
 
     <div class="field">
       <div class="field__label-row">
-        <label class="field__label" for="qa-shell">Shell</label>
-        <InfoTip label="How the shell works">
-          <p>Runs hidden as the current user. The same text under a different shell is a different action.</p>
+        <label class="field__label" for="qa-shell">{t("qdetails.shell")}</label>
+        <InfoTip label={t("commandform.shellHow")}>
+          <p>{t("actionform.shellBody")}</p>
         </InfoTip>
       </div>
       <Select
@@ -1651,18 +1658,18 @@ import type { Group, LaunchCommandTest, QuickAction, QuickActionShell } from "$l
       />
       <p class="field__hint">
         {shell === "powershell"
-          ? "Runs with -NoProfile -NonInteractive."
+          ? t("actionform.shellHintPowershell")
           : shell === "cmd"
-            ? "Runs as: cmd /c {command}."
-            : "Runs as: py -3 -c {command}."}
+            ? t("actionform.shellHintCmd")
+            : t("actionform.shellHintPython")}
       </p>
     </div>
 
     <div class="field">
       <div class="field__label-row">
-        <label class="field__label" for="qa-command">Command</label>
-        <InfoTip label="How file placeholders work">
-          <p>Attach files below, then reference their per-run folder with {"<FilesDir>"} — type &lt; for suggestions. The folder path is quoted for the selected shell when the action runs; wrapping the reference itself in quotes works too.</p>
+        <label class="field__label" for="qa-command">{t("qdetails.command")}</label>
+        <InfoTip label={t("actionform.placeholdersHow")}>
+          <p>{t("actionform.placeholdersBody")}</p>
         </InfoTip>
       </div>
       <div class="cmdwrap">
@@ -1675,7 +1682,7 @@ import type { Group, LaunchCommandTest, QuickAction, QuickActionShell } from "$l
           id="qa-command"
           class="field__cmd cmdwrap__input"
           rows="6"
-          placeholder={shell === "python3" ? 'e.g. print("hi")' : "e.g. docker compose up -d"}
+          placeholder={shell === "python3" ? t("actionform.cmdPhPython") : t("actionform.cmdPh")}
           autocomplete="off"
           autocapitalize="none"
           spellcheck="false"
@@ -1703,7 +1710,7 @@ import type { Group, LaunchCommandTest, QuickAction, QuickActionShell } from "$l
           class="suggest"
           role="listbox"
           id="qa-files-suggest"
-          aria-label="File placeholder suggestions"
+          aria-label={t("actionform.suggestLabel")}
         >
           {#each suggestItems as item, idx (item)}
             <button
@@ -1722,35 +1729,33 @@ import type { Group, LaunchCommandTest, QuickAction, QuickActionShell } from "$l
               <span class="suggest__detail">{suggestDetail(item)}</span>
             </button>
           {/each}
-          <p class="field__hint">↑ ↓ to choose · Enter to insert · Esc closes the dialog</p>
+          <p class="field__hint">{t("actionform.suggestKeys")}</p>
         </div>
       {/if}
       <p class="sr-only" role="status">{suggestAnnouncement}</p>
       {#if filesHintState === "unused"}
         <p class="field__hint">
-          Attached files sit unused until the command references them — insert {"<FilesDir>"}
-          where the staged folder should land.
+          {t("actionform.filesUnused")}
         </p>
       {:else if filesHintState === "missing"}
         <p class="field__hint">
-          The command references {"<FilesDir>"} but no files are attached yet —
-          attach them below.
+          {t("actionform.filesMissing")}
         </p>
       {/if}
       {#if startTrap}
-        <Notice tone="warn">{"`start` treats the first quoted path as its window title — add an empty title (`start \"\" …`), or use `Start-Process …` / `explorer …`."}</Notice>
+        <Notice tone="warn">{t("actionform.startTrap")}</Notice>
       {/if}
     </div>
 
     <div class="field">
       <div class="field__label-row">
-        <span class="field__label" id="qa-files-label">Files</span>
-        <InfoTip label="How attached files work">
-          <p>Files ship with the action and land in a per-run folder the command reaches through {"<FilesDir>"}. Without it the files stay unused; the folder path is quoted for the selected shell when the action runs, and wrapping the reference itself in quotes works too. Each file holds up to 5 MB; one action holds up to 20 MB — oversized picks are skipped with an inline note.</p>
+        <span class="field__label" id="qa-files-label">{t("actionform.filesHead")}</span>
+        <InfoTip label={t("actionform.filesHow")}>
+          <p>{t("actionform.filesBody")}</p>
         </InfoTip>
       </div>
       {#if fileRows.length === 0}
-        <p class="field__hint">None attached — up to 5 MB per file, 20 MB per action.</p>
+        <p class="field__hint">{t("actionform.filesNone")}</p>
       {:else}
         <ul class="files__list" aria-labelledby="qa-files-label">
           {#each fileRows as row (row.filename.toLowerCase())}
@@ -1764,7 +1769,7 @@ import type { Group, LaunchCommandTest, QuickAction, QuickActionShell } from "$l
                   disabled={filesBusy}
                   onclick={() => void downloadFile(row)}
                 >
-                  Download
+                  {t("menu.download")}
                 </Button>
               {/if}
               <Button
@@ -1773,7 +1778,7 @@ import type { Group, LaunchCommandTest, QuickAction, QuickActionShell } from "$l
                 disabled={filesBusy}
                 onclick={() => void removeFile(row)}
               >
-                Remove
+                {t("common.remove")}
               </Button>
             </li>
           {/each}
@@ -1786,10 +1791,10 @@ import type { Group, LaunchCommandTest, QuickAction, QuickActionShell } from "$l
           disabled={filesBusy}
           onclick={() => filePick?.click()}
         >
-          Attach files…
+          {t("actionform.attachFiles")}
         </Button>
         <Button type="button" variant="secondary" onclick={insertFilesDir} disabled={filesBusy || fileRows.length === 0}>
-          Insert
+          {t("actionform.insert")}
         </Button>
         {#if editing && persistedFileCount >= 2}
           <Button
@@ -1798,7 +1803,7 @@ import type { Group, LaunchCommandTest, QuickAction, QuickActionShell } from "$l
             disabled={filesBusy}
             onclick={() => void downloadAllFiles()}
           >
-            Download all (.zip)
+            {t("menu.downloadAll")}
           </Button>
         {/if}
       </div>
@@ -1824,48 +1829,48 @@ import type { Group, LaunchCommandTest, QuickAction, QuickActionShell } from "$l
       <Disclosure
         open={detailsOpen}
         controls="qa-details-body"
-        label="Details"
+        label={t("actionform.details")}
         onclick={() => (detailsOpen = !detailsOpen)}
       />
 
       <div id="qa-details-body" class="advanced__body" hidden={!detailsOpen}>
         <TextInput
           id="qa-cwd"
-          label="Working directory"
-          placeholder="e.g. D:\Work"
+          label={t("qdetails.cwd")}
+          placeholder={t("actionform.cwdPh")}
           value={cwd}
           onchange={(v) => (cwd = v)}
-          info="How the working directory works"
+          info={t("actionform.cwdHow")}
         >
           {#snippet infobody()}
-            <p>Working directory; empty = the app's folder.</p>
+            <p>{t("actionform.cwdBody")}</p>
           {/snippet}
         </TextInput>
 
         {#if groupsEnabled && groups.length > 0}
           <div class="field">
             <div class="field__label-row">
-              <label class="field__label" for="qa-group">Group</label>
+              <label class="field__label" for="qa-group">{t("actionform.groupLabel")}</label>
             </div>
             <Select
               id="qa-group"
               value={groupPick}
               onchange={(v) => (groupPick = v)}
               options={[
-                { value: "", label: "Ungrouped" },
+                { value: "", label: t("menu.ungrouped") },
                 ...groups.map((group) => ({
                   value: String(group.id),
                   label: group.name,
                 })),
-                { value: NEW_GROUP, label: "New group…" },
+                { value: NEW_GROUP, label: t("menu.newGroup") },
               ]}
             />
             {#if groupPick === NEW_GROUP}
               <TextInput
                 id="qa-new-group"
-                label="New group name"
+                label={t("actionform.newGroupName")}
                 required
-                placeholder="e.g. Docker maintenance"
+                placeholder={t("actions.groupEx")}
                 value={newGroupName}
                 onchange={(v) => (newGroupName = v)}
               />
@@ -1875,16 +1880,16 @@ import type { Group, LaunchCommandTest, QuickAction, QuickActionShell } from "$l
 
         <div class="field">
           <div class="field__label-row">
-            <label class="field__label" for="qa-note">Notes</label>
-            <InfoTip label="How notes work">
-              <p>Optional — for whatever you want to record. Plain text: - or * for bullets, 1. for numbered steps.</p>
+            <label class="field__label" for="qa-note">{t("actionform.notesLabel")}</label>
+            <InfoTip label={t("actionform.notesHow")}>
+              <p>{t("actionform.notesBody")}</p>
             </InfoTip>
           </div>
           <textarea
             id="qa-note"
             class="field__cmd field__cmd--note"
             rows="4"
-            placeholder="e.g. when to use it, caveats…"
+            placeholder={t("actionform.notesPh")}
             autocomplete="off"
             spellcheck="true"
             value={note}
@@ -1895,23 +1900,23 @@ import type { Group, LaunchCommandTest, QuickAction, QuickActionShell } from "$l
         <Checkbox
           checked={stoppable}
           onchange={(v) => (stoppable = v)}
-          title="Show Stop button"
-          hint="Run becomes Stop while the command runs."
+          title={t("actionform.stopBtnTitle")}
+          hint={t("actionform.stopBtnHint")}
         />
 
         {#if stoppable}
           <div class="field">
             <div class="field__label-row">
-              <label class="field__label" for="qa-stop-command">Stop command</label>
-              <InfoTip label="How the stop command works">
-                <p>Runs when Stop is clicked. Empty = kills the process tree.</p>
+              <label class="field__label" for="qa-stop-command">{t("actionform.stopCmdLabel")}</label>
+              <InfoTip label={t("actionform.stopCmdHow")}>
+                <p>{t("actionform.stopCmdBody")}</p>
               </InfoTip>
             </div>
             <textarea
               id="qa-stop-command"
               class="field__cmd"
               rows="2"
-              placeholder="e.g. docker compose stop"
+              placeholder={t("actionform.stopCmdPh")}
               autocomplete="off"
               spellcheck="false"
               value={stopCommand}
@@ -1923,8 +1928,8 @@ import type { Group, LaunchCommandTest, QuickAction, QuickActionShell } from "$l
         <Checkbox
           checked={autoRun}
           onchange={(v) => (autoRun = v)}
-          title="Run at Sprout start"
-          hint="Runs once at startup, in list order."
+          title={t("actionform.autoRunTitle")}
+          hint={t("actionform.autoRunHint")}
         />
 
         <!-- Dock visibility: the control lives on its object — hiding is
@@ -1933,8 +1938,8 @@ import type { Group, LaunchCommandTest, QuickAction, QuickActionShell } from "$l
         <Checkbox
           checked={showInDock}
           onchange={(v) => (showInDock = v)}
-          title="Show in dock"
-          hint="Uncheck to keep it in the main app only."
+          title={t("common.showInDock")}
+          hint={t("common.showInDockHint")}
         />
 
         <!-- Pre-action gate: an optional check that runs first on every Run,
@@ -1944,23 +1949,23 @@ import type { Group, LaunchCommandTest, QuickAction, QuickActionShell } from "$l
           <Disclosure
             open={preActionOpen}
             controls="qa-preaction-body"
-            label="Pre-action"
+            label={t("actionform.preAction")}
             onclick={() => (preActionOpen = !preActionOpen)}
           />
 
           <div id="qa-preaction-body" class="preaction__body" hidden={!preActionOpen}>
             <div class="field">
               <div class="field__label-row">
-                <label class="field__label" for="qa-pre-check">Pre-action check</label>
-                <InfoTip label="How the pre-action check works">
-                  <p>Runs first on every Run under this shell and directory, timeboxed. Exit 0 runs the action; anything else stops it before anything starts and offers the fix.</p>
+                <label class="field__label" for="qa-pre-check">{t("actionform.preCheckLabel")}</label>
+                <InfoTip label={t("actionform.preCheckHow")}>
+                  <p>{t("actionform.preCheckBody")}</p>
                 </InfoTip>
               </div>
               <textarea
                 id="qa-pre-check"
                 class="field__cmd"
                 rows="3"
-                placeholder="e.g. node --version"
+                placeholder={t("actionform.preCheckPh")}
                 autocomplete="off"
                 spellcheck="false"
                 value={preCheck}
@@ -1970,16 +1975,16 @@ import type { Group, LaunchCommandTest, QuickAction, QuickActionShell } from "$l
 
             <div class="field">
               <div class="field__label-row">
-                <label class="field__label" for="qa-pre-fix">Fix (optional)</label>
-                <InfoTip label="How the pre-action fix works">
-                  <p>Offered only when the check blocks a run. Runs once when chosen — never automatically, never with the action.</p>
+                <label class="field__label" for="qa-pre-fix">{t("actionform.preFixLabel")}</label>
+                <InfoTip label={t("actionform.preFixHow")}>
+                  <p>{t("actionform.preFixBody")}</p>
                 </InfoTip>
               </div>
               <textarea
                 id="qa-pre-fix"
                 class="field__cmd"
                 rows="3"
-                placeholder="e.g. npm install"
+                placeholder={t("actionform.preFixPh")}
                 autocomplete="off"
                 spellcheck="false"
                 value={preFix}
@@ -1994,21 +1999,21 @@ import type { Group, LaunchCommandTest, QuickAction, QuickActionShell } from "$l
                   disabled={checking || !preCheck.trim()}
                   onclick={() => void runCheck()}
                 >
-                  {checking ? "Checking…" : "Check"}
+                  {checking ? t("common.busy.checking") : t("actionform.checkBtn")}
                 </Button>
                 <p class="check__note">
-                  Runs only the check above under this shell and directory, timeboxed — the action and the fix never run here.
+                  {t("actionform.checkNote")}
                 </p>
               </div>
               {#if checkRan && !checking}
                 {#if checkResult?.timed_out}
-                  <Notice tone="warn">Check timed out — the action would stay blocked.</Notice>
+                  <Notice tone="warn">{t("actionform.checkBlockedTimeout")}</Notice>
                 {:else if checkResult?.exit_code === 0}
-                  <Notice tone="ok">Check passed (exit 0).</Notice>
+                  <Notice tone="ok">{t("actions.checkPassed")}</Notice>
                 {:else if checkResult?.exit_code === null}
-                  <Notice tone="warn">Check could not start — the action would stay blocked.</Notice>
+                  <Notice tone="warn">{t("actionform.checkBlockedNoStart")}</Notice>
                 {:else}
-                  <Notice tone="warn">Check failed (exit {checkResult?.exit_code}) — the action would stay blocked.</Notice>
+                  <Notice tone="warn">{t("actionform.checkBlockedFailed").replace("{code}", String(checkResult?.exit_code))}</Notice>
                 {/if}
                 {#if checkResult?.output.trim()}
                   <pre class="check__output">{checkResult?.output}</pre>
@@ -2035,16 +2040,16 @@ import type { Group, LaunchCommandTest, QuickAction, QuickActionShell } from "$l
 
     <div class="form__actions">
       <Button variant="secondary" onclick={oncancel} disabled={saving || testing || checking}>
-        Cancel
+        {t("common.cancel")}
       </Button>
       <Button kind="submit" disabled={saving || testing || checking}>
         {saving
           ? editing
-            ? "Saving…"
-            : "Adding…"
+            ? t("common.busy.saving")
+            : t("common.busy.adding")
           : editing
-            ? "Save changes"
-            : "Add action"}
+            ? t("common.saveChanges")
+            : t("actionform.addBtn")}
       </Button>
     </div>
       </div>

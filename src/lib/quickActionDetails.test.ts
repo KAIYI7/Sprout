@@ -35,17 +35,17 @@ describe("Quick Action details note-first contract (ticket 141)", () => {
   it("collapses the command to a 3-line scent with Show-command and Copy", () => {
     expect(DIALOG_SOURCE).toContain("-webkit-line-clamp: 3");
     expect(DIALOG_SOURCE).toContain("cmd-scent--clamped");
-    expect(DIALOG_SOURCE).toContain("Show command");
+    expect(DIALOG_SOURCE).toContain('t("qdetails.showCommand")');
     expect(DIALOG_SOURCE).toContain("aria-expanded={showFullCommand}");
     expect(DIALOG_SOURCE).toContain('aria-controls="qa-details-command"');
     expect(DIALOG_SOURCE).toContain('id="qa-details-command"');
     expect(DIALOG_SOURCE).toContain("navigator.clipboard.writeText");
-    expect(DIALOG_SOURCE).toContain("Copied");
+    expect(DIALOG_SOURCE).toContain('t("qdetails.commandCopied")');
     expect(DIALOG_SOURCE).toContain('aria-live="polite"');
   });
 
   it("points note-less commands at the main app for the full text", () => {
-    expect(DIALOG_SOURCE).toContain("Find the full command in the main app.");
+    expect(DIALOG_SOURCE).toContain('t("qdetails.fullCmdHint")');
   });
 
   it("shows the toggle and hint only when the command actually overflows", () => {
@@ -136,8 +136,8 @@ describe("Companion yield while the details dialog is open (ticket 141)", () => 
   });
 
   it("surfaces a refused yield in the error line instead of only the console", () => {
-    expect(ROUTE_SOURCE).toContain("Couldn't hide the companion pane");
-    expect(ROUTE_SOURCE).toContain("Couldn't restore the companion pane");
+    expect(ROUTE_SOURCE).toContain('t("quickwindow.paneHideFail")');
+    expect(ROUTE_SOURCE).toContain('t("quickwindow.paneRestoreFail")');
   });
 
   it("keeps a registering child quiet while the dialog yields", () => {

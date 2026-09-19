@@ -386,13 +386,13 @@ describe("files seam and dialog wiring", () => {
   });
 
   it("renders attach/remove/size plus hints inline", () => {
-    expect(DIALOG_SOURCE).toContain("Attach files");
+    expect(DIALOG_SOURCE).toContain('t("actionform.attachFiles")');
     expect(DIALOG_SOURCE).toContain("formatActionFileBytes");
     expect(DIALOG_SOURCE).toContain("removeFile");
     expect(DIALOG_SOURCE).toContain("filesHintState");
-    expect(DIALOG_SOURCE).toContain("Attach files…");
+    expect(DIALOG_SOURCE).toContain('t("actionform.attachFiles")');
     expect(DIALOG_SOURCE).not.toContain('filesHintState === "quoted"');
-    expect(DIALOG_SOURCE).toContain("wrapping the reference itself in quotes works too");
+    expect(DIALOG_SOURCE).toContain('t("actionform.filesBody")');
   });
 
   it("keeps Insert a real button that waits for attached files", () => {

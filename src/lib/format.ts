@@ -1,6 +1,8 @@
 /** Shared display helpers for dates, durations, and byte sizes — used by the
  * History and Logs screens (ticket 09). */
 
+import { t, tCount } from "./copy";
+
 export function formatBytes(bytes: number): string {
   if (bytes <= 0) return "0 B";
   const units = ["B", "KB", "MB", "GB", "TB"];
@@ -65,14 +67,21 @@ export function launchReportSummary(report: {
   notes: string[];
 }): string {
   const counts = [
-    `started ${report.started.length}`,
-    `skipped ${report.skipped.length}`,
-    `failed ${report.failed.length}`,
+    tCount("launch.reportStarted", report.started.length),
+    tCount("launch.reportSkipped", report.skipped.length),
+    tCount("launch.reportFailed", report.failed.length),
   ];
   const skipped =
-    report.skipped.length > 0 ? ` Skipped: ${report.skipped.join(", ")}.` : "";
+    report.skipped.length > 0
+      ? t("launch.reportSkippedList").replace("{items}", report.skipped.join(", "))
+      : "";
   const failed =
-    report.failed.length > 0 ? ` Failed: ${report.failed.join(", ")}.` : "";
-  const notes = report.notes.length > 0 ? ` ${report.notes.join(". ")}.` : "";
-  return `Quick Launch done — ${counts.join(", ")}.${skipped}${failed}${notes}`;
+    report.failed.length > 0
+      ? t("launch.reportFailedList").replace("{items}", report.failed.join(", "))
+      : "";
+  const notes =
+    report.notes.length > 0
+      ? t("launch.reportNotes").replace("{items}", report.notes.join(". "))
+      : "";
+  return t("launch.reportDone").replace("{counts}", counts.join(", ")) + `${skipped}${failed}${notes}`;
 }

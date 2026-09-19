@@ -25,7 +25,7 @@ describe("Settings save never clobbers untouched Companion knobs (ticket 143)", 
   it("refuses instead of silently overwriting on a real conflict", () => {
     // Touched here AND changed out-of-band since mount: neither value wins
     // by seniority — the save stops with an honest error naming the fix.
-    expect(SETTINGS_SOURCE).toContain("Discard and re-apply");
+    expect(SETTINGS_SOURCE).toContain('t("settings.discardReapply")');
   });
 
   it("always carries the manager-owned site list through fresh", () => {

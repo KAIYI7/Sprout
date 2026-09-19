@@ -6,6 +6,7 @@
 /// synonym, the data shape stays `Requirement` end to end (CONTEXT.md).
 
 import type { EnvWiring, Product, Requirement, VerifyCommand, VersionPolicy } from "./types";
+import { t } from "./copy";
 
 /** A row's hidden-value counts, shown as tags on collapsed rows. */
 export interface HiddenCounts {
@@ -164,11 +165,11 @@ export class ComposerState {
       const label = r.product.name || r.product.id;
       const envRows = r.env.filter((e) => e.name.trim() || e.value.trim());
       if (envRows.some((e) => !e.name.trim() || !e.value.trim())) {
-        return `Application "${label}": every env wiring entry needs both a variable name and a value.`;
+        return t("presetform.rowEnvError").replace("{label}", label);
       }
       const verifyRows = r.verify.filter((v) => v.command.trim() || v.match_text);
       if (verifyRows.some((v) => !v.command.trim())) {
-        return `Application "${label}": every verify command needs a command.`;
+        return t("presetform.rowVerifyError").replace("{label}", label);
       }
     }
     return null;

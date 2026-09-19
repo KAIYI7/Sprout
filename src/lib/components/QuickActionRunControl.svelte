@@ -2,6 +2,7 @@
   import { onMount, tick } from "svelte";
   import Button from "./Button.svelte";
   import Icon from "./Icon.svelte";
+  import { t } from "$lib/copy";
 
   let {
     name,
@@ -102,9 +103,9 @@
         return btn;
       };
 
-      const runEl = makeProbe("Run");
-      const stopEl = makeProbe("Stop");
-      const stoppingEl = makeProbe("Stopping…", true);
+      const runEl = makeProbe(t("action.run"));
+      const stopEl = makeProbe(t("action.stop"));
+      const stoppingEl = makeProbe(t("common.busy.stopping"), true);
 
       const widths = [runEl, stopEl, stoppingEl].map((el) =>
         Math.ceil(el.getBoundingClientRect().width),
@@ -152,8 +153,8 @@
       <Button
         variant="secondary"
         disabled
-        aria-label={`Stopping ${name}`}
-        title={`Stopping ${name}`}
+        aria-label={t("action.stoppingName").replace("{name}", name)}
+        title={t("action.stoppingName").replace("{name}", name)}
         aria-describedby={describedby}
       >
         <span class="spin spin--compact" aria-hidden="true"></span>
@@ -162,8 +163,8 @@
       <Button
         variant="danger"
         onclick={onstop}
-        aria-label={`Stop ${name}`}
-        title={`Stop ${name}`}
+        aria-label={t("action.stopName").replace("{name}", name)}
+        title={t("action.stopName").replace("{name}", name)}
         aria-describedby={describedby}
       >
         <Icon name="stop" size={15} />
@@ -172,8 +173,8 @@
       <Button
         variant="primary"
         onclick={onrun}
-        aria-label={`Run ${name}`}
-        title={`Run ${name}`}
+        aria-label={t("action.runName").replace("{name}", name)}
+        title={t("action.runName").replace("{name}", name)}
         aria-describedby={describedby}
       >
         <Icon name="play" size={15} />
@@ -186,12 +187,12 @@
     <Button
       variant="secondary"
       disabled
-      aria-label={`Stopping ${name}`}
+      aria-label={t("action.stoppingName").replace("{name}", name)}
       aria-describedby={describedby}
       style="min-width:var(--run-w)"
     >
       <span class="spin" aria-hidden="true"></span>
-      Stopping…
+      {t("common.busy.stopping")}
     </Button>
   {:else if stoppable && running}
     <!-- The destructive verb gets the danger family, never the accent — one
@@ -199,12 +200,12 @@
     <Button
       variant="danger"
       onclick={onstop}
-      aria-label={`Stop ${name}`}
+      aria-label={t("action.stopName").replace("{name}", name)}
       aria-describedby={describedby}
       style="min-width:var(--run-w)"
     >
       <Icon name="stop" size={13} />
-      Stop
+      {t("action.stop")}
     </Button>
   {:else}
     <!-- Run is the row's primary verb — accent-filled (research 0005 rule 2);
@@ -212,12 +213,12 @@
     <Button
       variant="primary"
       onclick={onrun}
-      aria-label={`Run ${name}`}
+      aria-label={t("action.runName").replace("{name}", name)}
       aria-describedby={describedby}
       style="min-width:var(--run-w)"
     >
       <Icon name="play" size={13} />
-      Run
+      {t("action.run")}
     </Button>
   {/if}
 </span>

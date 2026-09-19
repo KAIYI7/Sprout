@@ -7,7 +7,8 @@
 /// each exactly once per run id.
 
 import { cancelRun, getActiveRun, readRunProgress } from "$lib/api";
-import { runOutcomeLabel } from "$lib/types";
+import { t } from "$lib/copy";
+import { runOutcomeLabelText } from "$lib/types";
 import type { RunDoneInfo, RunOutcome, RunProgress } from "$lib/types";
 import {
   isPermissionGranted,
@@ -44,14 +45,14 @@ export function getActivity(): string {
     }
     if (event.type === "phase") return `${event.phase}…`;
   }
-  return "starting…";
+  return t("run.starting");
 }
 
 /// The user-facing outcome label ("Applied", "With notes", "Cancelled",
 /// "Failed") for the banner and the toast; `null` while the run is live.
 export function getCompletionLabel(): string | null {
   return runAwareness.completion
-    ? runOutcomeLabel[runAwareness.completion.outcome]
+    ? runOutcomeLabelText(runAwareness.completion.outcome)
     : null;
 }
 
@@ -124,7 +125,7 @@ async function toast(runId: string, outcome: RunOutcome) {
     if (granted) {
       sendNotification({
         title: "Sprout",
-        body: `Run finished — ${runOutcomeLabel[outcome]}`,
+        body: `${t("run.finishedPrefix")}${runOutcomeLabelText(outcome)}`,
       });
     }
   } catch {

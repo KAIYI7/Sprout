@@ -1,6 +1,6 @@
 # One module owns every reusable window dimension
 
-> Status: amended 2026-09-07 — original decision text preserved; see the executable-source audit amendment for current behavior and the 156-round amendment for the per-mode width caps.
+> Status: amended 2026-09-16 — original decision text preserved; see the executable-source audit amendment for current behavior and the 156-round amendment for the per-mode width caps.
 
 `constants/window.rs` is the single size source: every reusable window dimension lives there and nowhere else — the floating palette (`340×460`, width never draggable), the dock floor (equal to the floating width, so undock never shrinks the window), the dock width as a monitor-percentage (10–30%, default 18 ≈ 346 px on a 1920 reference, floored at the palette width and capped at 30% of the monitor so ultrawides keep a strip a strip), the auto-hide driver constants (poll, slide, sliver band, reveal gate), and the main window's default and minimum sizes. `tauri.conf.json` declares no windows; the programmatic build sizes from these constants. The frontend mirrors the numeric values it needs for sliders and clamps (with the same fallbacks the backend applies to broken stored values) but never re-derives them — the backend validates and floors, so a corrupt setting can neither collapse nor explode the strip.
 
@@ -25,3 +25,7 @@ The Rust calculation gives the dock floor precedence over the percentage ceiling
 ## Amendment — 2026-09-07 (156-round split width caps)
 
 The single 10–30% dock-width policy becomes per-mode: fixed keeps 10–30% (the reservation math stands — a wide fixed AppBar permanently takes workspace from maximized windows), while auto-hide allows 10–60% (an overlay reserves nothing, so the ultrawide-strip objection does not apply to it). `constants/window.rs` remains the single size source; one slider whose maximum follows the current mode; caps persist per monitor; broken stored values clamp exactly as today. Floor precedence, undock-narrows-to-floor, and the no-second-source rule are unchanged. Accepted in spec 156 (ticket 164); implementation pending.
+
+## Amendment — 2026-09-16 (ticket 215)
+
+Bezel constants join the single size source in `constants/window.rs`: collapsed 14px, peek 24px, height 12% of the docked monitor clamped to 64–160px physical, Y default centered (ratio 0.5 clamped 0..1; persist and drag in ticket 216). Open uses the full dock width at the resolved width-% with the auto-hide-like 60% overlay cap (`DOCK_WIDTH_MAX_PCT_BEZEL`; bezel reserves nothing extra). Svelte reads every bezel dimension through `get_bezel_*` commands — no second source.

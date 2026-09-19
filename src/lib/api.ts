@@ -195,6 +195,16 @@ export function updateTheme(theme: string): Promise<void> {
   return invoke<void>("update_theme", { theme });
 }
 
+/** Loads the persisted UI language ("en" or "zh-CN"). */
+export function getLanguage(): Promise<string> {
+  return invoke<string>("get_language");
+}
+
+/** Persists the UI language on its own — it applies the moment it is picked. */
+export function updateLanguage(language: string): Promise<void> {
+  return invoke<void>("update_language", { language });
+}
+
 /** Persists the motion switch on its own — it applies the moment it is picked. */
 export function updateAnimation(animation: string): Promise<void> {
   return invoke<void>("update_animation", { animation });
@@ -851,6 +861,51 @@ export function getDisplayDockWidthPct(display: string): Promise<number | null> 
 /** Persists one display's dock width % (ticket 128): 10–30, validated. */
 export function setDisplayDockWidthPct(display: string, pct: number): Promise<void> {
   return invoke<void>("set_display_dock_width_pct", { display, pct });
+}
+
+/** The remembered bezel tab Y ratio for one display (spec 214): null means
+ *  centered — the backend default applies. */
+export function getDisplayBezelYRatio(display: string): Promise<number | null> {
+  return invoke<number | null>("get_display_bezel_y_ratio", { display });
+}
+
+/** Persists one display's bezel tab Y ratio (spec 214): 0–1, validated. */
+export function setDisplayBezelYRatio(display: string, ratio: number): Promise<void> {
+  return invoke<void>("set_display_bezel_y_ratio", { display, ratio });
+}
+
+/** The bezel collapsed tab's visible width (spec 214): read from the
+ *  backend's single size source — never a JS constant. */
+export function getBezelCollapsedWidth(): Promise<number> {
+  return invoke<number>("get_bezel_collapsed_width");
+}
+
+/** The bezel hover-peek width: geometry-only feedback, never an open
+ *  trigger. Read from the backend, never a JS constant. */
+export function getBezelPeekWidth(): Promise<number> {
+  return invoke<number>("get_bezel_peek_width");
+}
+
+/** The bezel tab height for a monitor of the given height: 12% clamped to
+ *  64–160 physical px — the same derivation the backend places. */
+export function getBezelTabHeight(monitorHeightPx: number): Promise<number> {
+  return invoke<number>("get_bezel_tab_height", { monitorHeightPx });
+}
+
+/** The bezel tab's top edge for the given monitor geometry at `yRatio`
+ *  (0 = top, 1 = bottom; broken values center). */
+export function getBezelTabY(
+  monitorTopPx: number,
+  monitorHeightPx: number,
+  yRatio: number
+): Promise<number> {
+  return invoke<number>("get_bezel_tab_y", { monitorTopPx, monitorHeightPx, yRatio });
+}
+
+/** The bezel open panel's width at `pct` % of a monitor of the given width:
+ *  the full dock width capped at the 60% overlay cap. */
+export function getBezelOpenWidth(monitorWidthPx: number, pct: number): Promise<number> {
+  return invoke<number>("get_bezel_open_width", { monitorWidthPx, pct });
 }
 
 /** Applies the complete saved dock/Companion state after Settings batch writes. */

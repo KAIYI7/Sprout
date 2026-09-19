@@ -22,7 +22,8 @@
 //!   frees;
 //! - `dock_mode` — the Quick Launch dock's visibility mode (tickets 49/50):
 //!   "auto-hide" slides to a sliver when not hovered (default), "fixed" keeps
-//!   the strip permanently reserved;
+//!   the strip permanently reserved, "bezel" parks a small edge tab that
+//!   opens on click (spec 214);
 //! - `dock_edge` — the screen edge the Quick Launch dock attaches to by
 //!   default: "left" or "right" (the window's own live controls override it
 //!   per monitor);
@@ -51,6 +52,10 @@ pub const DEFAULT_TIMEOUT_MINUTES: u32 = 10;
 pub const DEFAULT_RETENTION_DAYS: u32 = 30;
 /// The app-wide theme: "system" follows the OS, "light"/"dark" pin it.
 pub const DEFAULT_THEME: &str = "system";
+/// The app-wide UI language: "en" is the source of truth, "zh-CN" is the
+/// whole-file Simplified-Chinese swap. Saved on its own the moment it is
+/// picked (like the theme) — machine-local, never in backups.
+pub const DEFAULT_LANGUAGE: &str = "en";
 /// The app-wide motion switch: "on" plays every transition, "off" renders
 /// each end state at once. On is today's behavior.
 pub const DEFAULT_ANIMATION: &str = "on";
@@ -82,8 +87,8 @@ pub const REVEAL_SENSITIVITY_MIN_PX: i32 = 0;
 pub const REVEAL_SENSITIVITY_MAX_PX: i32 = 50;
 /// Dock width (ticket 128; per-mode caps in ADR-0021): % of the docked
 /// monitor's full width, 10–60% stored (default 18 ≈ 346px on 1920). Fixed
-/// applies at most 30% (it reserves workspace — ADR-0011); auto-hide may
-/// apply to 60% (it overlays and reserves nothing). The effective pixel width
+/// applies at most 30% (it reserves workspace — ADR-0011); auto-hide and
+/// bezel may apply to 60% (both overlay and reserve nothing). The effective pixel width
 /// floors at today's 340 — single size source via `constants::window` (see
 /// `dock_width_px_for_mode` for the cap math).
 pub const DEFAULT_DOCK_WIDTH_PCT: u32 = crate::constants::window::DOCK_WIDTH_DEFAULT_PCT;
@@ -118,6 +123,7 @@ pub const DEFAULT_AI_BASE_URL: &str = "http://127.0.0.1:11434";
 const KEY_TIMEOUT: &str = "settings.timeout_minutes";
 const KEY_RETENTION: &str = "settings.log_retention_days";
 const KEY_THEME: &str = "settings.theme";
+const KEY_LANGUAGE: &str = "settings.language";
 const KEY_ANIMATION: &str = "settings.animation";
 const KEY_INSTALL_DIR: &str = "settings.install_dir";
 const KEY_LAUNCH_CONCURRENCY: &str = "launch.concurrency";
@@ -253,8 +259,8 @@ pub struct Settings {
     /// The Quick Launch concurrency cap (ticket 37/42): entries beyond it
     /// queue until a slot frees.
     pub launch_concurrency: u32,
-    /// The Quick Launch dock's visibility mode (tickets 49/50): "auto-hide"
-    /// or "fixed".
+    /// The Quick Launch dock's visibility mode (tickets 49/50, spec 214):
+    /// "auto-hide", "fixed", or "bezel".
     pub dock_mode: String,
     /// The screen edge the Quick Launch dock attaches to by default (tickets
     /// 49/50): "left" or "right".
@@ -265,8 +271,8 @@ pub struct Settings {
     pub dock_state: String,
     /// The docked strip's width as % of its monitor (ticket 128; per-mode caps
     /// in ADR-0021): 10–60 stored, default 18. Fixed applies at most 30;
-    /// auto-hide may apply to 60. Docked only — floating stays 340 — shared
-    /// by fixed and auto-hide, with per-monitor memory falling back to this.
+    /// auto-hide and bezel may apply to 60. Docked only — floating stays 340 — shared
+    /// by fixed, auto-hide, and bezel, with per-monitor memory falling back to this.
     pub dock_width_pct: u32,
     /// The Quick Launch window's list density: "compact", "default", or
     /// "large". Applies to the docked and floating lists only — the main app
@@ -409,6 +415,15 @@ pub fn validate_theme(theme: &str) -> std::result::Result<(), String> {
     }
 }
 
+/// Accepts only the two locales the copy dictionary ships: English (the
+/// source of truth) and the Simplified-Chinese file swap.
+pub fn validate_language(language: &str) -> std::result::Result<(), String> {
+    match language {
+        "en" | "zh-CN" => Ok(()),
+        _ => Err("Language must be \"en\" or \"zh-CN\"".into()),
+    }
+}
+
 /// Accepts an empty value (winget's default directory) and any absolute
 /// Windows path — drive-rooted (`D:\Apps`) or UNC (`\\server\share`). A
 /// relative path would silently mean different things per machine, so it is
@@ -427,11 +442,12 @@ pub fn validate_install_dir(install_dir: &str) -> std::result::Result<(), String
     }
 }
 
-/// Accepts only the two dock visibility modes the dock offers (ADR-0011).
+/// Accepts only the three dock visibility modes the dock offers (ADR-0011:
+/// fixed reserves workspace, auto-hide and bezel overlay it).
 pub fn validate_dock_mode(mode: &str) -> std::result::Result<(), String> {
     match mode {
-        "auto-hide" | "fixed" => Ok(()),
-        _ => Err("Dock mode must be \"auto-hide\" or \"fixed\"".into()),
+        "auto-hide" | "fixed" | "bezel" => Ok(()),
+        _ => Err("Dock mode must be \"auto-hide\", \"fixed\", or \"bezel\"".into()),
     }
 }
 
@@ -478,6 +494,21 @@ pub fn validate_dock_density(value: &str) -> std::result::Result<(), String> {
         "compact" | "default" | "large" => Ok(()),
         _ => Err("Dock density must be \"compact\", \"default\", or \"large\"".into()),
     }
+}
+
+/// Accepts only the bezel tab Y ratios the dock stores (spec 214,
+/// ADR-0020 identity-keyed memory): 0..1 inclusive — the fraction of the
+/// tab's vertical travel. The geometry clamps through
+/// `clamp_bezel_y_ratio`; this guards the stored value instead, so a broken
+/// row reads as absent and the tab centers rather than parking off-screen.
+pub fn validate_bezel_y_ratio(value: f64) -> std::result::Result<(), String> {
+    if !value.is_finite() {
+        return Err("Bezel tab position must be a finite number".into());
+    }
+    if !(0.0..=1.0).contains(&value) {
+        return Err("Bezel tab position must be between 0 and 1".into());
+    }
+    Ok(())
 }
 
 /// Accepts only the two auto-start states the Settings toggle writes
@@ -866,6 +897,26 @@ pub fn save_theme(conn: &Connection, theme: &str) -> std::result::Result<(), Str
     upsert_meta(conn, KEY_THEME, theme).map_err(|e| e.to_string())
 }
 
+/// Reads only the UI language — a missing or broken value reads back as
+/// English, so an older save never blanks the UI.
+pub fn load_language(conn: &Connection) -> String {
+    conn.query_row(
+        "SELECT value FROM meta WHERE key = ?1",
+        params![KEY_LANGUAGE],
+        |row| row.get::<_, String>(0),
+    )
+    .ok()
+    .filter(|value| validate_language(value).is_ok())
+    .unwrap_or_else(|| DEFAULT_LANGUAGE.to_string())
+}
+
+/// Persists only the UI language — the Settings screen applies it the moment
+/// it is picked, without touching the other knobs, like the theme.
+pub fn save_language(conn: &Connection, language: &str) -> std::result::Result<(), String> {
+    validate_language(language)?;
+    upsert_meta(conn, KEY_LANGUAGE, language).map_err(|e| e.to_string())
+}
+
 /// Persists only the motion switch — the Settings screen applies it the
 /// moment it is picked, without touching the other knobs, like the theme.
 pub fn save_animation(conn: &Connection, value: &str) -> std::result::Result<(), String> {
@@ -1134,6 +1185,35 @@ mod tests {
     }
 
     #[test]
+    fn dock_mode_accepts_bezel_and_still_rejects_unknown() {
+        // Spec 214: bezel is the third dock mode beside fixed/auto-hide —
+        // accepted everywhere dockMode is validated/stored, while unknown
+        // modes keep falling back honestly (ADR-0011 bezel amendment).
+        assert!(validate_dock_mode("bezel").is_ok());
+        assert!(validate_dock_mode("auto-hide").is_ok());
+        assert!(validate_dock_mode("fixed").is_ok());
+        assert!(validate_dock_mode("overlay").is_err());
+        let mut s = Settings::default();
+        s.dock_mode = "bezel".to_string();
+        assert!(s.validate().is_ok());
+        s.dock_mode = "overlay".to_string();
+        assert!(s.validate().is_err());
+    }
+
+    #[test]
+    fn bezel_y_ratio_accepts_unit_range_and_rejects_broken_values() {
+        // The tab parks anywhere along its travel, endpoints included; a
+        // broken stored value must never reach the dock (ADR-0020).
+        assert!(validate_bezel_y_ratio(0.0).is_ok());
+        assert!(validate_bezel_y_ratio(0.5).is_ok());
+        assert!(validate_bezel_y_ratio(1.0).is_ok());
+        assert!(validate_bezel_y_ratio(-0.1).is_err());
+        assert!(validate_bezel_y_ratio(1.1).is_err());
+        assert!(validate_bezel_y_ratio(f64::NAN).is_err());
+        assert!(validate_bezel_y_ratio(f64::INFINITY).is_err());
+    }
+
+    #[test]
     fn invalid_stored_dock_density_falls_back_to_default() {
         let conn = conn();
         // A broken value must never reach the window — it reads back as
@@ -1275,6 +1355,7 @@ mod tests {
         };
         assert_eq!(dock_width_max_pct_for_mode("fixed"), 30);
         assert_eq!(dock_width_max_pct_for_mode("auto-hide"), 60);
+        assert_eq!(dock_width_max_pct_for_mode("bezel"), 60);
         assert_eq!(dock_width_px_for_mode(1920, 55, "fixed"), 576);
         assert_eq!(dock_width_px_for_mode(1920, 55, "auto-hide"), 1056);
         assert_eq!(

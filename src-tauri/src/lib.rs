@@ -627,6 +627,30 @@ fn update_theme(
     Ok(())
 }
 
+/// Loads the persisted UI language ("en" or "zh-CN").
+#[tauri::command]
+fn get_language(state: State<'_, AppState>) -> Result<String, String> {
+    let conn = lock(&state)?;
+    Ok(settings::load_language(&conn))
+}
+
+/// Persists the UI language on its own — the Settings screen applies it the
+/// moment it is selected, before the rest of the form is saved, like the
+/// theme. The Quick Launch window is told via `quick-launch-changed` so it
+/// re-reads the language without reopening.
+#[tauri::command]
+fn update_language(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    language: String,
+) -> Result<(), String> {
+    let conn = lock(&state)?;
+    settings::save_language(&conn, &language)?;
+    drop(conn);
+    emit_quick_launch_changed(&app);
+    Ok(())
+}
+
 /// Persists the motion switch on its own — the Settings screen applies it
 /// the moment it is picked, before the rest of the form is saved, like the
 /// theme. The Quick Launch window is told via `quick-launch-changed` so it
@@ -2790,6 +2814,7 @@ fn toggle_quick_launch_dock(app: AppHandle) -> Result<(), String> {
             persist_dock_setting(&app, "dock.edge", &edge)?;
         }
     }
+    emit_quick_launch_changed(&app);
     Ok(())
 }
 
@@ -2802,6 +2827,7 @@ fn switch_quick_launch_dock_edge(app: AppHandle, edge: String) -> Result<(), Str
     quick_window::dock(&app, Some(&edge))?;
     persist_dock_setting(&app, "dock.edge", &edge)?;
     persist_dock_setting(&app, "dock.state", "docked")?;
+    emit_quick_launch_changed(&app);
     Ok(())
 }
 
@@ -2916,6 +2942,75 @@ fn set_display_dock_width_pct(
     let (device_name, identity) = resolve_display_keys(&display, &displays);
     let key = per_display_key(identity.as_deref(), &device_name);
     db::save_dock_width_pct(&conn, &key, pct).map_err(|e| e.to_string())
+}
+
+/// The remembered bezel tab Y ratio for one display (spec 214, ADR-0020):
+/// the tab's parked height as a fraction 0..1 of its vertical travel,
+/// identity wins with device-name fallback. `None` means centered — the
+/// caller uses the backend default.
+#[tauri::command]
+fn get_display_bezel_y_ratio(
+    state: State<'_, AppState>,
+    display: String,
+) -> Result<Option<f64>, String> {
+    let conn = lock(&state)?;
+    let displays = appbar::cached_displays();
+    let (device_name, identity) = resolve_display_keys(&display, &displays);
+    Ok(db::load_bezel_y_ratio_identified(&conn, identity.as_deref(), &device_name))
+}
+
+/// Persists one display's bezel tab Y ratio (spec 214, ADR-0020): 0..1,
+/// validated first — a broken value never reaches the per-monitor memory.
+#[tauri::command]
+fn set_display_bezel_y_ratio(
+    state: State<'_, AppState>,
+    display: String,
+    ratio: f64,
+) -> Result<(), String> {
+    settings::validate_bezel_y_ratio(ratio)?;
+    let conn = lock(&state)?;
+    let displays = appbar::cached_displays();
+    let (device_name, identity) = resolve_display_keys(&display, &displays);
+    let key = per_display_key(identity.as_deref(), &device_name);
+    db::save_bezel_y_ratio(&conn, &key, ratio).map_err(|e| e.to_string())
+}
+
+/// The bezel collapsed tab's visible width (spec 214): Svelte reads it here
+/// instead of hard-coding it (conventions.md window-sizing rule — the single
+/// size source stays in `constants::window`).
+#[tauri::command]
+fn get_bezel_collapsed_width() -> i32 {
+    crate::constants::window::BEZEL_COLLAPSED_WIDTH_PX
+}
+
+/// The bezel hover-peek width: geometry-only feedback, never an open trigger
+/// (ADR-0019 bezel amendment). Read from here, never a JS constant.
+#[tauri::command]
+fn get_bezel_peek_width() -> i32 {
+    crate::constants::window::BEZEL_PEEK_WIDTH_PX
+}
+
+/// The bezel tab height for a monitor `monitor_height_px` tall: 12% clamped
+/// to 64–160 physical px — the same derivation the backend places.
+#[tauri::command]
+fn get_bezel_tab_height(monitor_height_px: i32) -> i32 {
+    crate::constants::window::bezel_tab_height_px(monitor_height_px)
+}
+
+/// The bezel tab's top edge for the given monitor geometry at `y_ratio`
+/// (0 = top, 1 = bottom; broken values center — Y persists per display).
+#[tauri::command]
+fn get_bezel_tab_y(monitor_top_px: i32, monitor_height_px: i32, y_ratio: f64) -> i32 {
+    let height = crate::constants::window::bezel_tab_height_px(monitor_height_px);
+    crate::constants::window::bezel_tab_y_px(monitor_top_px, monitor_height_px, height, y_ratio)
+}
+
+/// The bezel open panel's width at `pct` % of a `monitor_width_px`-wide
+/// monitor: the full dock width at the resolved width-%, capped at the 60%
+/// overlay cap (ADR-0021 bezel amendment) — never a JS re-derivation.
+#[tauri::command]
+fn get_bezel_open_width(monitor_width_px: i32, pct: u32) -> i32 {
+    crate::constants::window::dock_width_px_for_mode(monitor_width_px, pct, "bezel")
 }
 
 /// Applies the final saved global + per-monitor picture after the Settings
@@ -3267,6 +3362,22 @@ fn get_quick_launch_dock_state(app: AppHandle) -> Result<DockStateView, String> 
     })
 }
 
+/// The live Quick Launch window rectangle in physical pixels, for the bezel
+/// live loop only (debug builds): lets a CDP driver assert on the real
+/// window position during drags and tweens, which the DOM cannot observe.
+/// Debug-only so no shipped surface grows around it.
+#[cfg(debug_assertions)]
+#[tauri::command]
+fn debug_quick_launch_window_rect(app: AppHandle) -> Result<(i32, i32, i32, i32), String> {
+    let window = quick_window::quick_launch_window(&app)
+        .ok_or_else(|| "Quick Launch window is not open".to_string())?;
+    let hwnd = window.hwnd().map_err(|e| e.to_string())?;
+    match appbar::window_rect(hwnd.0) {
+        Some(r) => Ok((r.left, r.top, r.right, r.bottom)),
+        None => Err("cannot read the Quick Launch window rectangle".to_string()),
+    }
+}
+
 fn pending_eligibility(app: &AppHandle) -> Result<(bool, bool), String> {
     let window = quick_window::quick_launch_window(&app)
         .ok_or_else(|| "Quick Launch window is not open".to_string())?;
@@ -3306,6 +3417,10 @@ fn pending_eligibility(app: &AppHandle) -> Result<(bool, bool), String> {
 /// containing "PASS iters=N" on clean completion, then exits. The harness in
 /// `tools/repro-dock-mode-stress.ps1` asserts on that marker plus the
 /// process exit code. Restores the captured settings/dock memory afterwards.
+/// `SPROUT_DOCK_STRESS_MODES` overrides the rotation: visibility modes flip
+/// in place, while `docked` docks (redocks when already docked) and
+/// `floating` undocks — so docked/floating transitions run under the same
+/// verdict (e.g. "docked,fixed,bezel,auto-hide,floating").
 #[cfg(debug_assertions)]
 fn debug66_dock_mode_stress(app: AppHandle) {
     use std::time::Duration;
@@ -3413,11 +3528,36 @@ fn debug66_dock_mode_stress(app: AppHandle) {
             eprintln!("[stress-66] normalize to fixed failed: {e}");
         }
         std::thread::sleep(Duration::from_millis(300));
+        // The rotation under test: fixed↔auto-hide by default, or the caller
+        // supplied list — bezel joins the rotation the same way, so a
+        // bezel↔strip flip gets the same abort-or-clean verdict (ADR-0019:
+        // every flip settles on the driver; the marker only reaches PASS
+        // when no flip tore the window).
+        let modes: Vec<String> = std::env::var("SPROUT_DOCK_STRESS_MODES")
+            .ok()
+            .map(|v| {
+                v.split(',')
+                    .map(|s| s.trim().to_string())
+                    .filter(|s| !s.is_empty())
+                    .collect()
+            })
+            .filter(|v: &Vec<String>| !v.is_empty())
+            .unwrap_or_else(|| vec!["auto-hide".to_string(), "fixed".to_string()]);
         for i in 0..iterations {
-            let mode = if i % 2 == 0 { "auto-hide" } else { "fixed" };
-            eprintln!("[stress-66] iter={i} -> {mode}");
-            if let Err(e) = quick_window::set_dock_mode(&app, mode) {
-                eprintln!("[stress-66] iter={i} set_dock_mode({mode}) errored: {e}");
+            let op = &modes[(i as usize) % modes.len()];
+            eprintln!("[stress-66] iter={i} -> {op}");
+            // The rotation mixes visibility modes with docked/floating
+            // transitions, so undock-from-bezel and redock paths run under
+            // the same abort-or-clean verdict as the mode flips (a refused
+            // op only logs — the marker stays PASS unless the process dies
+            // or hangs).
+            let res = match op.as_str() {
+                "docked" => quick_window::dock(&app, None),
+                "floating" => quick_window::undock(&app),
+                mode => quick_window::set_dock_mode(&app, mode),
+            };
+            if let Err(e) = res {
+                eprintln!("[stress-66] iter={i} {op} errored: {e}");
             }
             std::thread::sleep(Duration::from_millis(interval_ms));
         }
@@ -3427,6 +3567,71 @@ fn debug66_dock_mode_stress(app: AppHandle) {
         restore(&app, &snapshot);
         eprintln!("[stress-66] PASS iters={iterations}");
         let _ = std::fs::write(&marker, format!("PASS iters={iterations}"));
+        app.exit(0);
+    });
+}
+
+/// Live bezel repro hold (debug builds + opt-in env only): opens the Quick
+/// Launch window, docks it as a bezel tab, and holds the process open so an
+/// external CDP driver can click the real tab and assert on the real window.
+/// The caller isolates the profile by overriding LOCALAPPDATA; autostart is
+/// forced off so the hold never registers a login entry for a throwaway
+/// binary. Holds `SPROUT_BEZEL_HOLD_SECS` (default 180), then exits 0 — the
+/// driver kills the process earlier once its verdict lands.
+#[cfg(debug_assertions)]
+fn debug_bezel_hold(app: AppHandle) {
+    std::thread::spawn(move || {
+        use std::time::Duration;
+        let secs: u64 = std::env::var("SPROUT_BEZEL_HOLD_SECS")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(180);
+        let state = app.state::<AppState>();
+        let Ok(conn) = state.db.lock() else {
+            eprintln!("[bezel-hold] no db lock; exiting");
+            app.exit(3);
+            return;
+        };
+        let mut s = settings::load(&conn);
+        s.dock_mode = "bezel".to_string();
+        s.dock_state = "docked".to_string();
+        s.autostart = "off".to_string();
+        if let Err(e) = settings::save(&conn, &s) {
+            eprintln!("[bezel-hold] seed settings failed: {e}");
+            app.exit(3);
+            return;
+        }
+        // Per-monitor memory wins over the globals by design — a previous
+        // run's leftover rows would silently override the seeded bezel, so
+        // the hold starts from a clean slate like the stress reset does.
+        if let Err(e) = conn.execute(
+            "DELETE FROM meta WHERE key LIKE 'quicklaunch.dock.%'",
+            [],
+        ) {
+            eprintln!("[bezel-hold] memory reset failed: {e}");
+            app.exit(3);
+            return;
+        }
+        drop(conn);
+        if let Err(e) = quick_window::open(&app) {
+            eprintln!("[bezel-hold] open failed: {e}");
+            app.exit(3);
+            return;
+        }
+        std::thread::sleep(Duration::from_millis(800));
+        match quick_window::dock(&app, None) {
+            Ok(()) => eprintln!(
+                "[bezel-hold] docked; live state is {:?}; holding {secs}s",
+                quick_window::docked_state(&app).map(|d| (d.edge, d.mode))
+            ),
+            Err(e) => {
+                eprintln!("[bezel-hold] dock failed: {e}");
+                app.exit(3);
+                return;
+            }
+        }
+        std::thread::sleep(Duration::from_secs(secs));
+        eprintln!("[bezel-hold] hold expired; exiting");
         app.exit(0);
     });
 }
@@ -3653,6 +3858,11 @@ pub fn run() {
             if std::env::var("SPROUT_DOCK_STRESS").as_deref() == Ok("1") {
                 debug66_dock_mode_stress(app.handle().clone());
             }
+            // [DEBUG-bezel] live bezel repro hold (debug builds + opt-in env).
+            #[cfg(debug_assertions)]
+            if std::env::var("SPROUT_BEZEL_HOLD").as_deref() == Ok("1") {
+                debug_bezel_hold(app.handle().clone());
+            }
             Ok(())
         })
         .manage(AppState {
@@ -3703,6 +3913,8 @@ pub fn run() {
             get_settings,
             update_settings,
             update_theme,
+            get_language,
+            update_language,
             update_animation,
             update_autostart,
             update_groups_enabled,
@@ -3792,7 +4004,16 @@ pub fn run() {
             set_display_dock_mode,
             get_display_dock_width_pct,
             set_display_dock_width_pct,
+            get_display_bezel_y_ratio,
+            set_display_bezel_y_ratio,
+            get_bezel_collapsed_width,
+            get_bezel_peek_width,
+            get_bezel_tab_height,
+            get_bezel_tab_y,
+            get_bezel_open_width,
             reconcile_quick_launch_settings,
+            #[cfg(debug_assertions)]
+            debug_quick_launch_window_rect,
             set_companion_url,
             open_companion_external,
             open_volume_mixer,

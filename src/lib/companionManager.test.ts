@@ -36,7 +36,7 @@ describe("Companion site manager contract", () => {
   describe("add-site Enable-now hint (ticket 163)", () => {
     it("offers Enable-now on the add notice through one Notice action slot", () => {
       expect(NOTICE_SOURCE).toContain("action");
-      expect(MANAGER_SOURCE).toContain("Enable now");
+      expect(MANAGER_SOURCE).toContain('t("companion.enableNow")');
       expect(MANAGER_SOURCE).toContain("{#snippet action()}");
     });
 
@@ -50,7 +50,7 @@ describe("Companion site manager contract", () => {
     it("auto-clears on today's flash timing and surfaces errors like today", () => {
       expect(MANAGER_SOURCE).toContain("noticeSiteUrl = null");
       expect(MANAGER_SOURCE).toContain("3200");
-      expect(MANAGER_SOURCE).toContain("flash(`Enabled");
+      expect(MANAGER_SOURCE).toContain('t("companion.enabledFlash")');
     });
   });
 });

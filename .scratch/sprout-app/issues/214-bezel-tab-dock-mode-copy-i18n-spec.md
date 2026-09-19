@@ -1,6 +1,6 @@
 # 214 — Bezel-tab dock mode + human-friendly copy with file-based i18n (spec)
 
-**Status:** planning package only — no application behavior changed here. Tickets 215–220 are **proposed below, NOT created** — awaiting user approval before any to-tickets run.
+**Status:** delivered 2026-09-19 — tickets 215–220 applied + validated (see Acceptance and verification). No application behavior changed in this spec file itself; behavior landed in the owning tickets.
 
 **Parents / related (read before implementing):**
 - [52 Quick Launch window](52-quick-launch-window.md) + [53 dock AppBar](53-quick-launch-dock-appbar.md) + [55 dock/floating UX](55-quick-launch-window-dock-floating-ux-sync-and-action-control-spec.md) + [57 dock settings + live sync](57-quick-launch-dock-settings-and-live-sync.md) + [60 dock auto-hide](60-dock-auto-hide.md) + [63 auto-hide blocked edge](63-dock-auto-hide-blocked-on-taskbar-owned-edge.md) + ADR-0011 — dock/AppBar foundation. This round adds a third `dockMode` beside `fixed` / `auto-hide`; existing two modes unchanged.
@@ -70,7 +70,7 @@ One owner per area, existing seams preferred: bezel geometry + collapsed/open pl
 
 - Touching `fixed`/`auto-hide` trigger behavior; top/bottom edges; full-height sliver variant; per-app tab content; tab theming beyond tokens; reveal-knob retuning; errors/onboarding/empty-state rewrite; machine translation of `zh-CN` before EN freezes; any database-backed copy store.
 
-## Ticket map and integration ownership (PROPOSED — not created, awaiting approval)
+## Ticket map and integration ownership (DELIVERED — tickets 215–220 applied + validated 2026-09-17, revalidated 2026-09-19)
 
 | Ticket | Size | Behavioral prerequisites | Likely paths / owner symbols | Shared contract and integration edits | Candidate wave |
 | --- | --- | --- | --- | --- | --- |
@@ -86,11 +86,17 @@ Claims above are estimates to recheck against code at dispatch (CodeGraph first)
 ## Acceptance and verification
 
 - [x] User confirmed third mode, click-only, peek-on-hover, ratio-based tab height, Y-drag with per-monitor identity memory, click-outside + Esc close, width grey-out with link, EN-first then zh-CN file-based dictionary incl. presence strings (grill R1–R2).
-- [ ] 215 verifies collapsed/peek/open rects per monitor/DPI, zero reservation collapsed, cap honored, `check` + Rust tests + ownership gate.
-- [ ] 216 verifies drag → persist → redock restore per display, replug/disconnect clamp + center fallback.
-- [ ] 217 verifies hover never opens, click toggles, outside/Esc closes, focus loss doesn't, motion tokens + contrast + screen-reader names.
-- [ ] 218 verifies `bezel` option appears (global + per-display), Y control binds, global width disables with working anchor link exactly when `displays.length>1`.
-- [ ] 219 verifies no inline duplicate of a keyed string in V1 scope, voice rules followed (2nd person, ≤140 chars, front-loaded keywords), loader falls back to EN, `npm run check` 0 errors.
-- [ ] 220 verifies missing-key fallback, full zh-CN coverage of 219's keys, language switch without restart (or documented restart if chosen).
+- [x] 215 verifies collapsed/peek/open rects per monitor/DPI, zero reservation collapsed, cap honored, `check` + Rust tests + ownership gate — done 2026-09-17, revalidated 2026-09-19 (`cargo test` 713 passed / 0 failed; bezel subset 13/13; `npm run check` 0 errors; ownership gate pass).
+- [x] 216 verifies drag → persist → redock restore per display, replug/disconnect clamp + center fallback — done 2026-09-17, revalidated 2026-09-19 (`bezel_y_ratio` per-monitor identity memory in `db.rs`/`quick_window.rs`, drag + keyboard nudge, clamp + center fallback tests pass).
+- [x] 217 verifies hover never opens, click toggles, outside/Esc closes, focus loss doesn't, motion tokens + contrast + screen-reader names — done 2026-09-17, revalidated 2026-09-19 (bezel interaction tests pass; 73/73 across copy + bezelY + bezelSettings + bezelInteraction).
+- [x] 218 verifies `bezel` option appears (global + per-display), Y control binds, global width disables with working anchor link exactly when `displays.length>1` — done 2026-09-17, revalidated 2026-09-19 (options + Y binding + grey-out link present in Settings; `npm run check` 0 errors; ownership gate pass).
+- [x] 219 verifies no inline duplicate of a keyed string in V1 scope, voice rules followed (noun titles + Discord-tone descriptions per ADR-0028 amendment 2026-09-17, superseding the spec-214 2nd-person rule; ≤140 chars; ticket-33 bans hold), loader falls back to EN, `npm run check` 0 errors — done 2026-09-16, revalidated 2026-09-17/19 (copy tests 42/42).
+- [x] 220 verifies missing-key fallback, full zh-CN coverage of 219's keys, language switch without restart — done + extended 2026-09-17, revalidated 2026-09-19 (`en.json`/`zh-CN.json` 1182/1182 keys, 0 missing, 0 extra; full vitest 442/443 with the single pre-existing `managedSettings.close` "Available to install" failure from ticket 191, untouched).
 
-No application behavior changed in this planning session.
+## Close-out notes (2026-09-19 revalidation)
+
+- As-built geometry differs from the §Shared-understanding proposal: collapsed 20px (not 12–14px) and peek 60px (not 22–26px) per `constants/window.rs` — hit-threshold + 3× forgiving-target rule; height ratio 12% clamped 64–160px and open cap 60% overlay as proposed. Proposal numbers above remain historical; the constants file is the size source.
+- Dictionary grew since ticket 220's 1178-key extension (now 1182/1182, still in lockstep) — key-set deltas belong to later work, not this round.
+- Follow-up (not this edit): `docs/CONTEXT.md` still carries the `planned` qualifier on **bezel tab**, **bezel Y position**, and **copy dictionary**. Per planning rules the qualifier is now due for removal since the owning tickets marked verified delivery.
+
+No application behavior changed in this spec file — behavior delivered in tickets 215–220 (see above).

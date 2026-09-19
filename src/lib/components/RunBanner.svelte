@@ -1,6 +1,7 @@
 <script lang="ts">
   import Button from "./Button.svelte";
   import type { RunOutcome } from "$lib/types";
+  import { t } from "$lib/copy";
   import {
     getActivity,
     getCompletionLabel,
@@ -40,26 +41,26 @@
     <div class="banner__body">
       {#if finished}
         <p class="banner__line">
-          Run finished — <span class="banner__outcome">{completionLabel}</span>
+          {t("run.finishedPrefix")}<span class="banner__outcome">{completionLabel}</span>
         </p>
         <p class="banner__sub">
           {runAwareness.completion?.error ??
             (runAwareness.completion?.outcome === "ok"
-              ? "everything applied cleanly"
+              ? t("run.subOk")
               : runAwareness.completion?.outcome === "with_notes"
-                ? "some products need attention"
+                ? t("run.subNotes")
                 : runAwareness.completion?.outcome === "cancelled"
-                  ? "stopped after the current step"
-                  : "something failed")}
+                  ? t("run.subCancelled")
+                  : t("run.subFailed"))}
         </p>
       {:else}
-        <p class="banner__line">Run in progress</p>
+        <p class="banner__line">{t("run.inProgress")}</p>
         <p class="banner__sub">{activity}</p>
       {/if}
     </div>
     {#if !finished}
       <Button variant="danger" onclick={requestCancel} disabled={runAwareness.cancelRequested}>
-        {runAwareness.cancelRequested ? "Cancelling after this step…" : "Cancel run"}
+        {runAwareness.cancelRequested ? t("run.cancelling") : t("run.cancel")}
       </Button>
     {/if}
     <span class="banner__id">{runAwareness.activeRunId}</span>

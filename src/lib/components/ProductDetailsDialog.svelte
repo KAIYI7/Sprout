@@ -2,6 +2,7 @@
   import type { Product } from "$lib/types";
   import { envActionLabel } from "$lib/types";
   import Dialog from "./Dialog.svelte";
+  import { t } from "$lib/copy";
 
   let {
     open,
@@ -24,47 +25,47 @@
   }
 </script>
 
-<Dialog {open} title={product ? `About ${product.name}` : "More info"} onclose={onclose} width={420}>
+<Dialog {open} title={product ? t("dialog.aboutName").replace("{name}", product.name) : t("common.moreInfo")} onclose={onclose} width={420}>
   {#if product}
     <dl class="details">
       <div class="details__row">
-        <dt>Type</dt>
-        <dd>{product.winget_id ? "winget-managed" : "custom install step"}</dd>
+        <dt>{t("details.type")}</dt>
+        <dd>{product.winget_id ? t("details.wingetManaged") : t("products.customStepLong")}</dd>
       </div>
       <div class="details__row">
-        <dt>winget ID</dt>
-        <dd class="mono">{product.winget_id ?? "none — runs via a custom install step"}</dd>
+        <dt>{t("packet.wingetId")}</dt>
+        <dd class="mono">{product.winget_id ?? t("details.noneCustom")}</dd>
       </div>
       <div class="details__row">
-        <dt>Install location hint</dt>
-        <dd class="mono">{product.install_location_hint ?? "none"}</dd>
+        <dt>{t("packet.locHint")}</dt>
+        <dd class="mono">{product.install_location_hint ?? t("details.none")}</dd>
       </div>
       <div class="details__row">
-        <dt>Install directory</dt>
+        <dt>{t("settings.install-dir.label")}</dt>
         <dd class="mono">
-          {product.install_dir ?? "default (from Settings)"}
+          {product.install_dir ?? t("details.defaultSettings")}
           {#if product.install_dir}
-            <span class="details__muted">— override</span>
+            <span class="details__muted">{t("details.overrideTag")}</span>
           {/if}
         </dd>
       </div>
       {#if product.created_at}
         <div class="details__row">
-          <dt>Added</dt>
+          <dt>{t("details.added")}</dt>
           <dd>{formatDateTime(product.created_at)}</dd>
         </div>
       {/if}
       {#if product.updated_at}
         <div class="details__row">
-          <dt>Last updated</dt>
+          <dt>{t("details.updated")}</dt>
           <dd>{formatDateTime(product.updated_at)}</dd>
         </div>
       {/if}
       <div class="details__row details__row--env">
-        <dt>Default env wiring</dt>
+        <dt>{t("details.envWiring")}</dt>
         <dd>
           {#if product.default_env.length === 0}
-            none
+            {t("details.none")}
           {:else}
             <ul class="env-list">
               {#each product.default_env as row (row.name + row.action)}
@@ -78,7 +79,7 @@
       </div>
     </dl>
     <p class="details__hint">
-      Presets that reference this product keep their own embedded copy of it.
+      {t("details.presetCopyNote")}
     </p>
   {/if}
 </Dialog>

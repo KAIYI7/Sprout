@@ -50,7 +50,7 @@ Historical events and operational claims were not inferred from source.
 
 ## Frontend system
 
-- 0028 Design system + disclosure rules — `amended 2026-09-13` (selective field guidance, visibility filter lifetime and action scope accepted; implementation pending in 167–169; spec-181 two-view dialog delivered in 183)
+- 0028 Design system + disclosure rules — `amended 2026-09-13` (selective field guidance, visibility filter lifetime and action scope accepted; implementation pending in 167–169; spec-181 two-view dialog delivered in 183) + `amended 2026-09-17` (copy voice: noun titles, Discord-tone descriptions per research 0027; spec-214 2nd-person rule superseded)
 - 0034 Motion tokens: ease-out dominance with restrained spring — `accepted 2026-09-14` (add `--dur-slow:280ms` + `--ease-spring`; easing for announcements, spring for interruptible arrivals; research 0020; visual design unchanged; dock driver untouched)
 
 ## AI-assisted Quick Action authoring

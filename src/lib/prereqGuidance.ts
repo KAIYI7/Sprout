@@ -1,4 +1,5 @@
 import type { PrerequisiteVerdict } from "./types";
+import { t } from "./copy";
 
 /** Detectable prerequisite keys (ticket 200): the closed v1 catalog from
  *  ticket 199 that the dialog can name without guessing — two runtimes, the
@@ -60,25 +61,21 @@ export function prereqLabel(key: PrereqKey): string {
   if (key === "python") return "Python 3";
   if (key === "playwright") return "Playwright";
   const winget = key.match(/^winget:(.+)$/);
-  if (winget) return `The \`${winget[1]}\` package`;
+  if (winget) return t("prereq.packageName").replace("{id}", winget[1]);
   const extension = key.match(/^extension:(.+)$/);
-  if (extension) return `The \`${extension[1]}\` editor extension`;
+  if (extension) return t("prereq.extName").replace("{id}", extension[1]);
   return key;
 }
 
 function installGuidance(key: PrereqKey): string {
-  if (key === "node")
-    return "Install the LTS with `winget install OpenJS.NodeJS.LTS`, then generate again.";
-  if (key === "python")
-    return "Install it from python.org or the Microsoft Store, then generate again.";
-  if (key === "playwright")
-    return "Install it with `npm i -D playwright` and `npx playwright install`, then generate again.";
+  if (key === "node") return t("prereq.installNode");
+  if (key === "python") return t("prereq.installPython");
+  if (key === "playwright") return t("prereq.installPlaywright");
   const winget = key.match(/^winget:(.+)$/);
-  if (winget) return `Install it with \`winget install ${winget[1]}\`, then generate again.`;
+  if (winget) return t("prereq.installWinget").replace("{id}", winget[1]);
   const extension = key.match(/^extension:(.+)$/);
-  if (extension)
-    return "Install it from the editor's marketplace, then generate again.";
-  return "Install it, then generate again.";
+  if (extension) return t("prereq.installExtension");
+  return t("prereq.installGeneric");
 }
 
 export interface PrereqLine {
@@ -99,11 +96,13 @@ export function prereqLines(verdicts: PrerequisiteVerdict[]): PrereqLine[] {
   return verdicts.map((verdict) => {
     const label = prereqLabel(verdict.name);
     if (verdict.status === "present") {
-      const found = verdict.version ? `${label} ${verdict.version} found` : `${label} found`;
+      const found = verdict.version
+        ? t("prereq.foundVer").replace("{label}", label).replace("{version}", verdict.version)
+        : t("prereq.found").replace("{label}", label);
       return {
         key: verdict.name,
         status: verdict.status,
-        text: `Prerequisites verified — ${found}.`,
+        text: t("prereq.verified").replace("{found}", found),
         blocking: false,
       };
     }
@@ -111,14 +110,16 @@ export function prereqLines(verdicts: PrerequisiteVerdict[]): PrereqLine[] {
       return {
         key: verdict.name,
         status: verdict.status,
-        text: `${label} was not found. ${installGuidance(verdict.name)}`,
+        text: t("prereq.notFound")
+          .replace("{label}", label)
+          .replace("{guidance}", installGuidance(verdict.name)),
         blocking: false,
       };
     }
     return {
       key: verdict.name,
       status: verdict.status,
-      text: `${verdict.detail} You can still save — generate again to re-check.`,
+      text: t("prereq.uncertain").replace("{detail}", verdict.detail),
       blocking: false,
     };
   });

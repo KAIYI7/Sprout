@@ -2,6 +2,7 @@
   import type { Snippet } from "svelte";
   import Icon from "./Icon.svelte";
   import type { MenuRequest } from "./ContextMenu.svelte";
+  import { t } from "$lib/copy";
 
   /** The corner stamp in the band: products show their source (winget /
    *  custom step), presets their version. */
@@ -118,8 +119,8 @@
       data-ctx-trigger
       aria-haspopup="menu"
       aria-expanded={expanded}
-      aria-label={`More actions for ${name}`}
-      title="More actions"
+      aria-label={t("packet.moreActionsFor").replace("{name}", name)}
+      title={t("packet.moreActions")}
       onclick={onDotsClick}
     >
       <Icon name="dots" size={15} />

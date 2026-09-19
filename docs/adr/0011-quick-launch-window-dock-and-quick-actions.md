@@ -1,6 +1,6 @@
 # Quick Launch window — AppBar dock and Quick Actions (tickets 49–54)
 
-> Status: amended 2026-09-05 — original decision text preserved; see the executable-source audit amendment for current behavior and implementation gaps.
+> Status: amended 2026-09-16 — original decision text preserved; see the executable-source audit amendment for current behavior and implementation gaps.
 
 The tray's launch surface moves into a miniature Quick Launch window (opened by tray left-click) with two tabs — Quick Launch (a single Start button that starts the whole Quick Launch list) and Quick Actions (fire-and-forget user commands) — which can float or dock as a Win32 AppBar on the left/right screen edge, auto-hiding like the taskbar or staying fixed. The tray menu is slimmed to Open Sprout + Quit.
 
@@ -47,3 +47,7 @@ Three corrections to the window description above, all verified against `quick_w
 The absolute “never calls ABM_SETPOS” statement in the earlier amendment is inaccurate. `settle_mode` in `src-tauri/src/quick_window.rs` calls `appbar::reserve` with a zero-width reservation when entering auto-hide, and `reserve` in `src-tauri/src/appbar.rs` invokes `SHAppBarMessage(ABM_SETPOS)`. The intended distinction is zero workspace reservation for auto-hide versus a positive-width reservation for fixed mode; the mere presence of this Windows call does not imply a reserving auto-hide strip.
 
 Motion remains app-owned. The subsequent three-tab, tracked-action, and fixed centered floating-palette corrections remain current. The driver and reservation-failure limitations are recorded in ADR-0019.
+
+## Amendment — 2026-09-16 (ticket 215)
+
+A third dock mode, `bezel`, joins `fixed` and `auto-hide`: collapsed, only a 14px tab protrudes from the edge (24px on hover-peek — geometry only, peek never opens); open expands to the full dock width as an overlay. Collapsed and peek reserve zero workspace through the auto-hide zero-width `reserve`/`ABM_SETPOS` pattern, so other windows keep their full size; open overlays like auto-hide and never squeezes them while collapsed. `fixed`/`auto-hide` behavior is unchanged.

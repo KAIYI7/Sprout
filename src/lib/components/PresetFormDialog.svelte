@@ -9,6 +9,8 @@
   import InfoTip from "./InfoTip.svelte";
   import Disclosure from "./Disclosure.svelte";
   import Select from "./Select.svelte";
+  import { t } from "$lib/copy";
+  import { policyLabelText } from "$lib/types";
 
   let {
     open,
@@ -62,11 +64,11 @@
 
   function submit() {
     if (!name.trim()) {
-      onerror("Preset name is required.");
+      onerror(t("presetform.nameFirst"));
       return;
     }
     if (!description.trim()) {
-      onerror("Preset description is required — tell future you what this contains.");
+      onerror(t("presetform.descFirst"));
       return;
     }
     const rowError = composer.firstError();
@@ -100,7 +102,7 @@
 
 <Dialog
   {open}
-  title={preset ? `Edit ${preset.name}` : "Compose a preset"}
+  title={preset ? t("common.editTitle").replace("{name}", preset.name) : t("presetform.addTitle")}
   onclose={oncancel}
   width={800}
 >
@@ -114,32 +116,32 @@
     <div class="meta">
       <TextInput
         id="preset-name"
-        label="Preset name"
+        label={t("presetform.nameLabel")}
         required
-        placeholder="e.g. Backend dev box"
+        placeholder={t("presetform.namePh")}
         value={name}
         onchange={(v) => (name = v)}
         autofocus
       />
       <TextInput
         id="preset-desc"
-        label="Description"
+        label={t("presetform.descLabel")}
         required
-        placeholder="e.g. Java 21, VSCode, DBeaver"
+        placeholder={t("presetform.descPh")}
         value={description}
         onchange={(v) => (description = v)}
       />
       <div class="meta__row">
         <TextInput
           id="preset-author"
-          label="Author"
-          placeholder="optional"
+          label={t("presetform.authorLabel")}
+          placeholder={t("presetform.authorPh")}
           value={author}
           onchange={(v) => (author = v)}
         />
         <TextInput
           id="preset-version"
-          label="Version"
+          label={t("presetform.versionLabel")}
           value={version}
           onchange={(v) => (version = v)}
         />
@@ -148,14 +150,14 @@
 
     <div class="apps">
       <div class="section-head">
-        <p class="section-head__title">Applications</p>
-        <InfoTip label="What an application is">
-          <p>Each application picks a product, a version policy, and optional settings.</p>
+        <p class="section-head__title">{t("launch.filterApps")}</p>
+        <InfoTip label={t("presetform.appsHow")}>
+          <p>{t("presetform.appsBody")}</p>
         </InfoTip>
       </div>
 
       {#if composer.requirements.length === 0}
-        <p class="apps__none">No applications yet — a preset with nothing in it is just a name.</p>
+        <p class="apps__none">{t("presetform.appsNone")}</p>
       {/if}
 
       {#each composer.requirements as req, i (i)}
@@ -163,31 +165,30 @@
         {@const expanded = composer.expanded === i}
         <div class="app" class:app--expanded={expanded}>
           <div class="app__bar">
-            {#if !req.product.id}
-              <Select
-                class="app__picker"
-                aria-label={`Application ${i + 1} product`}
-                value={req.product.id}
-                onchange={(v) => {
-                  const product = products.find((p) => p.id === v);
-                  if (product) composer.setProduct(i, product);
-                }}
-                options={[
-                  { value: "", label: "Choose a product…", disabled: true },
-                  ...products
-                    .filter((p) => p.winget_id)
-                    .map((p) => ({ value: p.id, label: p.name })),
-                  ...products
-                    .filter((p) => !p.winget_id)
-                    .map((p) => ({
-                      value: p.id,
-                      label: p.name,
-                      disabled: true,
-                      title:
-                        "No winget id — custom install steps aren't supported yet",
-                    })),
-                ]}
-              />
+              {#if !req.product.id}
+                <Select
+                  class="app__picker"
+                  aria-label={t("presetform.appProduct").replace("{n}", String(i + 1))}
+                  value={req.product.id}
+                  onchange={(v) => {
+                    const product = products.find((p) => p.id === v);
+                    if (product) composer.setProduct(i, product);
+                  }}
+                  options={[
+                    { value: "", label: t("presetform.chooseProduct"), disabled: true },
+                    ...products
+                      .filter((p) => p.winget_id)
+                      .map((p) => ({ value: p.id, label: p.name })),
+                    ...products
+                      .filter((p) => !p.winget_id)
+                      .map((p) => ({
+                        value: p.id,
+                        label: p.name,
+                        disabled: true,
+                        title: t("presetform.noWinget"),
+                      })),
+                  ]}
+                />
             {:else}
               <div class="app__name">
                 <span class="app__product">{req.product.name || req.product.id}</span>
@@ -195,11 +196,11 @@
                   <span class="app__id">{req.product.winget_id}</span>
                 {/if}
                 {#if req.unresolved}
-                  <span class="app__unresolved">removed from library</span>
+                  <span class="app__unresolved">{t("plan.removedFromLibrary")}</span>
                 {/if}
               </div>
               <label class="app__field">
-                <span class="app__field-label">Version policy</span>
+                <span class="app__field-label">{t("presetform.versionPolicy")}</span>
                 <Select
                   variant="small"
                   value={req.version_policy.kind}
@@ -207,18 +208,18 @@
                   options={[
                     {
                       value: "latest",
-                      label: "latest",
-                      title: "Upgrade to the newest version",
+                      label: policyLabelText("latest"),
+                      title: t("policy.latestHint"),
                     },
                     {
                       value: "pinned",
-                      label: "pinned",
-                      title: "Exactly this version",
+                      label: policyLabelText("pinned"),
+                      title: t("policy.pinnedHint"),
                     },
                     {
                       value: "present",
-                      label: "present",
-                      title: "Installed, never upgraded",
+                      label: policyLabelText("present"),
+                      title: t("policy.presentHint"),
                     },
                   ]}
                 />
@@ -227,14 +228,14 @@
                 <input
                   class="app__pinned"
                   type="text"
-                  aria-label={`Application ${i + 1} pinned version`}
-                  placeholder="e.g. 21.0.5"
+                  aria-label={t("presetform.appPinned").replace("{n}", String(i + 1))}
+                  placeholder={t("presetform.pinnedPh")}
                   value={req.version_policy.version}
                   oninput={(e) => composer.setPinnedVersion(i, (e.target as HTMLInputElement).value)}
                 />
               {/if}
               {#if counts && !expanded}
-                <span class="app__tags" aria-label={`Application ${i + 1} hidden options`}>
+                <span class="app__tags" aria-label={t("presetform.appHidden").replace("{n}", String(i + 1))}>
                   {[
                     counts.env ? `${counts.env} env` : null,
                     counts.verify ? `${counts.verify} verify` : null,
@@ -249,14 +250,14 @@
               <Disclosure
                 open={expanded}
                 controls={`app-panel-${i}`}
-                ariaLabel={`Application ${i + 1} advanced options`}
+                ariaLabel={t("presetform.appAdvanced").replace("{n}", String(i + 1))}
                 onclick={() => composer.toggleExpand(i)}
               />
             {/if}
             <button
               type="button"
               class="app__remove"
-              aria-label={`Remove application ${i + 1}`}
+              aria-label={t("presetform.appRemove").replace("{n}", String(i + 1))}
               onclick={() => composer.remove(i)}
             >
               <Icon name="x" size={13} />
@@ -267,7 +268,7 @@
             <div id={`app-panel-${i}`} class="app__panel">
               <div class="panel__row">
                 <label class="field field--timeout">
-                  <span class="field__label">Timeout (minutes)</span>
+                  <span class="field__label">{t("presetform.timeoutLabel")}</span>
                   <input
                     class="field__input"
                     type="number"
@@ -281,14 +282,13 @@
 
                 <div class="panel__deps">
                   <div class="sub-row">
-                    <p class="sub">Depends on</p>
-                    <InfoTip label="How dependencies work">
-                      <p>Order matters — a dependency installs before the application that depends
-                        on it. Tick every product that must already be present.</p>
+                    <p class="sub">{t("presetform.depsHead")}</p>
+                    <InfoTip label={t("presetform.depsHow")}>
+                      <p>{t("presetform.depsBody")}</p>
                     </InfoTip>
                   </div>
                   {#if composer.requirements.length <= 1}
-                    <p class="none">No other applications in this preset to depend on.</p>
+                    <p class="none">{t("presetform.depsNone")}</p>
                   {:else}
                     <div class="panel__deps-list">
                       {#each composer.requirements as other, k (k)}
@@ -310,17 +310,16 @@
 
               <div class="panel__section">
                 <div class="sub-row">
-                  <p class="sub">Env wiring</p>
-                  <InfoTip label="How env wiring works">
-                    <p>Environment variables written after install. Values may reference an install
-                      folder with <span class="mono">&lt;InstallLocation:hint&gt;</span>.</p>
+                  <p class="sub">{t("presetform.envHead")}</p>
+                  <InfoTip label={t("presetform.envHow")}>
+                    <p>{t("presetform.envBodyA")}<span class="mono">&lt;InstallLocation:hint&gt;</span>{t("presetform.envBodyB")}</p>
                   </InfoTip>
                 </div>
                 {#each req.env as row, j (j)}
                   <div class="rows">
                     <Select
                       variant="compact"
-                      aria-label={`Application ${i + 1} env wiring ${j + 1} action`}
+                      aria-label={t("presetform.appEnvAction").replace("{n}", String(i + 1)).replace("{m}", String(j + 1))}
                       value={row.action}
                       onchange={(v) => composer.setEnv(i, j, { action: v as EnvAction })}
                       options={[
@@ -332,7 +331,7 @@
                       class="rows__input"
                       type="text"
                       placeholder="NAME"
-                      aria-label={`Application ${i + 1} env wiring ${j + 1} variable name`}
+                      aria-label={t("presetform.appEnvName").replace("{n}", String(i + 1)).replace("{m}", String(j + 1))}
                       value={row.name}
                       oninput={(e) =>
                         composer.setEnv(i, j, { name: (e.target as HTMLInputElement).value })
@@ -342,7 +341,7 @@
                       class="rows__input"
                       type="text"
                       placeholder="value or <InstallLocation:hint>"
-                      aria-label={`Application ${i + 1} env wiring ${j + 1} value`}
+                      aria-label={t("presetform.appEnvValue").replace("{n}", String(i + 1)).replace("{m}", String(j + 1))}
                       value={row.value}
                       oninput={(e) =>
                         composer.setEnv(i, j, { value: (e.target as HTMLInputElement).value })
@@ -351,7 +350,7 @@
                     <button
                       type="button"
                       class="rows__remove"
-                      aria-label={`Remove env wiring ${j + 1} on application ${i + 1}`}
+                      aria-label={t("presetform.appEnvRemove").replace("{n}", String(i + 1)).replace("{m}", String(j + 1))}
                       onclick={() => composer.removeEnv(i, j)}
                     >
                       <Icon name="x" size={12} />
@@ -359,16 +358,15 @@
                   </div>
                 {/each}
                 <button type="button" class="add" onclick={() => composer.addEnv(i)}>
-                  <Icon name="plus" size={12} /> Add env wiring
+                  <Icon name="plus" size={12} /> {t("presetform.addEnv")}
                 </button>
               </div>
 
               <div class="panel__section">
                 <div class="sub-row">
-                  <p class="sub">Verify commands</p>
-                  <InfoTip label="How verify commands work">
-                    <p>Run after install — a non-zero exit or non-matching output fails the
-                      application.</p>
+                  <p class="sub">{t("packet.verifyTitle")}</p>
+                  <InfoTip label={t("presetform.verifyHow")}>
+                    <p>{t("presetform.verifyBody")}</p>
                   </InfoTip>
                 </div>
                 {#each req.verify as check, j (j)}
@@ -376,8 +374,8 @@
                     <input
                       class="rows__input rows__input--wide"
                       type="text"
-                      placeholder="e.g. java -version"
-                      aria-label={`Application ${i + 1} verify command ${j + 1}`}
+                      placeholder={t("presetform.verifyCmdPh")}
+                      aria-label={t("presetform.appVerifyCmd").replace("{n}", String(i + 1)).replace("{m}", String(j + 1))}
                       value={check.command}
                       oninput={(e) =>
                         composer.setVerify(i, j, {
@@ -388,8 +386,8 @@
                     <input
                       class="rows__input rows__input--wide"
                       type="text"
-                      placeholder="match text in output (optional)"
-                      aria-label={`Application ${i + 1} verify command ${j + 1} match text`}
+                      placeholder={t("presetform.verifyMatchPh")}
+                      aria-label={t("presetform.appVerifyMatch").replace("{n}", String(i + 1)).replace("{m}", String(j + 1))}
                       value={check.match_text ?? ""}
                       oninput={(e) =>
                         composer.setVerify(i, j, {
@@ -400,7 +398,7 @@
                     <button
                       type="button"
                       class="rows__remove"
-                      aria-label={`Remove verify command ${j + 1} on application ${i + 1}`}
+                      aria-label={t("presetform.appVerifyRemove").replace("{n}", String(i + 1)).replace("{m}", String(j + 1))}
                       onclick={() => composer.removeVerify(i, j)}
                     >
                       <Icon name="x" size={12} />
@@ -408,7 +406,7 @@
                   </div>
                 {/each}
                 <button type="button" class="add" onclick={() => composer.addVerify(i)}>
-                  <Icon name="plus" size={12} /> Add verify command
+                  <Icon name="plus" size={12} /> {t("presetform.addVerify")}
                 </button>
               </div>
             </div>
@@ -417,7 +415,7 @@
       {/each}
 
       <button type="button" class="add-app" onclick={() => composer.add()}>
-        <Icon name="plus" size={13} /> Add application
+        <Icon name="plus" size={13} /> {t("presetform.addApp")}
       </button>
     </div>
 
@@ -426,9 +424,9 @@
     {/if}
 
     <div class="form__actions">
-      <Button variant="secondary" onclick={oncancel} disabled={saving}>Cancel</Button>
+      <Button variant="secondary" onclick={oncancel} disabled={saving}>{t("common.cancel")}</Button>
       <Button kind="submit" disabled={saving}>
-        {saving ? "Saving…" : preset ? "Save changes" : "Save preset"}
+        {saving ? t("common.busy.saving") : preset ? t("common.saveChanges") : t("presetform.saveBtn")}
       </Button>
     </div>
   </form>

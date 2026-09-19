@@ -1124,6 +1124,10 @@ const KEY_DOCK_WIDTH_PCT_PREFIX: &str = "quicklaunch.dock.width_pct.";
 /// dock bottom 25–60% occupies, stored per monitor so each screen remembers its
 /// own divider — falls back to the global settings ratio.
 const KEY_COMPANION_HEIGHT_RATIO_PREFIX: &str = "quicklaunch.companion.height_ratio.";
+/// Bezel tab Y position per monitor (spec 214): the tab's parked height as a
+/// ratio 0..1 of its vertical travel, stored per monitor beside the other
+/// dock memory so each display remembers where its tab sits.
+const KEY_BEZEL_Y_RATIO_PREFIX: &str = "quicklaunch.dock.bezel_y_ratio.";
 
 /// The monitor-scoped meta key for a dock property.
 fn dock_key(prefix: &str, monitor: &str) -> String {
@@ -1234,6 +1238,34 @@ pub fn load_companion_height_ratio_identified(
     identity
         .and_then(|id| load_companion_height_ratio(conn, id))
         .or_else(|| load_companion_height_ratio(conn, device_name))
+}
+
+/// Persists the bezel tab Y ratio for `monitor` — the fraction of the tab's
+/// vertical travel the user dragged it to. The caller validates the ratio;
+/// a broken value must never reach the dock.
+pub fn save_bezel_y_ratio(conn: &Connection, monitor: &str, ratio: f64) -> Result<()> {
+    upsert_meta(conn, &dock_key(KEY_BEZEL_Y_RATIO_PREFIX, monitor), &ratio.to_string())
+}
+
+/// The remembered bezel tab Y ratio for `monitor`, when a valid one is
+/// stored — broken values read back as `None`, so the tab centers instead
+/// of parking off-screen (ADR-0020 identity-first memory).
+pub fn load_bezel_y_ratio(conn: &Connection, monitor: &str) -> Option<f64> {
+    read_meta(conn, &dock_key(KEY_BEZEL_Y_RATIO_PREFIX, monitor))
+        .and_then(|v| v.parse::<f64>().ok())
+        .filter(|v| crate::settings::validate_bezel_y_ratio(*v).is_ok())
+}
+
+/// The identified-shape twin for the bezel tab Y ratio: identity-keyed
+/// values win, falling back to device-name (ADR-0020).
+pub fn load_bezel_y_ratio_identified(
+    conn: &Connection,
+    identity: Option<&str>,
+    device_name: &str,
+) -> Option<f64> {
+    identity
+        .and_then(|id| load_bezel_y_ratio(conn, id))
+        .or_else(|| load_bezel_y_ratio(conn, device_name))
 }
 
 fn read_meta(conn: &Connection, key: &str) -> Option<String> {
@@ -2859,6 +2891,60 @@ mod tests {
             load_dock_edge_identified(&conn, Some(identity), device),
             Some("left".into())
         );
+    }
+
+    #[test]
+    fn bezel_y_ratio_roundtrips_per_monitor() {
+        let dir = test_dir();
+        let conn = init_at(&dir).unwrap();
+        // Nothing is remembered on a fresh database — the tab centers.
+        assert_eq!(load_bezel_y_ratio(&conn, r"\\.\DISPLAY1"), None);
+        save_bezel_y_ratio(&conn, r"\\.\DISPLAY1", 0.25).unwrap();
+        save_bezel_y_ratio(&conn, r"\\.\DISPLAY2", 0.75).unwrap();
+        // Each monitor remembers its own parked height.
+        assert_eq!(load_bezel_y_ratio(&conn, r"\\.\DISPLAY1"), Some(0.25));
+        assert_eq!(load_bezel_y_ratio(&conn, r"\\.\DISPLAY2"), Some(0.75));
+        // A re-save overwrites, never stacks.
+        save_bezel_y_ratio(&conn, r"\\.\DISPLAY1", 0.5).unwrap();
+        assert_eq!(load_bezel_y_ratio(&conn, r"\\.\DISPLAY1"), Some(0.5));
+    }
+
+    #[test]
+    fn bezel_y_ratio_identified_reads_prefer_identity_and_reject_broken_rows() {
+        let dir = test_dir();
+        let conn = init_at(&dir).unwrap();
+        let identity = "edid-1234-5678";
+        let device = r"\\.\DISPLAY1";
+        save_bezel_y_ratio(&conn, identity, 0.2).unwrap();
+        save_bezel_y_ratio(&conn, device, 0.8).unwrap();
+        // The identity row wins when one exists.
+        assert_eq!(
+            load_bezel_y_ratio_identified(&conn, Some(identity), device),
+            Some(0.2)
+        );
+        // A memory saved before identity keys lives under the device name only.
+        assert_eq!(
+            load_bezel_y_ratio_identified(&conn, Some("edid-AAAA-0001"), device),
+            Some(0.8)
+        );
+        // No resolvable identity reads the legacy row directly.
+        assert_eq!(load_bezel_y_ratio_identified(&conn, None, device), Some(0.8));
+        // Neither row reads as absent, so the tab centers.
+        assert_eq!(
+            load_bezel_y_ratio_identified(&conn, Some("edid-AAAA-0001"), r"\\.\DISPLAY9"),
+            None
+        );
+        // A corrupted identity row must not shadow the valid legacy value —
+        // the validation filter drops it and the read falls through.
+        upsert_meta(&conn, &dock_key(KEY_BEZEL_Y_RATIO_PREFIX, identity), "2.5").unwrap();
+        assert_eq!(
+            load_bezel_y_ratio_identified(&conn, Some(identity), device),
+            Some(0.8)
+        );
+        // Non-numeric rows read as absent too.
+        upsert_meta(&conn, &dock_key(KEY_BEZEL_Y_RATIO_PREFIX, device), "parked").unwrap();
+        upsert_meta(&conn, &dock_key(KEY_BEZEL_Y_RATIO_PREFIX, identity), "parked").unwrap();
+        assert_eq!(load_bezel_y_ratio_identified(&conn, Some(identity), device), None);
     }
 }
 

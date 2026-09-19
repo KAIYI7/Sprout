@@ -7,6 +7,7 @@
   import Icon from "./Icon.svelte";
   import Disclosure from "./Disclosure.svelte";
   import Select from "./Select.svelte";
+  import { t } from "$lib/copy";
 
   let {
     open,
@@ -211,16 +212,16 @@
   async function submit() {
     const id = product?.id ?? slugify(name);
     if (!name.trim()) {
-      onerror("Product name is required.");
+      onerror(t("productform.nameFirst"));
       return;
     }
     if (!id.trim()) {
-      onerror("Product id is required — give the product a name first.");
+      onerror(t("productform.idFirst"));
       return;
     }
     const envRows = env.filter((e) => e.name.trim() || e.value.trim());
     if (envRows.some((e) => !e.name.trim() || !e.value.trim())) {
-      onerror("Every env wiring entry needs both a variable name and a value.");
+      onerror(t("productform.envBoth"));
       return;
     }
     saving = true;
@@ -256,7 +257,7 @@
 
 <Dialog
   {open}
-  title={product ? `Edit ${product.name}` : "Add a product"}
+  title={product ? t("common.editTitle").replace("{name}", product.name) : t("productform.addTitle")}
   onclose={oncancel}
   width={560}
 >
@@ -269,9 +270,9 @@
   >
     <TextInput
       id="product-name"
-      label="Name"
+      label={t("common.name")}
       required
-      placeholder="e.g. DBeaver"
+      placeholder={t("productform.namePh")}
       value={name}
       onchange={(v) => (name = v)}
       autofocus
@@ -279,7 +280,7 @@
 
     {#if searchMode}
       <div class="field">
-        <label class="field__label" for="product-winget-search">winget ID</label>
+        <label class="field__label" for="product-winget-search">{t("packet.wingetId")}</label>
         <div class="search">
           <span class="search__icon" aria-hidden="true"><Icon name="search" size={14} /></span>
           <input
@@ -287,7 +288,7 @@
             id="product-winget-search"
             class="search__input"
             type="search"
-            placeholder="type to search the registry…"
+            placeholder={t("productform.searchPh")}
             autocomplete="off"
             value={query}
             oninput={(e) => onSearchInput((e.target as HTMLInputElement).value)}
@@ -296,8 +297,8 @@
         </div>
         <p class="field__hint">
           {chosen
-            ? "Picked from the registry; this ID drives the install step."
-            : "Picking a match fills the ID."}
+            ? t("productform.pickedHint")
+            : t("productform.pickHint")}
         </p>
 
         {#if chosen}
@@ -312,17 +313,17 @@
               bind:this={chosenClear}
               type="button"
               class="chosen__clear"
-              aria-label="Search again"
-              title="Search again"
+              aria-label={t("productform.searchAgain")}
+              title={t("productform.searchAgain")}
               onclick={clearChosen}
             >
               <Icon name="x" size={12} />
             </button>
           </div>
         {:else if searching}
-          <p class="search-status" aria-live="polite">Searching…</p>
+          <p class="search-status" aria-live="polite">{t("productform.searching")}</p>
         {:else if matches.length > 0}
-          <ul class="matches" role="listbox" aria-label="winget matches">
+          <ul class="matches" role="listbox" aria-label={t("productform.matchesLabel")}>
             {#each matches as m (m.id)}
               <li class="matches__item">
                 <button
@@ -344,14 +345,14 @@
         {/if}
 
         {#if searchFailed}
-          <p class="search-status">The registry is out of reach right now.</p>
+          <p class="search-status">{t("productform.registryFail")}</p>
         {/if}
 
         {#if !searching && searched && matches.length === 0 && !chosen}
           <p class="fallback">
-            Not found?
+            {t("productform.notFound")}
             <button type="button" class="fallback__link" onclick={goManual}>
-              Type the ID manually
+              {t("productform.typeManual")}
             </button>
           </p>
         {/if}
@@ -360,15 +361,15 @@
       <div class="field">
         <TextInput
           id="product-winget"
-          label="winget ID"
-          placeholder="e.g. DBeaver.DBeaver.Community"
+          label={t("packet.wingetId")}
+          placeholder={t("productform.wingetPh")}
           value={wingetId}
           onchange={(v) => (wingetId = v)}
-          hint="Leave empty for custom install steps that are not winget-managed."
+          hint={t("productform.wingetHint")}
         />
         <p class="fallback">
           <button type="button" class="fallback__link" onclick={goSearch}>
-            Search the winget registry instead
+            {t("productform.searchInstead")}
           </button>
         </p>
       </div>
@@ -378,50 +379,49 @@
       <Disclosure
         open={advancedOpen}
         controls="product-advanced-body"
-        label="Advanced"
+        label={t("productform.advanced")}
         onclick={() => (advancedOpen = !advancedOpen)}
       />
 
       <div id="product-advanced-body" class="advanced__body" hidden={!advancedOpen}>
         <TextInput
           id="product-hint"
-          label="Install location hint"
-          placeholder="e.g. Eclipse Temurin"
+          label={t("packet.locHint")}
+          placeholder={t("productform.hintPh")}
           value={installHint}
           onchange={(v) => (installHint = v)}
-          info="How the install location hint works"
+          info={t("productform.hintHow")}
         >
           {#snippet infobody()}
-            <p>Helps Sprout find the install folder when environment variables point at it.</p>
+            <p>{t("productform.hintBody")}</p>
           {/snippet}
         </TextInput>
 
         <TextInput
           id="product-install-dir"
-          label="Install directory"
-          placeholder="e.g. D:\Apps"
+          label={t("settings.install-dir.label")}
+          placeholder={t("productform.dirPh")}
           value={installDir}
           onchange={(v) => (installDir = v)}
-          info="How install directory works"
+          info={t("productform.dirHow")}
           infotone="warn"
         >
           {#snippet infobody()}
-            <p>Overrides the default install directory from Settings for this product only.</p>
+            <p>{t("productform.dirBody1")}</p>
             <p>
-              Many installers ignore location flags, so this does not guarantee installation in a
-              specified drive.
+              {t("productform.dirBody2")}
             </p>
           {/snippet}
         </TextInput>
 
         <div class="env">
-          <p class="env__title">Environment variables</p>
+          <p class="env__title">{t("productform.envHead")}</p>
           {#each env as row, i (i)}
             <div class="env__row">
               <Select
                 variant="compact"
                 value={row.action}
-                aria-label={`Env wiring ${i + 1} action`}
+                aria-label={t("productform.envAction").replace("{n}", String(i + 1))}
                 onchange={(v) => setEnv(i, { action: v as EnvAction })}
                 options={[
                   { value: "set", label: "set" },
@@ -431,23 +431,23 @@
               <input
                 class="env__name"
                 type="text"
-                placeholder="Variable name"
-                aria-label={`Env wiring ${i + 1} variable name`}
+                placeholder={t("productform.varNamePh")}
+                aria-label={t("productform.envName").replace("{n}", String(i + 1))}
                 value={row.name}
                 oninput={(e) => setEnv(i, { name: (e.target as HTMLInputElement).value })}
               />
               <input
                 class="env__value"
                 type="text"
-                placeholder="Value"
-                aria-label={`Env wiring ${i + 1} value`}
+                placeholder={t("productform.valuePh")}
+                aria-label={t("productform.envValue").replace("{n}", String(i + 1))}
                 value={row.value}
                 oninput={(e) => setEnv(i, { value: (e.target as HTMLInputElement).value })}
               />
               <button
                 type="button"
                 class="env__remove"
-                aria-label={`Remove env wiring ${i + 1}`}
+                aria-label={t("productform.envRemove").replace("{n}", String(i + 1))}
                 onclick={() => removeEnv(i)}
               >
                 <Icon name="x" size={12} />
@@ -455,7 +455,7 @@
             </div>
           {/each}
           <button type="button" class="env__add" onclick={addEnv}>
-            <Icon name="plus" size={12} /> Add variable
+            <Icon name="plus" size={12} /> {t("productform.addVar")}
           </button>
         </div>
       </div>
@@ -466,9 +466,9 @@
     {/if}
 
     <div class="form__actions">
-      <Button variant="secondary" onclick={oncancel} disabled={saving}>Cancel</Button>
+      <Button variant="secondary" onclick={oncancel} disabled={saving}>{t("common.cancel")}</Button>
       <Button kind="submit" disabled={saving}>
-        {saving ? "Saving…" : product ? "Save changes" : "Add product"}
+        {saving ? t("common.busy.saving") : product ? t("common.saveChanges") : t("products.add")}
       </Button>
     </div>
   </form>

@@ -23,6 +23,7 @@ import type {
   ContextMenuState,
 } from "./components/ContextMenu.svelte";
 import type { Group, GroupsCollection } from "./types";
+import { t } from "./copy";
 
 /** The naming dialog's subject: a fresh group (optionally carrying the item
  *  being assigned into it — ticket 106's create-and-assign) or one being
@@ -49,11 +50,21 @@ export interface CollectionGroupsHost {
 
 export function createCollectionGroups(options: {
   collection: GroupsCollection;
-  /** This collection's plural noun for feedback copy ("entries", "actions", "clips"). */
-  noun: string;
   host: CollectionGroupsHost;
 }) {
-  const { collection, noun, host } = options;
+  const { collection, host } = options;
+
+  // The collection's plural noun for feedback copy, resolved per call so a
+  // language switch never leaves a stale noun in a flash message.
+  function groupNoun(): string {
+    return t(
+      collection === "launch"
+        ? "groups.noun.entries"
+        : collection === "action"
+          ? "groups.noun.actions"
+          : "collection.clips.many",
+    );
+  }
 
   let enabled = $state(false);
   let list = $state<Group[]>([]);
@@ -113,13 +124,13 @@ export function createCollectionGroups(options: {
         await updateGroupsEnabled(collection, next);
         host.flash(
           next
-            ? `Groups on — organize ${noun} into named sections.`
-            : "Groups off — groups and assignments are kept but hidden."
+            ? t("groups.flashOn").replace("{noun}", groupNoun())
+            : t("groups.flashOff"),
         );
       } catch (e) {
         console.error(e);
         enabled = !next;
-        host.fail("Couldn't save the Groups setting — try again.");
+        host.fail(t("groups.saveFail"));
       }
     },
 
@@ -174,7 +185,7 @@ export function createCollectionGroups(options: {
       if (!naming) return;
       const name = nameDraft.trim();
       if (!name) {
-        nameError = "Group name must not be empty.";
+        nameError = t("groups.nameEmpty");
         return;
       }
       savingName = true;
@@ -184,13 +195,17 @@ export function createCollectionGroups(options: {
           const created = await createGroup(collection, name);
           if (naming.item) {
             await assignToGroup(collection, naming.item.id, created.id);
-            host.flash(`“${naming.item.label}” moved to ${created.name}.`);
+            host.flash(
+              t("groups.movedToGroup")
+                .replace("{item}", naming.item.label)
+                .replace("{group}", created.name),
+            );
           } else {
-            host.flash(`Group “${name}” created.`);
+            host.flash(t("groups.created").replace("{name}", name));
           }
         } else {
           await renameGroup(naming.group.id, name);
-          host.flash(`Group renamed to “${name}”.`);
+          host.flash(t("groups.renamed").replace("{name}", name));
         }
         naming = null;
         await host.reload();
@@ -223,7 +238,9 @@ export function createCollectionGroups(options: {
       await guarded(async () => {
         await deleteGroup(group.id);
         host.flash(
-          `Group “${group.name}” removed — its ${noun} are back in the ungrouped list.`
+          t("groups.removed")
+            .replace("{name}", group.name)
+            .replace("{noun}", groupNoun()),
         );
         await host.reload();
       });
@@ -239,11 +256,15 @@ export function createCollectionGroups(options: {
       return guarded(async () => {
         if (groupId === null) {
           await unassignFromGroup(collection, item.id);
-          host.flash(`${itemLabel} moved to the ungrouped list.`);
+          host.flash(t("groups.movedToUngrouped").replace("{item}", itemLabel));
         } else {
           await assignToGroup(collection, item.id, groupId);
           const target = list.find((g) => g.id === groupId);
-          host.flash(`${itemLabel} moved to ${target?.name ?? "the group"}.`);
+          host.flash(
+            t("groups.movedToGroup")
+              .replace("{item}", itemLabel)
+              .replace("{group}", target?.name ?? t("groups.menuGroupFallback")),
+          );
         }
         await host.reload();
       });
@@ -263,7 +284,7 @@ export function createCollectionGroups(options: {
     ): ContextMenuItem[] {
       return [
         {
-          label: "Ungrouped",
+          label: t("menu.ungrouped"),
           checked: item.group_id === null,
           onselect: () => this.assign(item, label, null),
         },
@@ -273,7 +294,7 @@ export function createCollectionGroups(options: {
           onselect: () => this.assign(item, label, g.id),
         })),
         {
-          label: "New group…",
+          label: t("menu.newGroup"),
           icon: "plus",
           onselect: () => this.openCreateFor(item, label),
         },
@@ -292,31 +313,31 @@ export function createCollectionGroups(options: {
       return {
         groupId: group.id,
         open: true,
-        label: `Actions for group ${group.name}`,
+        label: t("groups.menuLabel").replace("{name}", group.name),
         anchor,
         focusFirst: viaKeyboard,
         returnTo: anchor,
         items: [
           {
-            label: "Rename",
+            label: t("common.rename"),
             icon: "pencil",
             onselect: () => this.openRename(group),
           },
           {
-            label: "Move up",
+            label: t("menu.moveUp"),
             icon: "chevron-up",
             disabled: index <= 0,
             onselect: () => this.reorderGroup(group.id, index - 1),
           },
           {
-            label: "Move down",
+            label: t("menu.moveDown"),
             icon: "chevron-down",
             disabled: index >= list.length - 1,
             onselect: () => this.reorderGroup(group.id, index + 1),
           },
           { label: "", separator: true, onselect: () => {} },
           {
-            label: "Remove",
+            label: t("common.remove"),
             icon: "trash",
             danger: true,
             onselect: () => (removing = group),

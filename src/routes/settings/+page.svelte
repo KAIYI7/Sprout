@@ -2,7 +2,7 @@
   import { onMount, tick } from "svelte";
   import { beforeNavigate, goto } from "$app/navigation";
   import type { BackupCounts, CompanionSite, DisplayInfo, ManagedCatalogStatus, ManagedResourceUsage, Settings } from "$lib/types";
-  import { aiProviderLabel } from "$lib/types";
+  import { aiProviderLabelText } from "$lib/types";
   import type { AiProvider } from "$lib/types";
   import { companionDisplayName, normalizeCompanionSites } from "$lib/companion";
   import {
@@ -15,14 +15,17 @@
     aiStartManagedRuntime,
     aiStopManagedRuntime,
     exportBackup,
+    getDisplayBezelYRatio,
     getDisplayDockEdge,
     getDisplayDockMode,
     getDisplayDockWidthPct,
+    getLanguage,
     getSettings,
     importBackup,
     inspectBackup,
     listDisplays,
     setCompanionHeightRatioForDisplay,
+    setDisplayBezelYRatio,
     setDisplayDockEdge,
     setDisplayDockMode,
     setDisplayDockWidthPct,
@@ -51,6 +54,7 @@
   import { open, save as saveDialog } from "@tauri-apps/plugin-dialog";
   import { theme, restoreTheme, selectTheme } from "$lib/theme.svelte";
   import type { ThemeMode } from "$lib/theme.svelte";
+  import { localeState, parseLocale, restoreLocale, selectLocale } from "$lib/copy/locale.svelte";
   import { animation, restoreAnimation, selectAnimation } from "$lib/animation.svelte";
   import type { AnimationMode } from "$lib/animation.svelte";
   import {
@@ -65,9 +69,8 @@
     installNow,
     updateState,
   } from "$lib/updateState.svelte";
-  import { COLLECTIONS, EXPORT_ORDER } from "$lib/collections";
-  import type { CollectionKey } from "$lib/collections";
-  import {
+  import { EXPORT_ORDER } from "$lib/collections";
+  import type { CollectionKey } from "$lib/collections";  import {
     buildSettingsSearchIndex,
     resolveSettingsFilter,
     SETTINGS_GROUP_KNOBS,
@@ -90,63 +93,70 @@
     watchManagedInstall,
   } from "$lib/managedInstall.svelte";
   import { honorAiSetupFocus } from "$lib/aiSetupPointer";
+  import { t, tCount } from "$lib/copy";
   import {
     managedResourceDisclosure,
     setManagedResourceOpen,
   } from "$lib/managedResource.svelte";
 
-  const themeOptions: { mode: ThemeMode; label: string }[] = [
-    { mode: "system", label: "System" },
-    { mode: "light", label: "Light" },
-    { mode: "dark", label: "Dark" },
+  // Option rows are derived (not const) so every dropdown follows a
+  // language switch live; the Select rebuilds its popout on every open.
+  const themeOptions = $derived<{ mode: ThemeMode; label: string }[]>([
+    { mode: "system", label: t("settings.opt.theme.system") },
+    { mode: "light", label: t("settings.opt.theme.light") },
+    { mode: "dark", label: t("settings.opt.theme.dark") },
+  ]);
+
+  const dockModeOptions = $derived<{ value: string; label: string }[]>([
+    { value: "auto-hide", label: t("settings.opt.mode.auto") },
+    { value: "fixed", label: t("settings.opt.mode.fixed") },
+    { value: "bezel", label: t("settings.opt.mode.bezel") },
+  ]);
+
+  const dockEdgeOptions = $derived<{ value: string; label: string }[]>([
+    { value: "left", label: t("settings.opt.edge.left") },
+    { value: "right", label: t("settings.opt.edge.right") },
+  ]);
+
+  const dockStateOptions = $derived<{ value: string; label: string }[]>([
+    { value: "floating", label: t("settings.opt.state.floating") },
+    { value: "docked", label: t("settings.opt.state.docked") },
+  ]);
+
+  const dockDensityOptions = $derived<{ value: string; label: string }[]>([
+    { value: "compact", label: t("settings.opt.density.compact") },
+    { value: "default", label: t("settings.opt.density.default") },
+    { value: "large", label: t("settings.opt.density.large") },
+  ]);
+
+  const autostartOptions = $derived<{ value: string; label: string }[]>([
+    { value: "on", label: t("common.on") },
+    { value: "off", label: t("common.off") },
+  ]);
+
+  const languageOptions: { value: string; label: string }[] = [
+    { value: "en", label: "English" },
+    { value: "zh-CN", label: "中文（简体）" },
   ];
 
-  const dockModeOptions: { value: string; label: string }[] = [
-    { value: "auto-hide", label: "Auto-hide" },
-    { value: "fixed", label: "Fixed" },
-  ];
+  const animationOptions = $derived<{ value: AnimationMode; label: string }[]>([
+    { value: "on", label: t("common.on") },
+    { value: "off", label: t("common.off") },
+  ]);
 
-  const dockEdgeOptions: { value: string; label: string }[] = [
-    { value: "left", label: "Left" },
-    { value: "right", label: "Right" },
-  ];
+  const nativeFrameOptions = $derived<{ value: NativeFrameMode; label: string }[]>([
+    { value: "off", label: t("settings.opt.frame.modern") },
+    { value: "on", label: t("settings.opt.frame.native") },
+  ]);
 
-  const dockStateOptions: { value: string; label: string }[] = [
-    { value: "floating", label: "Floating" },
-    { value: "docked", label: "Docked" },
-  ];
-
-  const dockDensityOptions: { value: string; label: string }[] = [
-    { value: "compact", label: "Compact" },
-    { value: "default", label: "Default" },
-    { value: "large", label: "Large" },
-  ];
-
-  const autostartOptions: { value: string; label: string }[] = [
-    { value: "on", label: "On" },
-    { value: "off", label: "Off" },
-  ];
-
-  const animationOptions: { value: AnimationMode; label: string }[] = [
-    { value: "on", label: "On" },
-    { value: "off", label: "Off" },
-  ];
-
-  const nativeFrameOptions: { value: NativeFrameMode; label: string }[] = [
-    { value: "off", label: "Modern" },
-    { value: "on", label: "Native" },
-  ];
-
-  const aiProviderOptions: { value: AiProvider; label: string }[] = [
-    { value: "off", label: aiProviderLabel.off },
-    { value: "existing-local", label: aiProviderLabel["existing-local"] },
-    { value: "managed", label: aiProviderLabel.managed },
-    { value: "cloud", label: aiProviderLabel.cloud },
-  ];
+  const aiProviderOptions = $derived<{ value: AiProvider; label: string }[]>([
+    { value: "off", label: aiProviderLabelText("off") },
+    { value: "existing-local", label: aiProviderLabelText("existing-local") },
+    { value: "managed", label: aiProviderLabelText("managed") },
+    { value: "cloud", label: aiProviderLabelText("cloud") },
+  ]);
 
   const AI_BASE_URL_DEFAULT = "http://127.0.0.1:11434";
-
-  const SEAM_REASON = "Borders another display — cursor can't stop there";
 
   let settings: Settings | null = $state(null);
   let timeout = $state(10);
@@ -159,7 +169,7 @@
   // Dock width: % of the docked monitor (10–60 stored, default 18 ≈ 346px
   // on 1920). Single size source is constants/window.rs — this mirrors
   // DOCK_WIDTH_{MIN,MAX,DEFAULT}_PCT; fixed applies at most 30 (it reserves
-  // workspace, ADR-0011) while auto-hide may apply to 60 (it overlays).
+  // workspace, ADR-0011) while auto-hide and bezel may apply to 60 (they overlay).
   // The backend validates the stored range and floors at 340.
   const DOCK_WIDTH_MIN_PCT = 10;
   const DOCK_WIDTH_MAX_PCT_FIXED = 30;
@@ -322,7 +332,13 @@
   let displayModes = $state<Record<string, string>>({});
   // Ticket 128: each display remembers its own width % too.
   let displayWidths = $state<Record<string, number>>({});
+  // Spec 214 (ticket 218): each display remembers its bezel tab Y ratio too
+  // (0..1 of the tab's travel) — the Settings mirror of the dock drag.
+  let displayBezelY = $state<Record<string, number>>({});
   let displayErrors = $state<Record<string, string>>({});
+  // The single-display tab-position knob (spec 214): a view onto the one
+  // display's memory — several displays use their own per-row sliders below.
+  let bezelYRatio = $state(0.5);
 
   // Ticket 115: dirty snapshot — post-clamp comparison against the loaded values.
   // Theme and autostart are immediate (tickets 31/75) and never dirty; per-monitor
@@ -336,6 +352,9 @@
     dockEdge: string;
     dockState: string;
     dockWidthPct: number;
+    /** The single-display bezel tab position (spec 214): 0..1 of the travel,
+     *  centered until moved — post-clamp, like the width % above. */
+    bezelYRatio: number;
     dockDensity: string;
     revealDwellMs: number;
     revealSensitivityPx: number;
@@ -349,6 +368,7 @@
   let baselineDisplayEdges = $state<Record<string, string>>({});
   let baselineDisplayModes = $state<Record<string, string>>({});
   let baselineDisplayWidths = $state<Record<string, number>>({});
+  let baselineDisplayBezelY = $state<Record<string, number>>({});
 
   function clampTimeout(v: number): number {
     return Math.max(1, Math.floor(v) || 1);
@@ -370,11 +390,11 @@
     if (!Number.isFinite(n)) return DOCK_WIDTH_DEFAULT_PCT;
     return Math.min(DOCK_WIDTH_MAX_PCT, Math.max(DOCK_WIDTH_MIN_PCT, n));
   }
-  /** The slider cap for a dock mode: fixed stays a strip (30), auto-hide may
-   * overlay wide (60). Unknown modes take the fixed cap — the conservative
-   * reservation assumption. */
+  /** The slider cap for a dock mode: fixed stays a strip (30), auto-hide
+   * and bezel may overlay wide (60 — bezel reserves nothing extra, spec 214).
+   * Unknown modes take the fixed cap — the conservative reservation assumption. */
   function dockWidthMaxForMode(mode: string): number {
-    return mode === "auto-hide" ? DOCK_WIDTH_MAX_PCT_AUTOHIDE : DOCK_WIDTH_MAX_PCT_FIXED;
+    return mode === "auto-hide" || mode === "bezel" ? DOCK_WIDTH_MAX_PCT_AUTOHIDE : DOCK_WIDTH_MAX_PCT_FIXED;
   }
   /** Clamps a width % into a mode's applied range, so a mode switch re-clamps
    * honestly: 55 in auto-hide becomes 30 in fixed. */
@@ -382,6 +402,14 @@
     const n = Math.floor(Number(v));
     if (!Number.isFinite(n)) return DOCK_WIDTH_DEFAULT_PCT;
     return Math.min(dockWidthMaxForMode(mode), Math.max(DOCK_WIDTH_MIN_PCT, n));
+  }
+  /** Clamps a bezel tab Y ratio into 0..1 (spec 214): a broken value
+   *  centers — the same fallback the backend applies, so the knob never
+   *  holds an unrepresentable position. Mirrors the dock window's clamp. */
+  function clampBezelYRatio(v: number): number {
+    const f = Number(v);
+    if (!Number.isFinite(f)) return 0.5;
+    return Math.min(1, Math.max(0, f));
   }
   /** A stored density the menu does not offer reads back as today's sizing —
    *  the same fallback the backend applies, so a broken value never leaves
@@ -439,8 +467,10 @@
       const exposed = await aiCheckExistingLocal(aiBaseUrl.trim(), aiModel.trim());
       aiTestStatus =
         exposed.length === 1
-          ? `Connected — the service exposes 1 model: ${exposed[0]}.`
-          : `Connected — the service exposes ${exposed.length} models: ${exposed.join(", ")}.`;
+          ? t("settings.testOkOne").replace("{name}", exposed[0])
+          : t("settings.testOkMany")
+              .replace("{count}", String(exposed.length))
+              .replace("{list}", exposed.join(", "));
     } catch (e) {
       aiTestError = String(e);
     } finally {
@@ -464,8 +494,7 @@
       ) {
         aiProvider = "off";
         aiModel = "";
-        managedNotice =
-          "The previously selected managed model is no longer installed, so AI assistance is set to Off — Save to keep it.";
+        managedNotice = t("settings.modelGone");
       }
     } catch (cause) {
       managedCatalog = null;
@@ -500,7 +529,7 @@
       await loadManagedCatalog();
       await refreshRuntimeStatus();
     } else if (managedInstall.status === "error" && !installGuardHit) {
-      managedError = managedInstall.error ?? "Install failed.";
+      managedError = managedInstall.error ?? t("managed.installFailed");
     }
   }
 
@@ -526,7 +555,7 @@
       await loadManagedCatalog();
       await refreshRuntimeStatus();
     } else if (managedInstall.status === "error" && !installGuardHit) {
-      managedError = managedInstall.error ?? "Install failed.";
+      managedError = managedInstall.error ?? t("managed.installFailed");
     }
   }
 
@@ -657,7 +686,7 @@
   }
 
   function formatResourceCpu(cpu: number | null): string {
-    if (cpu === null || !Number.isFinite(cpu)) return "measuring…";
+    if (cpu === null || !Number.isFinite(cpu)) return t("managed.measuring");
     return `${new Intl.NumberFormat(undefined, { maximumFractionDigits: 1 }).format(cpu)}%`;
   }
 
@@ -681,7 +710,7 @@
     runtimeError = "";
     try {
       await aiStartManagedRuntime(activeManagedId);
-      managedNotice = `${managedTierLabel(activeManagedId)} started — the next Generate finds a live server.`;
+      managedNotice = t("managed.startedFlash").replace("{tier}", managedTierLabel(activeManagedId));
       await refreshRuntimeStatus();
     } catch (cause) {
       const message = String(cause);
@@ -705,7 +734,7 @@
     runtimeError = "";
     try {
       await aiStopManagedRuntime();
-      managedNotice = "Stopped — downloads stay, and the next Generate restarts.";
+      managedNotice = t("managed.stoppedDownloads");
       await refreshRuntimeStatus();
     } catch (cause) {
       runtimeError = String(cause);
@@ -742,13 +771,13 @@
     }
     const items: ContextMenuItem[] = [
       {
-        label: "Model details",
+        label: t("managed.modelDetails"),
         icon: "info",
         onselect: () => reviewManaged(modelId),
       },
       { label: "", separator: true, onselect: () => {} },
       {
-        label: "Remove…",
+        label: t("managed.removeEllipsis"),
         icon: "trash",
         danger: true,
         onselect: () => askRemoveManaged(modelId),
@@ -757,7 +786,7 @@
     modelMenu = {
       modelId,
       open: true,
-      label: `Actions for ${modelId}`,
+      label: t("packet.actionsFor").replace("{name}", modelId),
       anchor,
       focusFirst: viaKeyboard,
       returnTo: anchor,
@@ -770,13 +799,12 @@
    *  exists only on the removal path. */
   function managedRemovePreview(modelId: string): string {
     const model = managedCatalog?.models.find((entry) => entry.id === modelId);
-    if (!model) return "Removes only Sprout's own files for this model.";
+    if (!model) return t("managed.removePreviewBare");
     const runtimeSize = managedCatalog?.runtime.download_size_bytes ?? null;
-    return (
-      `Removes only Sprout's own files for ${model.artifact}: the model weights` +
-      ` (${managedSize(model.download_size_bytes)}) plus its runtime copy` +
-      ` (${managedSize(runtimeSize)}). Your saved Quick Actions stay, and the local server stops first.`
-    );
+    return t("managed.removePreviewFor")
+      .replace("{artifact}", model.artifact)
+      .replace("{modelSize}", managedSize(model.download_size_bytes))
+      .replace("{runtimeSize}", managedSize(runtimeSize));
   }
 
   async function removeManaged(modelId: string) {
@@ -796,7 +824,7 @@
         // an empty managed route. Save persists it like any other knob.
         aiProvider = "off";
         aiModel = "";
-        managedNotice = `${result.message} AI assistance is set to Off — Save to keep it.`;
+        managedNotice = t("managed.removedToOff").replace("{message}", result.message);
       } else {
         // Ticket 191: survivors keep the draft exactly as authored — even
         // when the removed entry was the active one. The dangling draft
@@ -812,7 +840,7 @@
   }
 
   function managedSize(bytes: number | null): string {
-    if (bytes === null) return "Not yet verified";
+    if (bytes === null) return t("managed.sizeUnverified");
     const gib = bytes / 1024 / 1024 / 1024;
     return `${new Intl.NumberFormat(undefined, { maximumFractionDigits: 2 }).format(gib)} GiB`;
   }
@@ -827,28 +855,39 @@
   function installStageCopy(): string {
     switch (managedInstall.stage) {
       case "verifying-runtime":
-        return "Verifying runtime";
+        return t("managed.stageVerifyingRuntime");
       case "verifying-model":
-        return "Verifying model";
+        return t("managed.stageVerifyingModel");
       case "extracting":
-        return "Extracting runtime";
+        return t("managed.stageExtracting");
       case "activating":
-        return "Activating";
+        return t("managed.stageActivating");
       default:
         return "";
     }
   }
 
   function installProgressLine(): string {
-    const step = managedInstall.phase === "runtime" ? "Step 1 of 2 · Runtime" : "Step 2 of 2 · Model";
+    const step = managedInstall.phase === "runtime" ? t("managed.stepRuntime") : t("managed.stepModel");
     const pct = installPercent;
-    if (pct === null || managedInstall.totalBytes <= 0) return `${step} · starting…`;
-    const bytes = `${formatManagedBytes(managedInstall.downloadedBytes)} of ${formatManagedBytes(managedInstall.totalBytes)}`;
+    if (pct === null || managedInstall.totalBytes <= 0)
+      return t("managed.progressStarting").replace("{step}", step);
+    const bytes = t("managed.bytesOf")
+      .replace("{a}", formatManagedBytes(managedInstall.downloadedBytes))
+      .replace("{b}", formatManagedBytes(managedInstall.totalBytes));
     const stageCopy = installStageCopy();
-    if (stageCopy) return `${step} · 100% · ${bytes} · ${stageCopy}${installDots}`;
+    if (stageCopy)
+      return t("managed.progressStage")
+        .replace("{step}", step)
+        .replace("{bytes}", bytes)
+        .replace("{stage}", stageCopy)
+        .replace("{dots}", installDots);
     // WHY the generic tail: events from an older backend carry no stage, so
     // 100% with the flight still open still names the likeliest work.
-    if (pct >= 100) return `${step} · 100% · ${bytes} · verifying…`;
+    if (pct >= 100)
+      return t("managed.progressVerifying")
+        .replace("{step}", step)
+        .replace("{bytes}", bytes);
     return `${step} · ${pct}% · ${bytes}`;
   }
 
@@ -877,7 +916,7 @@
       } else {
         return;
       }
-      copyPathFeedback = "Copied.";
+      copyPathFeedback = t("common.copiedDone");
       if (copyPathTimer !== null) clearTimeout(copyPathTimer);
       copyPathTimer = setTimeout(() => (copyPathFeedback = ""), 1500);
     } catch (e) {
@@ -903,6 +942,7 @@
     if (dockEdge !== baseline.dockEdge) return true;
     if (dockState !== baseline.dockState) return true;
     if (clampWidthPctForMode(dockWidthPct, dockMode) !== baseline.dockWidthPct) return true;
+    if (clampBezelYRatio(bezelYRatio) !== baseline.bezelYRatio) return true;
     if (dockDensity !== baseline.dockDensity) return true;
     if (clampDwell(revealDwellMs) !== baseline.revealDwellMs) return true;
     if (clampSens(revealSensitivityPx) !== baseline.revealSensitivityPx) return true;
@@ -929,6 +969,11 @@
         const base = baselineDisplayWidths[d.device_name];
         if (cur !== base) return true;
       }
+      for (const d of displays) {
+        const curY = clampBezelYRatio(displayBezelY[d.device_name] ?? 0.5);
+        const baseY = baselineDisplayBezelY[d.device_name];
+        if (curY !== baseY) return true;
+      }
     }
     return false;
   });
@@ -937,18 +982,21 @@
   // Update state in user terms, feeding the search index so update queries
   // land on the Sprout updates knob.
   const backupSummary = $derived.by(() => {
-    if (updateState.available) return `Sprout ${updateState.available.version} ready to install`;
-    if (checkResult === "current") return "Up to date";
-    return "Whole-app backup";
+    if (updateState.available)
+      return t("update.readyInstall").replace("{version}", updateState.available.version);
+    if (checkResult === "current") return t("update.upToDate");
+    return t("settings.backupTitle");
   });
   const searchIndex = $derived.by(() =>
     buildSettingsSearchIndex({
       themeMode: theme.mode,
-      themeLabel: themeOptions.find((o) => o.mode === theme.mode)?.label ?? "System",
+      themeLabel: themeOptions.find((o) => o.mode === theme.mode)?.label ?? t("settings.opt.theme.system"),
+      language: localeState.current,
+      languageLabel: languageOptions.find((o) => o.value === localeState.current)?.label ?? "English",
       animation: animation.mode,
-      animationLabel: animationOptions.find((o) => o.value === animation.mode)?.label ?? "On",
+      animationLabel: animationOptions.find((o) => o.value === animation.mode)?.label ?? t("common.on"),
       nativeFrame: nativeFrame.mode,
-      nativeFrameLabel: nativeFrameOptions.find((o) => o.value === nativeFrame.mode)?.label ?? "Modern",
+      nativeFrameLabel: nativeFrameOptions.find((o) => o.value === nativeFrame.mode)?.label ?? t("settings.opt.frame.modern"),
       installDir,
       autostart,
       timeoutMinutes: clampTimeout(timeout),
@@ -958,6 +1006,7 @@
       dockEdge,
       dockState,
       dockWidthPct: clampWidthPctForMode(dockWidthPct, dockMode),
+      bezelYRatioPct: Math.round(clampBezelYRatio(bezelYRatio) * 100),
       dockDensity,
       revealDwellMs: clampDwell(revealDwellMs),
       revealSensitivityPx: clampSens(revealSensitivityPx),
@@ -971,7 +1020,7 @@
       companionMuted: settings?.companion_muted ?? false,
       updateSummary: backupSummary,
       aiProvider,
-      aiProviderLabel: aiProviderOptions.find((o) => o.value === aiProvider)?.label ?? "Off",
+      aiProviderLabel: aiProviderOptions.find((o) => o.value === aiProvider)?.label ?? t("common.off"),
       aiModel: aiModel.trim(),
     }),
   );
@@ -1012,13 +1061,13 @@
   let dirtyLiveMessage = $state("");
   $effect(() => {
     if (isDirty) {
-      dirtyLiveMessage = "You have unsaved changes — Save or Discard.";
-    } else if (dirtyLiveMessage.startsWith("You have")) {
-      dirtyLiveMessage = "All changes saved or discarded.";
-      const t = setTimeout(() => {
+      dirtyLiveMessage = t("settings.dirtyMsg");
+    } else if (dirtyLiveMessage.startsWith(t("settings.dirtyPrefix"))) {
+      dirtyLiveMessage = t("settings.dirtyClear");
+      const clearTimer = setTimeout(() => {
         dirtyLiveMessage = "";
       }, 1500);
-      return () => clearTimeout(t);
+      return () => clearTimeout(clearTimer);
     }
   });
 
@@ -1196,6 +1245,9 @@
         loaded.dock_width_pct ?? DOCK_WIDTH_DEFAULT_PCT,
         loaded.dock_mode,
       );
+      // The tab-position knob starts centered — loadDisplays mirrors the one
+      // display's memory over it once the arrangement resolves.
+      bezelYRatio = 0.5;
       dockDensity = validDensity(loaded.dock_density);
       // Ticket 113: reveal tuning knobs default to shipped gate constants;
       // fall back to defaults when the stored value is broken (Settings::load).
@@ -1216,6 +1268,11 @@
       }
       restoreAnimation(validAnimation(loaded.animation));
       restoreNativeFrame(parseNativeFrame(loaded.native_frame));
+      try {
+        restoreLocale(parseLocale(await getLanguage()));
+      } catch {
+        // Offline or locked DB — the cached language still stands.
+      }
       baseline = {
         timeout: loaded.default_timeout_minutes,
         retention: loaded.log_retention_days,
@@ -1228,6 +1285,7 @@
           loaded.dock_width_pct ?? DOCK_WIDTH_DEFAULT_PCT,
           loaded.dock_mode,
         ),
+        bezelYRatio: 0.5,
         dockDensity: validDensity(loaded.dock_density),
         revealDwellMs: loaded.reveal_dwell_ms ?? 200,
         revealSensitivityPx: loaded.reveal_sensitivity_px ?? 12,
@@ -1317,6 +1375,7 @@
       const nextEdges: Record<string, string> = {};
       const nextModes: Record<string, string> = {};
       const nextWidths: Record<string, number> = {};
+      const nextBezelY: Record<string, number> = {};
       for (const d of effective) {
         try {
           const e = await getDisplayDockEdge(d.device_name);
@@ -1338,13 +1397,30 @@
           const mode = nextModes[d.device_name] ?? dockMode;
           nextWidths[d.device_name] = clampWidthPctForMode(dockWidthPct, mode);
         }
+        // The tab-position mirror of the width memory above: a broken or
+        // missing read centers, so a drag in the dock window shows up here
+        // on focus without ever parking the knob off-screen.
+        try {
+          const y = await getDisplayBezelYRatio(d.device_name);
+          nextBezelY[d.device_name] = clampBezelYRatio(y ?? 0.5);
+        } catch {
+          nextBezelY[d.device_name] = 0.5;
+        }
       }
       displayEdges = nextEdges;
       displayModes = nextModes;
       displayWidths = nextWidths;
+      displayBezelY = nextBezelY;
       baselineDisplayEdges = { ...nextEdges };
       baselineDisplayModes = { ...nextModes };
       baselineDisplayWidths = { ...nextWidths };
+      baselineDisplayBezelY = { ...nextBezelY };
+      // A single display has no per-monitor rows, so the global tab-position
+      // knob mirrors its memory — the same rule as the width memory above.
+      if (effective.length === 1) {
+        bezelYRatio = nextBezelY[effective[0].device_name] ?? 0.5;
+        if (baseline) baseline.bezelYRatio = bezelYRatio;
+      }
     } catch {
       displays = [];
       physicalDisplays = [];
@@ -1372,16 +1448,42 @@
   }
 
   /** The global dock-mode switch re-clamps the global width the same way, so
-   * the fixed slider can never hold above 30%. */
+   * the fixed slider can never hold above 30%. Per-monitor rows still
+   * following the old global follow the switch too — otherwise a global-only
+   * change is written back stale per-row on Save and the reconcile restores
+   * the old mode (the flip visibly dies). Rows customized away from the old
+   * global keep their mode (and their width clamp with it). */
   function changeDockMode(mode: string) {
+    const prev = dockMode;
     dockMode = mode;
     dockWidthPct = clampWidthPctForMode(dockWidthPct, mode);
+    for (const d of displays) {
+      if ((displayModes[d.device_name] ?? prev) !== prev) continue;
+      displayModes = { ...displayModes, [d.device_name]: mode };
+      const cur = displayWidths[d.device_name];
+      if (cur !== undefined) {
+        displayWidths = { ...displayWidths, [d.device_name]: clampWidthPctForMode(cur, mode) };
+      }
+    }
   }
 
   function changeDisplayWidth(device: string, pct: number) {
     displayErrors = { ...displayErrors, [device]: "" };
     const mode = displayModes[device] ?? dockMode;
     displayWidths = { ...displayWidths, [device]: clampWidthPctForMode(pct, mode) };
+  }
+
+  /** The bezel tab's parking height (spec 214): the global knob carries a
+   *  ratio 0..1, the per-row sliders carry whole percent — both clamp into
+   *  the travel, so a broken value centers instead of losing the tab. */
+  function changeBezelY(device: string | null, ratio: number) {
+    const clamped = clampBezelYRatio(ratio);
+    if (device === null) {
+      bezelYRatio = clamped;
+    } else {
+      displayErrors = { ...displayErrors, [device]: "" };
+      displayBezelY = { ...displayBezelY, [device]: clamped };
+    }
   }
 
   // Ticket 125 companion list helpers — dedup trimmed case-insensitive on host+path, machine-local
@@ -1391,7 +1493,7 @@
     try {
       await selectTheme(mode);
     } catch {
-      error = "Couldn't save the theme — it applies for now, but won't survive a restart.";
+      error = t("settings.saveThemeFail");
     }
   }
 
@@ -1404,7 +1506,20 @@
     } catch {
       // The switch never landed — put it back so it tells the truth.
       restoreAnimation(previous);
-      error = "Couldn't save the animation switch — it applies for now, but won't survive a restart.";
+      error = t("settings.saveAnimationFail");
+    }
+  }
+
+  async function pickLanguage(value: string) {
+    const previous = localeState.current;
+    saved = "";
+    error = "";
+    try {
+      await selectLocale(parseLocale(value));
+    } catch {
+      // The switch never landed — put it back so it tells the truth.
+      restoreLocale(previous);
+      error = t("settings.saveLanguageFail");
     }
   }
 
@@ -1417,7 +1532,7 @@
     } catch {
       // The switch never landed — put it back so it tells the truth.
       restoreNativeFrame(previous);
-      error = "Couldn't save the window frame — it applies for now, but won't survive a restart.";
+      error = t("settings.saveFrameFail");
     }
   }
 
@@ -1432,8 +1547,7 @@
       // Neither the setting nor the registration changed — put the toggle
       // back so it tells the truth.
       autostart = previous;
-      error =
-        "Couldn't change the start-with-Windows registration — try again.";
+      error = t("settings.autostartFail");
     }
   }
 
@@ -1441,13 +1555,13 @@
     error = "";
     try {
       const picked = await open({
-        title: "Default install directory",
+        title: t("settings.installDirTitle"),
         multiple: false,
         directory: true,
       });
       if (typeof picked === "string" && picked) installDir = picked;
     } catch {
-      error = "Couldn't open the folder picker — type the path directly instead.";
+      error = t("settings.pickerFail");
     }
   }
 
@@ -1463,6 +1577,7 @@
     dockEdge = baseline.dockEdge;
     dockState = baseline.dockState;
     dockWidthPct = baseline.dockWidthPct;
+    bezelYRatio = baseline.bezelYRatio;
     dockDensity = baseline.dockDensity;
     revealDwellMs = baseline.revealDwellMs;
     revealSensitivityPx = baseline.revealSensitivityPx;
@@ -1480,6 +1595,7 @@
       displayEdges = { ...baselineDisplayEdges };
       displayModes = { ...baselineDisplayModes };
       displayWidths = { ...baselineDisplayWidths };
+      displayBezelY = { ...baselineDisplayBezelY };
     }
     displayErrors = {};
     saved = "";
@@ -1497,7 +1613,7 @@
     // missing model under existing-local refuses with focus on the field
     // instead of a backend round-trip.
     if (aiProvider === "existing-local" && !aiModel.trim()) {
-      error = "Name the model your local service exposes — Sprout never substitutes another one.";
+      error = t("settings.modelNameFirst");
       expandGroups(["ai"]);
       await tick();
       document.getElementById("ai-model")?.focus();
@@ -1524,9 +1640,7 @@
           (fresh.companion_url ?? null) !== (baseline.companionUrl ?? null) &&
           (fresh.companion_url ?? null) !== (companionUrl ?? null)
         ) {
-          throw new Error(
-            "The Companion active site changed elsewhere — Discard and re-apply your edits."
-          );
+          throw new Error(t("settings.conflictSite"));
         }
         if (!companionRatioTouched) {
           saveCompanionRatio = clampCompanionRatio(fresh.companion_height_ratio ?? 0.40);
@@ -1535,13 +1649,11 @@
           clampCompanionRatio(fresh.companion_height_ratio ?? 0.40) !== baseline.companionHeightRatio &&
           clampCompanionRatio(fresh.companion_height_ratio ?? 0.40) !== clampedPageRatio
         ) {
-          throw new Error(
-            "The Companion pane height changed in the dock while Settings was open — Discard and re-apply your edits."
-          );
+          throw new Error(t("settings.conflictHeight"));
         }
         saveCompanionList = normalizeCompanionList(fresh.companion_url_list ?? []);
       } catch (e) {
-        if (e instanceof Error && e.message.includes("Discard and re-apply")) throw e;
+        if (e instanceof Error && e.message.includes(t("settings.discardReapply"))) throw e;
         console.error("settings companion refresh failed", e);
       }
       companionUrl = saveCompanionUrl;
@@ -1643,6 +1755,19 @@
             perMonitorError = true;
           }
         }
+        // Tab position follows the same single-vs-multi rule — the single
+        // display's memory tracks the global knob; each display's own slider
+        // writes its own row when several are connected.
+        const yRatio =
+          physicalDisplays.length > 1
+            ? clampBezelYRatio(displayBezelY[d.device_name] ?? 0.5)
+            : clampBezelYRatio(bezelYRatio);
+        try {
+          await setDisplayBezelYRatio(d.device_name, yRatio);
+        } catch (e) {
+          displayErrors = { ...displayErrors, [d.device_name]: String(e) };
+          perMonitorError = true;
+        }
       }
       await reconcileQuickLaunchSettings();
       // Single display only: its height memory tracks the global knob, the
@@ -1657,11 +1782,11 @@
             clampedCompanionRatio
           );
         } catch (e) {
-          companionHeightError = `Couldn't save the Companion height for this screen — ${String(e)}`;
+          companionHeightError = t("settings.companionHeightFail").replace("{detail}", String(e));
         }
       }
       if (perMonitorError) {
-        error = "Some per-monitor choices couldn't be saved — see the rows below.";
+        error = t("settings.perMonitorFail");
         // A failing save expands its owning group and lands focus on the
         // first refusing row, so the failure is found, not hunted.
         expandGroups(["dock"]);
@@ -1674,7 +1799,7 @@
       } else if (companionHeightError) {
         error = companionHeightError;
       } else {
-        saved = "Saved — the next run honors these.";
+        saved = t("settings.savedRun");
       }
       // Reflect any clamping back into the fields.
       timeout = Math.max(1, Math.floor(timeout) || 1);
@@ -1682,10 +1807,14 @@
       launchConcurrency = Math.min(50, Math.max(1, Math.floor(launchConcurrency) || 1));
       dockWidthPct = clampWidthPctForMode(dockWidthPct, dockMode);
       dockDensity = validDensity(dockDensity);
+      bezelYRatio = clampBezelYRatio(bezelYRatio);
       for (const d of displays) {
         if (displayWidths[d.device_name] !== undefined) {
           const rowMode = displayModes[d.device_name] ?? dockMode;
           displayWidths[d.device_name] = clampWidthPctForMode(displayWidths[d.device_name], rowMode);
+        }
+        if (displayBezelY[d.device_name] !== undefined) {
+          displayBezelY[d.device_name] = clampBezelYRatio(displayBezelY[d.device_name]);
         }
       }
       revealDwellMs = Math.min(1000, Math.max(0, Math.floor(revealDwellMs) || 0));
@@ -1703,6 +1832,7 @@
         dockEdge,
         dockState,
         dockWidthPct,
+        bezelYRatio,
         dockDensity,
         revealDwellMs,
         revealSensitivityPx,
@@ -1717,6 +1847,7 @@
         baselineDisplayEdges = { ...displayEdges };
         baselineDisplayModes = { ...displayModes };
         baselineDisplayWidths = { ...displayWidths };
+        baselineDisplayBezelY = { ...displayBezelY };
       }
       companionUrlTouched = false;
       companionRatioTouched = false;
@@ -1749,8 +1880,8 @@
       console.error("settings save failed", cause);
       const detail = String(cause).trim();
       error = detail
-        ? `Couldn't save the settings — ${detail}`
-        : "Couldn't save the settings — try again. If it keeps failing, close Sprout and relaunch.";
+        ? t("settings.saveFailDetail").replace("{detail}", detail)
+        : t("settings.saveFail");
       // A backend refusal names no field, so every group opens and focus
       // lands on the error itself — the same expand-and-focus promise.
       expandGroups(["general", "dock", "companion", "backup", "ai"]);
@@ -1849,11 +1980,11 @@
     const phrase = (n: number, nouns: { one: string; many: string }) =>
       n && `${n} ${n === 1 ? nouns.one : nouns.many}`;
     return [
-      phrase(counts.products, COLLECTIONS.products),
-      phrase(counts.presets, COLLECTIONS.presets),
-      phrase(counts.launch_entries, COLLECTIONS.launch_entries),
-      phrase(counts.quick_actions, COLLECTIONS.quick_actions),
-      phrase(counts.clips, COLLECTIONS.clips),
+      phrase(counts.products, { one: t("collection.products.one"), many: t("collection.products.many") }),
+      phrase(counts.presets, { one: t("collection.presets.one"), many: t("collection.presets.many") }),
+      phrase(counts.launch_entries, { one: t("collection.launch_entries.one"), many: t("collection.launch_entries.many") }),
+      phrase(counts.quick_actions, { one: t("collection.quick_actions.one"), many: t("collection.quick_actions.many") }),
+      phrase(counts.clips, { one: t("collection.clips.one"), many: t("collection.clips.many") }),
     ]
       .filter(Boolean)
       .join(", ");
@@ -1870,14 +2001,16 @@
     backupError = "";
     try {
       const path = await saveDialog({
-        title: "Back up Sprout",
+        title: t("settings.backupTitleDialog"),
         defaultPath: "sprout-backup.json",
-        filters: [{ name: "Sprout backup", extensions: ["json"] }],
+        filters: [{ name: t("files.actionBackup"), extensions: ["json"] }],
       });
       if (!path) return;
       backupBusy = true;
       const counts = await exportBackup(path, include);
-      backupStatus = `Backed up ${describeCounts(counts)} to ${path}`;
+      backupStatus = t("settings.backedUp")
+        .replace("{counts}", describeCounts(counts))
+        .replace("{path}", path);
     } catch (e) {
       console.error(e);
       // Rejections are authored backend copy; infrastructure failures are rare.
@@ -1892,10 +2025,10 @@
     backupError = "";
     try {
       const picked = await open({
-        title: "Open a Sprout backup",
+        title: t("settings.openBackupTitle"),
         multiple: false,
         directory: false,
-        filters: [{ name: "Sprout backup", extensions: ["json", "zip"] }],
+        filters: [{ name: t("files.actionBackup"), extensions: ["json", "zip"] }],
       });
       if (typeof picked !== "string") return;
       backupBusy = true;
@@ -1923,12 +2056,13 @@
         summary.skipped.quick_actions +
         summary.skipped.clips;
       if (!restored) {
-        backupStatus = "Nothing to restore — everything in the file already exists.";
+        backupStatus = t("settings.nothingToRestore");
       } else if (skipped > 0) {
-        backupStatus =
-          `Restored ${restored}. ${skipped} item${skipped === 1 ? " was" : "s were"} already present and kept.`;
+        backupStatus = (skipped === 1 ? t("settings.restoredSkippedOne") : t("settings.restoredSkippedMany"))
+          .replace("{restored}", restored)
+          .replace("{count}", String(skipped));
       } else {
-        backupStatus = `Restored ${restored}.`;
+        backupStatus = t("settings.restored").replace("{restored}", restored);
       }
     } catch (e) {
       console.error(e);
@@ -1941,21 +2075,20 @@
 </script>
 
 <section class="settings" class:settings--dirty={isDirty} aria-labelledby="settings-title">
-  <PageHeader titleId="settings-title" title="Settings">
+  <PageHeader titleId="settings-title" title={t("nav.settings")}>
     {#snippet subtitle()}
-      Defaults for authoring and housekeeping, persisted in the Library database and honored by
-      every run.
+      {t("settings.subtitle")}
     {/snippet}
     {#snippet toolbar()}
       <SearchInput
         value={filter}
-        placeholder="Filter settings…"
-        ariaLabel="Filter settings"
+        placeholder={t("settings.filterPh")}
+        ariaLabel={t("settings.filterLabel")}
         onchange={(v) => (filter = v)}
       />
       {#if filtering}
         <p class="filter-count" role="status">
-          {matchCount === 1 ? "1 match" : `${matchCount} matches`}
+          {matchCount === 1 ? t("settings.matchOne") : t("settings.matchMany").replace("{count}", String(matchCount))}
         </p>
       {/if}
     {/snippet}
@@ -1973,23 +2106,22 @@
   {#if loading}
     <p class="sifting" aria-live="polite">Loading…</p>
   {:else if loadFailed || !settings}
-    <EmptyState icon="x" title="Couldn't read the settings">
+    <EmptyState icon="x" title={t("settings.dbTitle")}>
       <p>
-        Couldn't read the settings from
-        <span class="mono">%LOCALAPPDATA%\Sprout\sprout.db</span> — the file may be locked or
-        missing.
+        {t("settings.dbBody")}
+        <span class="mono">%LOCALAPPDATA%\Sprout\sprout.db</span>{t("settings.dbTail")}
       </p>
-      <p>Try again; if it keeps failing, close the app and relaunch.</p>
+      <p>{t("logs.retryLater")}</p>
       <div class="empty-cta">
-        <Button variant="secondary" onclick={load}>Try again</Button>
+        <Button variant="secondary" onclick={load}>{t("common.retry")}</Button>
       </div>
     </EmptyState>
   {:else}
     {#if noGroupVisible}
-      <EmptyState icon="search" title={`Nothing matches “${filter.trim()}”`}>
-        <p>Try a different name, or clear the filter to see every setting.</p>
+      <EmptyState icon="search" title={t("common.noMatchFor").replace("{query}", filter.trim())}>
+        <p>{t("settings.noMatchHint")}</p>
         <div class="empty-cta">
-          <Button variant="secondary" onclick={() => (filter = "")}>Clear filter</Button>
+          <Button variant="secondary" onclick={() => (filter = "")}>{t("common.clearFilter")}</Button>
         </div>
       </EmptyState>
     {/if}
@@ -2006,18 +2138,18 @@
         <GroupAccordion
           open={groupEffectiveOpen("general")}
           controls="group-general-body"
-          name="General"
+          name={t("settings.group.general")}
           count={groupKnobCount("general")}
           onToggle={() => toggleGroup("general")}
         >
       <article class="knob" hidden={!knobVisible("theme")}>
         <div class="knob__body">
-          <span class="knob__label">Theme</span>
+          <span class="knob__label">{t("settings.theme.label")}</span>
           <p class="knob__hint">
-            Follows Windows, or pins one look. Applies immediately; no save needed.
+            {t("settings.theme.hint")}
           </p>
         </div>
-        <div class="theme-picker" role="radiogroup" aria-label="Theme">
+        <div class="theme-picker" role="radiogroup" aria-label={t("settings.theme.label")}>
           {#each themeOptions as option (option.mode)}
             <button
               type="button"
@@ -2033,13 +2165,29 @@
         </div>
       </article>
 
+      <article class="knob" hidden={!knobVisible("language")}>
+        <div class="knob__body">
+          <span class="knob__label">{t("settings.language.label")}</span>
+          <p class="knob__hint">
+            {t("settings.language.hint")}
+          </p>
+        </div>
+        <div class="knob__input">
+          <Select
+            id="language"
+            variant="small"
+            value={localeState.current}
+            onchange={(v) => pickLanguage(v)}
+            options={languageOptions}
+          />
+        </div>
+      </article>
+
       <article class="knob" hidden={!knobVisible("animation")}>
         <div class="knob__body">
-          <span class="knob__label">Animation</span>
+          <span class="knob__label">{t("settings.animation.label")}</span>
           <p class="knob__hint">
-            Plays every menu, dialog, and pulse transition. Off renders each
-            end state at once, whatever Windows says. Applies immediately; no
-            save needed.
+            {t("settings.animation.hint")}
           </p>
         </div>
         <div class="knob__input">
@@ -2055,12 +2203,9 @@
 
       <article class="knob" hidden={!knobVisible("native-frame")}>
         <div class="knob__body">
-          <span class="knob__label">Window frame</span>
+          <span class="knob__label">{t("settings.native-frame.label")}</span>
           <p class="knob__hint">
-            Modern draws Sprout's own bar with built-in window buttons.
-            Native restores the Windows titlebar instead — turn it on if
-            the custom header misbehaves on your setup. Applies immediately; no
-            save needed.
+            {t("settings.native-frame.hint")}
           </p>
         </div>
         <div class="knob__input">
@@ -2076,11 +2221,9 @@
 
       <article class="knob" hidden={!knobVisible("install-dir")}>
         <div class="knob__body">
-          <label class="knob__label" for="install-dir">Install directory</label>
+          <label class="knob__label" for="install-dir">{t("settings.install-dir.label")}</label>
           <p class="knob__hint">
-            Where installs and upgrades land. Empty = the installer's default; use an
-            absolute path like D:\Apps. Installers that ignore it are reported on
-            the Plan. Never shared with exported presets.
+            {t("settings.install-dir.hint")}
           </p>
         </div>
         <div class="knob__input knob__input--wide">
@@ -2091,24 +2234,22 @@
             type="text"
             autocomplete="off"
             spellcheck="false"
-            placeholder="(winget default)"
+            placeholder={t("settings.wingetDefault")}
             value={installDir}
             oninput={(e) => (installDir = (e.target as HTMLInputElement).value)}
           />
-          <Button type="button" variant="secondary" onclick={browseInstallDir}>Browse…</Button>
+          <Button type="button" variant="secondary" onclick={browseInstallDir}>{t("settings.browse")}</Button>
           {#if installDir}
-            <Button type="button" variant="ghost" onclick={() => (installDir = "")}>Clear</Button>
+            <Button type="button" variant="ghost" onclick={() => (installDir = "")}>{t("settings.clearDir")}</Button>
           {/if}
         </div>
       </article>
 
       <article class="knob" hidden={!knobVisible("autostart")}>
         <div class="knob__body">
-          <span class="knob__label">Start with Windows</span>
+          <span class="knob__label">{t("settings.autostart.label")}</span>
           <p class="knob__hint">
-            Starts Sprout at login, tray-only: the main window stays closed and a
-            docked bar reappears on its own. Turning it off removes the
-            registration immediately; no restart needed.
+            {t("settings.autostart.hint")}
           </p>
         </div>
         <div class="knob__input">
@@ -2124,11 +2265,9 @@
 
       <article class="knob" hidden={!knobVisible("default-timeout")}>
         <div class="knob__body">
-          <label class="knob__label" for="default-timeout">Default timeout</label>
+          <label class="knob__label" for="default-timeout">{t("settings.default-timeout.label")}</label>
           <p class="knob__hint">
-            Minutes a requirement may take before its installer is killed. New
-            requirements start with this value; each one can override it.
-            1–1440 min, default 10 min.
+            {t("settings.default-timeout.hint")}
           </p>
         </div>
         <div class="knob__input">
@@ -2149,11 +2288,9 @@
 
       <article class="knob" hidden={!knobVisible("log-retention")}>
         <div class="knob__body">
-          <label class="knob__label" for="log-retention">Log retention</label>
+          <label class="knob__label" for="log-retention">{t("settings.log-retention.label")}</label>
           <p class="knob__hint">
-            How long a finished run's raw logs are kept. Pruning runs after every
-            run and at app start; the runs list itself is never deleted.
-            1–3650 days, default 30 days.
+            {t("settings.log-retention.hint")}
           </p>
         </div>
         <div class="knob__input">
@@ -2174,10 +2311,9 @@
 
       <article class="knob" hidden={!knobVisible("launch-concurrency")}>
         <div class="knob__body">
-          <label class="knob__label" for="launch-concurrency">Launch concurrency</label>
+          <label class="knob__label" for="launch-concurrency">{t("settings.launch-concurrency.label")}</label>
           <p class="knob__hint">
-            How many Quick Launch apps may start at once; the rest queue.
-            1–50 apps, default 8.
+            {t("settings.launch-concurrency.hint")}
           </p>
         </div>
         <div class="knob__input">
@@ -2203,17 +2339,15 @@
         <GroupAccordion
           open={groupEffectiveOpen("dock")}
           controls="group-dock-body"
-          name="Dock"
+          name={t("settings.group.dock")}
           count={groupKnobCount("dock")}
           onToggle={() => toggleGroup("dock")}
         >
       <article class="knob" hidden={!knobVisible("dock-state")}>
         <div class="knob__body">
-          <label class="knob__label" for="dock-state">Quick Launch window</label>
+          <label class="knob__label" for="dock-state">{t("settings.dock-state.label")}</label>
           <p class="knob__hint">
-            The Quick Launch window floats as a palette or docks as a bar. Applies
-            to an open window on save and is remembered; the window's dock toggle
-            writes back here.
+            {t("settings.dock-state.hint")}
           </p>
         </div>
         <div class="knob__input">
@@ -2229,11 +2363,9 @@
 
       <article class="knob" hidden={!knobVisible("dock-mode")}>
         <div class="knob__body">
-          <label class="knob__label" for="dock-mode">Dock mode</label>
+          <label class="knob__label" for="dock-mode">{t("settings.dock-mode.label")}</label>
           <p class="knob__hint">
-            Fixed keeps a visible strip and squeezes other windows. Auto-hide hides
-            completely — push into that screen's edge and hold to call it back;
-            otherwise windows keep their full size.
+            {t("settings.dock-mode.hint")}
           </p>
         </div>
         <div class="knob__input">
@@ -2243,10 +2375,9 @@
 
       <article class="knob" hidden={!knobVisible("dock-edge")}>
         <div class="knob__body">
-          <label class="knob__label" for="dock-edge">Default dock edge</label>
+          <label class="knob__label" for="dock-edge">{t("settings.dock-edge.label")}</label>
           <p class="knob__hint">
-            The edge a dock uses until its display remembers its own. The dock's
-            left/right switch overrides per monitor.
+            {t("settings.dock-edge.hint")}
           </p>
         </div>
         <div class="knob__input">
@@ -2254,12 +2385,45 @@
         </div>
       </article>
 
+      {#if displays.length <= 1}
+        <!-- Bezel tab position (spec 214): the non-drag path for the tab's
+             parking height — several displays get one slider per row below
+             (research 0006 pattern 4: the control sits with its display). -->
+        <article class="knob" hidden={!knobVisible("bezel-y")}>
+          <div class="knob__body">
+            <label class="knob__label" for="bezel-y">{t("quickwindow.bezelPosition")}</label>
+            <p class="knob__hint">
+              {t("settings.bezel-y.hint")}
+            </p>
+          </div>
+          <div class="knob__input knob__input--wide">
+            <input
+              id="bezel-y"
+              name="bezel-y"
+              class="knob__range"
+              type="range"
+              min="0"
+              max="100"
+              step="1"
+              value={Math.round(clampBezelYRatio(bezelYRatio) * 100)}
+              oninput={(e) => changeBezelY(null, Number((e.target as HTMLInputElement).value) / 100)}
+              aria-describedby="bezel-y-value"
+            />
+            <span class="knob__unit knob__unit--auto" id="bezel-y-value" role="status">
+              {Math.round(clampBezelYRatio(bezelYRatio) * 100)}%
+            </span>
+          </div>
+        </article>
+      {/if}
+
       <article class="knob" hidden={!knobVisible("dock-width")}>
         <div class="knob__body">
-          <label class="knob__label" for="dock-width">Dock width</label>
+          <label class="knob__label" for="dock-width">{t("settings.dock-width.label")}</label>
           <p class="knob__hint">
-            Wider fits longer names. Fixed caps at 30% — it reserves workspace;
-            auto-hide may run to 60% — it overlays instead.
+            {t("settings.dock-width.hint")}
+            {#if displays.length > 1}
+              {" "}<a href="#per-monitor-title">{t("settings.dock-width.multiHint")}</a>
+            {/if}
           </p>
         </div>
         <div class="knob__input knob__input--wide">
@@ -2271,6 +2435,7 @@
             min={DOCK_WIDTH_MIN_PCT}
             max={dockWidthMaxForMode(dockMode)}
             step="1"
+            disabled={displays.length > 1}
             value={clampWidthPctForMode(dockWidthPct, dockMode)}
             oninput={(e) => (dockWidthPct = clampWidthPctForMode(Number((e.target as HTMLInputElement).value), dockMode))}
             aria-describedby="dock-width-value"
@@ -2289,10 +2454,9 @@
 
       <article class="knob" hidden={!knobVisible("dock-density")}>
         <div class="knob__body">
-          <label class="knob__label" for="dock-density">List density</label>
+          <label class="knob__label" for="dock-density">{t("settings.dock-density.label")}</label>
           <p class="knob__hint">
-            Text size across the Quick Launch window's three tabs. Compact fits
-            more rows; Large reads easier.
+            {t("settings.dock-density.hint")}
           </p>
         </div>
         <div class="knob__input">
@@ -2304,26 +2468,26 @@
         <!-- Per-monitor: flat knobs per display (flattened to reuse .knob, 0005 rule 5). No nested card. Global defaults above stay fallback. -->
         <div class="per-monitor" aria-labelledby="per-monitor-title">
           <div class="per-monitor__header">
-            <span class="knob__label" id="per-monitor-title">Per-monitor dock</span>
+            <span class="knob__label" id="per-monitor-title">{t("settings.per-monitor.label")}</span>
             <p class="knob__hint">
-              Each display remembers its own edge, mode, and width; the defaults
-              above cover the rest. Choices save with the button below and apply
-              next time that display docks.
+              {t("settings.per-monitor.hint")}
             </p>
           </div>
           {#each displays as d (d.device_name)}
             {@const edgeId = `per-monitor-edge-${d.device_name.replace(/[^a-zA-Z0-9]/g, "-")}`}
             {@const modeId = `per-monitor-mode-${d.device_name.replace(/[^a-zA-Z0-9]/g, "-")}`}
             {@const widthId = `per-monitor-width-${d.device_name.replace(/[^a-zA-Z0-9]/g, "-")}`}
+            {@const bezelYId = `per-monitor-bezely-${d.device_name.replace(/[^a-zA-Z0-9]/g, "-")}`}
             {@const reasonId = `per-monitor-reason-${d.device_name.replace(/[^a-zA-Z0-9]/g, "-")}`}
             {@const hasSeam = !d.left_eligible || !d.right_eligible}
             {@const perMode = displayModes[d.device_name] ?? dockMode}
             {@const widthPct = clampWidthPctForMode(displayWidths[d.device_name] ?? dockWidthPct, perMode)}
+            {@const bezelYPct = Math.round(clampBezelYRatio(displayBezelY[d.device_name] ?? 0.5) * 100)}
             <article class="knob" hidden={!knobVisible("per-monitor")}>
               <div class="knob__body">
                 <span class="knob__label">{d.label} · {d.resolution}</span>
                 {#if hasSeam}
-                  <p class="knob__hint" id={reasonId} style="color: var(--warn-text)">{SEAM_REASON}</p>
+                  <p class="knob__hint" id={reasonId} style="color: var(--warn-text)">{t("dock.seam.tooltip")}</p>
                 {/if}
                 {#if displayErrors[d.device_name]}
                   <p class="knob__hint" style="color: var(--danger-text)" role="alert">{displayErrors[d.device_name]}</p>
@@ -2335,11 +2499,11 @@
                   variant="small"
                   value={displayEdges[d.device_name] ?? dockEdge}
                   onchange={(v) => changeDisplayEdge(d.device_name, v)}
-                  aria-label={`Dock edge on ${d.label}`}
+                  aria-label={t("settings.edgeOnLabel").replace("{label}", d.label)}
                   aria-describedby={hasSeam ? reasonId : undefined}
                   options={[
-                    { value: "left", label: "Left", disabled: !d.left_eligible },
-                    { value: "right", label: "Right", disabled: !d.right_eligible },
+                    { value: "left", label: t("settings.opt.edge.left"), disabled: !d.left_eligible },
+                    { value: "right", label: t("settings.opt.edge.right"), disabled: !d.right_eligible },
                   ]}
                 />
                 <Select
@@ -2347,10 +2511,11 @@
                   variant="small"
                   value={displayModes[d.device_name] ?? dockMode}
                   onchange={(v) => changeDisplayMode(d.device_name, v)}
-                  aria-label={`Dock mode on ${d.label}`}
+                  aria-label={t("settings.modeOnLabel").replace("{label}", d.label)}
                   options={[
-                    { value: "auto-hide", label: "Auto-hide" },
-                    { value: "fixed", label: "Fixed" },
+                    { value: "auto-hide", label: t("settings.opt.mode.auto") },
+                    { value: "fixed", label: t("settings.opt.mode.fixed") },
+                    { value: "bezel", label: t("settings.opt.mode.bezel") },
                   ]}
                 />
               </div>
@@ -2371,6 +2536,23 @@
                     changeDisplayWidth(d.device_name, Number((e.target as HTMLInputElement).value))}
                 />
               </div>
+              <div class="knob__input knob__input--wide">
+                <label class="knob__unit knob__unit--auto" for={bezelYId}>
+                  {t("quickwindow.bezelPosition")} · {bezelYPct}%
+                </label>
+                <input
+                  id={bezelYId}
+                  name={bezelYId}
+                  class="knob__range"
+                  type="range"
+                  min="0"
+                  max="100"
+                  step="1"
+                  value={bezelYPct}
+                  oninput={(e) =>
+                    changeBezelY(d.device_name, Number((e.target as HTMLInputElement).value) / 100)}
+                />
+              </div>
             </article>
           {/each}
         </div>
@@ -2382,11 +2564,9 @@
              Hidden entirely when auto-hide is not the active dock mode. -->
         <article class="knob" hidden={!knobVisible("reveal-dwell")}>
           <div class="knob__body">
-            <label class="knob__label" for="reveal-dwell">Reveal delay</label>
+            <label class="knob__label" for="reveal-dwell">{t("settings.reveal-dwell.label")}</label>
             <p class="knob__hint">
-              Hold time at the edge before the hidden dock slides out. Shorter
-              may fire on grazes; longer needs a deliberate hold. 0–1000 ms,
-              default 200 ms.
+              {t("settings.reveal-dwell.hint")}
             </p>
           </div>
           <div class="knob__input">
@@ -2407,11 +2587,9 @@
 
         <article class="knob" hidden={!knobVisible("reveal-sensitivity")}>
           <div class="knob__body">
-            <label class="knob__label" for="reveal-sensitivity">Reveal sensitivity</label>
+            <label class="knob__label" for="reveal-sensitivity">{t("settings.reveal-sensitivity.label")}</label>
             <p class="knob__hint">
-              How far the cursor must push into the edge before the hold timer
-              starts. Lower is immediate; higher ignores brushes. 0–50 px,
-              default 12 px.
+              {t("settings.reveal-sensitivity.hint")}
             </p>
           </div>
           <div class="knob__input">
@@ -2439,15 +2617,15 @@
         <GroupAccordion
           open={groupEffectiveOpen("companion")}
           controls="group-companion-body"
-          name="Companion"
+          name={t("nav.companion")}
           count={groupKnobCount("companion")}
           onToggle={() => toggleGroup("companion")}
         >
           <article class="knob" hidden={!knobVisible("companion-active")}>
             <div class="knob__body">
-              <label class="knob__label" for="companion-url">Active site</label>
+              <label class="knob__label" for="companion-url">{t("settings.companion-active.label")}</label>
               <p class="knob__hint">
-                The site shown while Quick Launch is docked. Off removes the pane completely.
+                {t("settings.companion-active.hint")}
               </p>
             </div>
             <div class="knob__input">
@@ -2460,7 +2638,7 @@
                   companionUrl = v ? v : null;
                 }}
                 options={[
-                  { value: "", label: "Off" },
+                  { value: "", label: t("common.off") },
                   ...companionUrlList.map((site) => ({
                     value: site.url,
                     label: companionDisplayName(site),
@@ -2472,9 +2650,9 @@
 
           <article class="knob" hidden={!knobVisible("companion-height")}>
             <div class="knob__body">
-              <label class="knob__label" for="companion-ratio">Pane height</label>
+              <label class="knob__label" for="companion-ratio">{t("settings.companion-height.label")}</label>
               <p class="knob__hint">
-                Starting height; drag the divider in the dock to resize.
+                {t("settings.companion-height.hint")}
               </p>
             </div>
             <div class="knob__input">
@@ -2499,12 +2677,12 @@
 
           <div class="companion-manager" hidden={!knobVisible("companion-sites")}>
             <div class="knob__body">
-              <span class="knob__label">Saved sites</span>
+              <span class="knob__label">{t("settings.companion-sites.label")}</span>
               <p class="knob__hint">
-                {companionUrlList.length === 1 ? "1 site saved on this PC." : `${companionUrlList.length} sites saved on this PC.`}
+                {companionUrlList.length === 1 ? t("settings.companion-sites.hintOne") : tCount("settings.companion-sites.hintMany", companionUrlList.length)}
               </p>
             </div>
-            <Button variant="secondary" onclick={() => goto("/companion")}>Manage sites</Button>
+            <Button variant="secondary" onclick={() => goto("/companion")}>{t("settings.manageSites")}</Button>
           </div>
         </GroupAccordion>
       {/if}
@@ -2514,17 +2692,15 @@
         <GroupAccordion
           open={groupEffectiveOpen("backup")}
           controls="group-backup-body"
-          name="Backup & housekeeping"
+          name={t("settings.group.backup")}
           count={groupKnobCount("backup")}
           onToggle={() => toggleGroup("backup")}
         >
       <article class="knob" hidden={!knobVisible("backup")}>
         <div class="knob__body">
-          <span class="knob__label">Backup</span>
+          <span class="knob__label">{t("settings.backup.label")}</span>
           <p class="knob__hint">
-            Writes your collections into one JSON file you pick — choose what to include when you
-            export; restoring adds what's missing and keeps what's already here. Run history, logs,
-            settings, dock memory, and install directories never leave this PC.
+            {t("settings.backup.hint")}
           </p>
           {#if backupStatus}
             <Notice tone="ok">{backupStatus}</Notice>
@@ -2535,41 +2711,39 @@
         </div>
         <div class="knob__input">
           <Button variant="secondary" onclick={openExportDialog} disabled={backupBusy}>
-            Export…
+            {t("settings.exportBtn")}
           </Button>
           <Button variant="secondary" onclick={restoreViaDialog} disabled={backupBusy}>
-            Restore…
+            {t("settings.restoreBtn")}
           </Button>
         </div>
       </article>
 
       <article class="knob" hidden={!knobVisible("updates")}>
         <div class="knob__body">
-          <span class="knob__label">Sprout updates</span>
+          <span class="knob__label">{t("settings.updates.label")}</span>
           <p class="knob__hint">
-            Checks GitHub releases for a newer build; installing downloads it
-            and restarts Sprout.
+            {t("settings.updates.hint")}
           </p>
           {#if updateState.installing}
             <p class="knob__status" role="status">
-              Installing Sprout {updateState.available?.version} — Sprout
-              restarts when it finishes.
+              {t("update.installingNote").replace("{version}", updateState.available?.version ?? "")}
             </p>
           {:else if updateState.available}
-            <Notice tone="ok">Sprout {updateState.available.version} is available.</Notice>
+            <Notice tone="ok">{t("update.availableNote").replace("{version}", updateState.available.version)}</Notice>
           {:else if checking}
-            <p class="knob__status" role="status">Checking…</p>
+            <p class="knob__status" role="status">{t("common.busy.checking")}</p>
           {:else if checkResult === "current"}
-            <Notice tone="ok">You're up to date.</Notice>
+            <Notice tone="ok">{t("update.currentNote")}</Notice>
           {:else if checkResult === "failed"}
             <Notice tone="warn">
-              Couldn't reach the release feed just now — try again later.
+              {t("update.feedFail")}
             </Notice>
           {/if}
         </div>
         <div class="knob__input">
           {#if updateState.installing}
-            <Button disabled>Installing…</Button>
+            <Button disabled>{t("common.busy.installing")}</Button>
           {:else if updateState.available}
             <Button
               onclick={() => {
@@ -2577,11 +2751,11 @@
                 installConfirmOpen = true;
               }}
             >
-              Install {updateState.available.version}
+              {t("update.installBtn").replace("{version}", updateState.available.version)}
             </Button>
           {:else}
             <Button variant="secondary" onclick={runUpdateCheck} disabled={checking}>
-              {checking ? "Checking…" : "Check for updates"}
+              {checking ? t("common.busy.checking") : t("update.checkBtn")}
             </Button>
           {/if}
         </div>
@@ -2596,25 +2770,24 @@
         <GroupAccordion
           open={groupEffectiveOpen("ai")}
           controls="group-ai-body"
-          name="AI assistance"
+          name={t("settings.group.ai")}
           count={groupKnobCount("ai")}
           onToggle={() => toggleGroup("ai")}
         >
       <article class="knob" hidden={!knobVisible("ai-provider")}>
         <div class="knob__body">
-          <label class="knob__label" for="ai-provider">AI provider</label>
+          <label class="knob__label" for="ai-provider">{t("settings.ai-provider.label")}</label>
           <p class="knob__hint">
-            Draft Quick Action commands for review. Nothing runs until you choose Run.
+            {t("settings.ai-provider.hint")}
           </p>
           {#if aiProvider === "managed"}
             <p class="knob__hint">
-              Models download only when you choose Install.
+              {t("settings.ai-provider.hintManaged")}
             </p>
           {/if}
           {#if aiProvider === "cloud"}
             <p class="knob__hint">
-              Cloud providers aren't in this build yet — nothing here sends
-              anything anywhere.
+              {t("settings.ai-provider.hintCloud")}
             </p>
           {/if}
         </div>
@@ -2643,7 +2816,7 @@
                details dialog. Static dot, no pulse. -->
           <article class="knob" hidden={!knobVisible("ai-model")}>
             <div class="knob__body">
-              <span class="knob__label">Managed local model</span>
+              <span class="knob__label">{t("settings.ai-managed.label")}</span>
               <p class="knob__status managed__status" role="status">
                 <span
                   class="managed__dot"
@@ -2652,16 +2825,15 @@
                 ></span>
                 {#if runtimeRunning}
                   <span class="managed__running">
-                    Running — {managedTierLabel(runtimeActiveId ?? activeManagedId)}{runtimeUptimeSecs !==
-                    null
-                      ? ` · ${formatManagedUptime(runtimeUptimeSecs)}`
-                      : ""}
+                    {t("managed.runningNow")
+                      .replace("{tier}", managedTierLabel(runtimeActiveId ?? activeManagedId))
+                      .replace("{extra}", runtimeUptimeSecs !== null ? t("managed.runningExtra").replace("{uptime}", formatManagedUptime(runtimeUptimeSecs)) : "")}
                   </span>
                 {:else}
-                  <span class="managed__stopped">Stopped</span>
+                  <span class="managed__stopped">{t("managed.stopped")}</span>
                 {/if}
               </p>
-              <p class="knob__hint">Stays on this PC. Generate starts it when needed.</p>
+              <p class="knob__hint">{t("settings.ai-managed.hint")}</p>
               {#if runtimeError}
                 <Notice tone="error">{runtimeError}</Notice>
               {/if}
@@ -2677,26 +2849,25 @@
                 <Disclosure
                   open={resourceOpen}
                   controls="managed-resource-details"
-                  label="Resource usage"
+                  label={t("managed.resourceUsage")}
                   onclick={toggleResourceDetails}
                 />
                 {#if resourceOpen}
                   <div id="managed-resource-details" class="managed__resource">
                     {#if !runtimeRunning}
-                      <p class="knob__hint">Stopped — will start on next Generate.</p>
+                      <p class="knob__hint">{t("managed.stoppedHint")}</p>
                     {:else if resourceError}
                       <p class="knob__hint" role="status">{resourceError}</p>
                     {:else if resourceUsage}
                       <p class="knob__hint" role="status">
-                        Model {managedTierLabel(resourceUsage.active_model_id ?? activeManagedId)} ·
-                        Memory {resourceUsage.working_set_bytes !== null
-                          ? formatManagedBytes(resourceUsage.working_set_bytes)
-                          : "measuring…"} ·
-                        CPU {formatResourceCpu(resourceUsage.cpu_percent)} ·
-                        {formatManagedUptime(resourceUsage.uptime_secs)}
+                        {t("managed.resourceLine")
+                          .replace("{tier}", managedTierLabel(resourceUsage.active_model_id ?? activeManagedId))
+                          .replace("{mem}", resourceUsage.working_set_bytes !== null ? formatManagedBytes(resourceUsage.working_set_bytes) : t("managed.measuring"))
+                          .replace("{cpu}", formatResourceCpu(resourceUsage.cpu_percent))
+                          .replace("{uptime}", formatManagedUptime(resourceUsage.uptime_secs))}
                       </p>
                     {:else}
-                      <p class="knob__hint" role="status">Reading usage…</p>
+                      <p class="knob__hint" role="status">{t("managed.readingUsage")}</p>
                     {/if}
                   </div>
                 {/if}
@@ -2710,12 +2881,12 @@
                 onclick={() => void (stopApplies ? stopManaged() : startApplies ? startManaged() : undefined)}
               >
                 {stopBusy
-                  ? "Stopping…"
+                  ? t("common.busy.stopping")
                   : startBusy && !runtimeRunning
-                    ? "Starting…"
+                    ? t("common.busy.starting")
                     : stopApplies
-                      ? "Stop"
-                      : "Start"}
+                      ? t("action.stop")
+                      : t("launch.start")}
               </Button>
             </div>
           </article>
@@ -2735,13 +2906,13 @@
                    down in the Details dialog. -->
               <article class="knob knob--stack" hidden={!knobVisible("ai-model")}>
                 <div class="knob__body">
-                  <span class="knob__label">Active model</span>
+                  <span class="knob__label">{t("settings.ai-active.label")}</span>
                   <p class="knob__hint">
-                    Which installed model Generate uses. Picking drafts the choice — Save keeps it.
+                    {t("settings.ai-active.hint")}
                   </p>
                 </div>
                 <fieldset class="managed__active managed__list">
-                  <legend class="sr-only">Installed models</legend>
+                  <legend class="sr-only">{t("managed.installedLegend")}</legend>
                   {#each managedInstalled as model (model.id)}
                     <div class="managed__option">
                       <label class="managed__pick">
@@ -2760,13 +2931,13 @@
                           <span class="managed__meta"
                             >{model.download_size_bytes !== null
                               ? formatManagedBytes(model.download_size_bytes)
-                              : "size pending"} · {formatManagedRam(model.memory_needs_mb)}</span
+                              : t("managed.sizePending")} · {formatManagedRam(model.memory_needs_mb)}</span
                           >
                         </span>
                       </label>
                       <IconButton
                         icon="dots"
-                        label={`Actions for ${model.id}`}
+                        label={t("packet.actionsFor").replace("{name}", model.id)}
                         quiet
                         data-ctx-trigger
                         disabled={managedBusy || installInFlight}
@@ -2781,7 +2952,7 @@
                   {/each}
                 </fieldset>
                 {#if managedBusy}
-                  <p class="knob__status" role="status">Removing managed model…</p>
+                  <p class="knob__status" role="status">{t("managed.removing")}</p>
                 {/if}
                 {#if managedNotice}
                   <p class="knob__status" role="status">{managedNotice}</p>
@@ -2792,11 +2963,11 @@
               {#if managedChoices.length === 0}
                 <article class="knob" hidden={!knobVisible("ai-model")}>
                   <div class="knob__body">
-                    <span class="knob__label">Managed setup</span>
-                    <p class="knob__hint">Managed setup is unavailable in this build. Model and runtime verification is unfinished; your hardware has not been assessed.</p>
+                    <span class="knob__label">{t("settings.ai-unavailable.label")}</span>
+                    <p class="knob__hint">{t("settings.ai-unavailable.hint")}</p>
                     <div class="managed__actions">
-                      <Button type="button" variant="secondary" onclick={useExistingLocal}>Use existing local service</Button>
-                      <Button type="button" variant="ghost" onclick={() => reviewManaged()}>Why unavailable?</Button>
+                      <Button type="button" variant="secondary" onclick={useExistingLocal}>{t("managed.useExisting")}</Button>
+                      <Button type="button" variant="ghost" onclick={() => reviewManaged()}>{t("managed.whyUnavailable")}</Button>
                     </div>
                   </div>
                 </article>
@@ -2808,33 +2979,33 @@
                      progress stays inline at its row (ticket 193). -->
                 <article class="knob knob--stack" hidden={!knobVisible("ai-model")}>
                   <div class="knob__body">
-                    <span class="knob__label">Available to install</span>
-                    <p class="knob__hint">Review shows size, source, and license before anything downloads.</p>
+                    <span class="knob__label">{t("settings.ai-available.label")}</span>
+                    <p class="knob__hint">{t("settings.ai-available.hint")}</p>
                   </div>
                   <div class="managed__list">
                     {#each managedAvailable as model (model.id)}
                       <div class="managed__choice">
                       <p class="managed__name">{managedTierLabel(model.id)} — {managedModelParams(model.id)}</p>
-                      <p class="managed__meta">{managedSize(model.download_size_bytes)} download</p>
+                      <p class="managed__meta">{t("managed.downloadMeta").replace("{size}", managedSize(model.download_size_bytes))}</p>
                       {#if installInFlight && managedInstall.modelId === model.id}
                         <!-- Ticket 193: row-level compact bar + Cancel. The same
                              flight renders in the dialog — one store, both
                              places, surviving tab switches. -->
-                        <div class="managed__progress" role="status" aria-label="Install progress">
+                        <div class="managed__progress" role="status" aria-label={t("managed.installProgress")}>
                           <div class="managed__bar">
                             <div class="managed__fill" style="width: {installPercent ?? 0}%"></div>
                           </div>
                           <p class="knob__hint">{installProgressLine()}</p>
                           <div class="managed__actions">
                             <Button type="button" variant="secondary" onclick={cancelManagedInstall}>
-                              Cancel install
+                              {t("managed.cancelInstall")}
                             </Button>
                           </div>
                         </div>
                       {/if}
                       <div class="managed__actions">
                         <Button type="button" variant="secondary" disabled={managedBusy || installInFlight} onclick={() => reviewManaged(model.id)}>
-                          Review & install…
+                          {t("managed.reviewInstall")}
                         </Button>
                       </div>
                     </div>
@@ -2842,13 +3013,11 @@
                   </div>
                   {#if backgroundInstall}
                     <Notice tone="warn">
-                      A managed installation started before the last reload is still
-                      running in the background — wait for it to land, or cancel it
-                      and retry.
+                      {t("managed.backgroundInstall")}
                     </Notice>
                     <div class="managed__actions">
                       <Button type="button" variant="secondary" onclick={cancelManagedInstall}>
-                        Cancel install
+                        {t("managed.cancelInstall")}
                       </Button>
                     </div>
                   {/if}
@@ -2863,20 +3032,20 @@
                         disabled={managedBusy}
                         onclick={() => managedInstall.modelId && void retryAfterRemove(managedInstall.modelId)}
                       >
-                        Remove that revision and retry
+                        {t("managed.removeRetry")}
                       </Button>
                       <Button type="button" variant="ghost" onclick={keepInstallFiles}>
-                        Keep files
+                        {t("managed.keepFiles")}
                       </Button>
                     </div>
                   {:else if managedInstall.status === "interrupted"}
                     <Notice tone="warn">{managedInstall.error}</Notice>
                     <div class="managed__actions">
                       <Button type="button" variant="secondary" onclick={retryManagedInstall}>
-                        Retry install
+                        {t("managed.retryInstall")}
                       </Button>
                       <Button type="button" variant="ghost" onclick={keepInstallFiles}>
-                        Dismiss
+                        {t("common.dismiss")}
                       </Button>
                     </div>
                   {:else if managedInstall.status === "error" && managedInstall.error}
@@ -2885,10 +3054,10 @@
                          loops a revision the backend refused to overwrite. -->
                     <div class="managed__actions">
                       <Button type="button" variant="secondary" onclick={retryManagedInstall}>
-                        Retry install
+                        {t("managed.retryInstall")}
                       </Button>
                       <Button type="button" variant="ghost" onclick={keepInstallFiles}>
-                        Dismiss
+                        {t("common.dismiss")}
                       </Button>
                     </div>
                   {/if}
@@ -2900,18 +3069,18 @@
             {:else if !managedError}
               <article class="knob" hidden={!knobVisible("ai-model")}>
                 <div class="knob__body">
-                  <p class="knob__status" role="status">Reading bundled recommendation…</p>
+                  <p class="knob__status" role="status">{t("managed.readingRec")}</p>
                 </div>
               </article>
             {/if}
             {#if managedError}
               <article class="knob" hidden={!knobVisible("ai-model")}>
                 <div class="knob__body">
-                  <span class="knob__label">Managed setup</span>
+                  <span class="knob__label">{t("settings.ai-unavailable.label")}</span>
                   <Notice tone="error">{managedError}</Notice>
                   {#if !managedCatalog}
                     <div class="managed__actions">
-                      <Button type="button" variant="secondary" onclick={() => void loadManagedCatalog()}>Retry</Button>
+                      <Button type="button" variant="secondary" onclick={() => void loadManagedCatalog()}>{t("managed.retryBtn")}</Button>
                     </div>
                   {/if}
                 </div>
@@ -2922,11 +3091,9 @@
       {#if aiProvider === "existing-local"}
       <article class="knob" hidden={!knobVisible("ai-endpoint")}>
         <div class="knob__body">
-          <label class="knob__label" for="ai-base-url">Local service address</label>
+          <label class="knob__label" for="ai-base-url">{t("settings.ai-endpoint.label")}</label>
           <p class="knob__hint">
-            Your service's loopback address, e.g. http://127.0.0.1:11434.
-            Sprout connects to this machine only and never follows redirects
-            elsewhere; it never starts, stops, or reconfigures your service.
+            {t("settings.ai-endpoint.hint")}
           </p>
         </div>
         <div class="knob__input knob__input--wide">
@@ -2947,11 +3114,9 @@
 
       <article class="knob" hidden={!knobVisible("ai-model")}>
         <div class="knob__body">
-          <label class="knob__label" for="ai-model">Local model</label>
+          <label class="knob__label" for="ai-model">{t("settings.ai-model.label")}</label>
           <p class="knob__hint">
-            The exact model name your service exposes. Sprout never substitutes
-            another one — an unknown name fails instead. Test connection checks
-            it without saving anything.
+            {t("settings.ai-model.hint")}
           </p>
           {#if aiTestStatus}
             <Notice tone="ok">{aiTestStatus}</Notice>
@@ -2968,7 +3133,7 @@
             type="text"
             autocomplete="off"
             spellcheck="false"
-            placeholder="e.g. qwen2.5-coder:7b"
+            placeholder={t("settings.modelPh")}
             value={aiModel}
             oninput={(e) => (aiModel = (e.target as HTMLInputElement).value)}
           />
@@ -2978,7 +3143,7 @@
             onclick={testAiConnection}
             disabled={aiTestBusy}
           >
-            {aiTestBusy ? "Testing…" : "Test connection"}
+            {aiTestBusy ? t("common.busy.testing") : t("settings.testConnection")}
           </Button>
           </div>
         </article>
@@ -2989,10 +3154,9 @@
              above unmounts on Off and stranded files have no UI. -->
         <article class="knob knob--stack" hidden={!knobVisible("ai-model")}>
           <div class="knob__body">
-            <span class="knob__label">Managed downloads on this PC</span>
+            <span class="knob__label">{t("settings.ai-downloads.label")}</span>
             <p class="knob__hint">
-              AI assistance is off — downloads stay for later reuse. Removing is
-              deliberate and keeps your saved Quick Actions.
+              {t("settings.ai-downloads.hint")}
             </p>
           </div>
           <div class="managed__list">
@@ -3000,11 +3164,11 @@
               <div class="managed__option">
                 <div class="managed__texts">
                   <p class="managed__name">{managedTierLabel(model.id)} — {managedModelParams(model.id)}</p>
-                  <p class="managed__meta">Installed · {managedSize(model.download_size_bytes)}</p>
+                  <p class="managed__meta">{t("managed.installedMeta").replace("{size}", managedSize(model.download_size_bytes))}</p>
                 </div>
                 <IconButton
                   icon="dots"
-                  label={`Actions for ${model.id}`}
+                  label={t("packet.actionsFor").replace("{name}", model.id)}
                   quiet
                   data-ctx-trigger
                   disabled={managedBusy}
@@ -3019,7 +3183,7 @@
             {/each}
           </div>
           {#if managedBusy}
-            <p class="knob__status" role="status">Removing managed model…</p>
+            <p class="knob__status" role="status">{t("managed.removing")}</p>
           {/if}
           {#if managedNotice}
             <p class="knob__status" role="status">{managedNotice}</p>
@@ -3038,16 +3202,16 @@
       <!-- Ticket 115: fixed bottom bar — warning text + Save/Discard, pinned
            regardless of scroll, until saved or reverted. Text + color, never
            color alone; announce via polite live region (below). -->
-      <div class="dirty-bar" role="region" aria-label="Unsaved changes">
+      <div class="dirty-bar" role="region" aria-label={t("settings.dirtyTitle")}>
         <p class="dirty-bar__text">
           <span class="dirty-bar__dot" aria-hidden="true"></span>
-          Unsaved changes — Save or Discard
+          {t("settings.dirtyBar")}
         </p>
         <div class="dirty-bar__actions">
           <Button variant="secondary" onclick={discard} type="button" disabled={saving}
-            >Discard</Button
+            >{t("common.discard")}</Button
           >
-          <Button onclick={save} disabled={saving}>{saving ? "Saving…" : "Save"}</Button>
+          <Button onclick={save} disabled={saving}>{saving ? t("common.busy.saving") : t("common.save")}</Button>
         </div>
       </div>
     {/if}
@@ -3056,7 +3220,7 @@
     <!-- Ticket 116: guard leaving dirty Settings — rail + window close share one three-way alertdialog. -->
     <Dialog
       open={guardOpen}
-      title="Unsaved changes"
+      title={t("settings.dirtyTitle")}
       role="alertdialog"
       width={480}
       focusTarget="#guard-keep"
@@ -3064,17 +3228,17 @@
     >
       <div class="guard">
         <p class="guard__body">
-          You have unsaved changes. Save them, discard them, or keep editing — no changes are saved until you say so.
+          {t("settings.guardBody")}
         </p>
         <div class="guard__actions">
           <Button variant="secondary" id="guard-keep" onclick={handleKeepEditing} disabled={guardSaving || saving}
-            >Keep editing</Button
+            >{t("settings.guardKeep")}</Button
           >
           <Button variant="secondary" onclick={handleDiscardGuard} disabled={guardSaving || saving}
-            >Discard changes</Button
+            >{t("settings.guardDiscard")}</Button
           >
           <Button onclick={handleSaveGuard} disabled={guardSaving || saving}
-            >{guardSaving || saving ? "Saving…" : "Save changes"}</Button
+            >{guardSaving || saving ? t("common.busy.saving") : t("common.saveChanges")}</Button
           >
         </div>
       </div>
@@ -3084,7 +3248,7 @@
 
 <Dialog
   open={managedDetailsOpen}
-  title={managedReviewModel && !managedReviewModel.installed ? "Install local model" : "Managed model details"}
+  title={managedReviewModel && !managedReviewModel.installed ? t("managed.installTitle") : t("managed.detailsTitle")}
   onclose={() => {
     managedDetailsOpen = false;
     managedConfirmRemoveId = null;
@@ -3093,15 +3257,15 @@
   {#if managedDetailsOpen && managedCatalog}
     <div class="guard">
       {#if !managedReviewModel}
-        <p class="guard__body">This release has no verified model and runtime pair to download. These are candidates awaiting verification, not a hardware compatibility result.</p>
+        <p class="guard__body">{t("managed.noVerifiedPair")}</p>
       {/if}
       <section class="knob__body">
-        <h3 class="knob__label">Runtime</h3>
-        <p class="guard__body">{managedCatalog.runtime.name} {managedCatalog.runtime.version} · {managedCatalog.runtime.qualified ? "Verified" : "Awaiting verification"}</p>
+        <h3 class="knob__label">{t("managed.runtimeHead")}</h3>
+        <p class="guard__body">{managedCatalog.runtime.name} {managedCatalog.runtime.version} · {managedCatalog.runtime.qualified ? t("managed.verified") : t("managed.awaitingVerify")}</p>
         <p class="guard__body">{managedCatalog.runtime.license}</p>
-        <p class="guard__body managed__source">Source: {managedCatalog.runtime.source}</p>
+        <p class="guard__body managed__source">{t("managed.srcLabel").replace("{value}", managedCatalog.runtime.source)}</p>
         {#if managedCatalog.runtime.download_size_bytes !== null}
-          <p class="guard__body">Runtime download: {managedSize(managedCatalog.runtime.download_size_bytes)}</p>
+          <p class="guard__body">{t("managed.runtimeDownload").replace("{value}", managedSize(managedCatalog.runtime.download_size_bytes))}</p>
         {/if}
         {#if !managedCatalog.runtime.qualified && managedCatalog.runtime.blocker}
           <p class="guard__body">{managedCatalog.runtime.blocker}</p>
@@ -3111,30 +3275,28 @@
         <section class="knob__body">
           <h3 class="knob__label managed__source">{model.artifact}</h3>
           {#if model.installed}
-            <p class="guard__body">Installed for this user. Starts when you generate a draft and releases memory after 5 idle minutes.</p>
+            <p class="guard__body">{t("managed.installedNote")}</p>
           {:else if !model.installable}
-            <p class="guard__body">Awaiting verification</p>
+            <p class="guard__body">{t("managed.awaitingVerify")}</p>
           {/if}
           {#if model.blocker}<p class="guard__body">{model.blocker}</p>{/if}
-          <p class="guard__body">License: {model.license}</p>
-          <p class="guard__body managed__source">License source: {model.license_source}</p>
-          <p class="guard__body managed__source">Model source: {model.source}</p>
-          {#if model.revision}<p class="guard__body managed__source">Revision: {model.revision}</p>{/if}
-          {#if model.quantization}<p class="guard__body">Quantization: {model.quantization}</p>{/if}
-          {#if model.download_size_bytes !== null}<p class="guard__body">Model download: {managedSize(model.download_size_bytes)}</p>{/if}
-          {#if model.memory_needs_mb !== null}<p class="guard__body">Working memory: {new Intl.NumberFormat().format(model.memory_needs_mb)} MB RAM/VRAM</p>{/if}
-          {#if model.context_limit_tokens !== null}<p class="guard__body">Context limit: {new Intl.NumberFormat().format(model.context_limit_tokens)} tokens</p>{/if}
-          {#if model.minimum_runtime_version}<p class="guard__body">Minimum runtime: {model.minimum_runtime_version}</p>{/if}
+          <p class="guard__body">{t("managed.licenseLabel").replace("{value}", model.license)}</p>
+          <p class="guard__body managed__source">{t("managed.licenseSrc").replace("{value}", model.license_source)}</p>
+          <p class="guard__body managed__source">{t("managed.modelSrc").replace("{value}", model.source)}</p>
+          {#if model.revision}<p class="guard__body managed__source">{t("managed.revision").replace("{value}", model.revision)}</p>{/if}
+          {#if model.quantization}<p class="guard__body">{t("managed.quantization").replace("{value}", model.quantization)}</p>{/if}
+          {#if model.download_size_bytes !== null}<p class="guard__body">{t("managed.modelDownload").replace("{value}", managedSize(model.download_size_bytes))}</p>{/if}
+          {#if model.memory_needs_mb !== null}<p class="guard__body">{t("managed.workingMem").replace("{value}", new Intl.NumberFormat().format(model.memory_needs_mb))}</p>{/if}
+          {#if model.context_limit_tokens !== null}<p class="guard__body">{t("managed.ctxLimit").replace("{value}", new Intl.NumberFormat().format(model.context_limit_tokens))}</p>{/if}
+          {#if model.minimum_runtime_version}<p class="guard__body">{t("managed.minRuntime").replace("{value}", model.minimum_runtime_version)}</p>{/if}
           {#if model.sha256}<p class="guard__body managed__source">SHA-256: {model.sha256}</p>{/if}
           {#if model.installed && model.installed_dir}
-            <p class="guard__body managed__source">Installed at: {model.installed_dir}</p>
+            <p class="guard__body managed__source">{t("managed.installedAt").replace("{value}", model.installed_dir)}</p>
             <p class="guard__body">
-              The weights file and the runtime server live inside this folder.
-              You can delete it yourself in Explorer while the server is
-              stopped — Sprout will read the model as not installed.
+              {t("managed.weightsNote")}
             </p>
             <div class="managed__actions">
-              <Button variant="secondary" onclick={copyInstallPath}>Copy path</Button>
+              <Button variant="secondary" onclick={copyInstallPath}>{t("managed.copyPath")}</Button>
               {#if copyPathFeedback}
                 <span class="knob__status" role="status">{copyPathFeedback}</span>
               {/if}
@@ -3144,7 +3306,7 @@
       {/each}
       {#if managedReviewModel && installInFlight && managedInstall.modelId === managedReviewModel.id}
         <!-- Ticket 193: dialog full bar for the same flight the row shows. -->
-        <div class="managed__progress" role="status" aria-label="Install progress">
+        <div class="managed__progress" role="status" aria-label={t("managed.installProgress")}>
           <div class="managed__bar">
             <div class="managed__fill" style="width: {installPercent ?? 0}%"></div>
           </div>
@@ -3155,41 +3317,41 @@
         <Notice tone="error">{managedInstall.error}</Notice>
         <div class="managed__actions">
           <Button variant="secondary" onclick={() => void retryAfterRemove(managedReviewModel!.id)}>
-            Remove that revision and retry
+            {t("managed.removeRetry")}
           </Button>
-          <Button variant="ghost" onclick={keepInstallFiles}>Keep files</Button>
+          <Button variant="ghost" onclick={keepInstallFiles}>{t("managed.keepFiles")}</Button>
         </div>
       {/if}
       {#if managedBusy}
-        <p class="guard__body" role="status">Removing managed model…</p>
+        <p class="guard__body" role="status">{t("managed.removing")}</p>
       {:else if managedNotice}
         <p class="guard__body" role="status">{managedNotice}</p>
       {/if}
       {#if managedError}<Notice tone="error">{managedError}</Notice>{/if}
       {#if managedReviewModel?.installed}
         <section class="knob__body">
-          <h3 class="knob__label">Remove this model</h3>
+          <h3 class="knob__label">{t("managed.removeHead")}</h3>
           <p class="guard__body">{managedRemovePreview(managedReviewModel.id)}</p>
           {#if managedConfirmRemoveId === managedReviewModel.id}
             <div class="managed__actions">
-              <Button variant="secondary" disabled={managedBusy} onclick={() => (managedConfirmRemoveId = null)}>Keep it</Button>
-              <Button disabled={managedBusy} onclick={() => void removeManaged(managedReviewModel!.id)}>{managedBusy ? "Removing…" : "Confirm remove"}</Button>
+              <Button variant="secondary" disabled={managedBusy} onclick={() => (managedConfirmRemoveId = null)}>{t("managed.keepIt")}</Button>
+              <Button disabled={managedBusy} onclick={() => void removeManaged(managedReviewModel!.id)}>{managedBusy ? t("common.busy.removing") : t("managed.confirmRemove")}</Button>
             </div>
           {:else}
             <div class="managed__actions">
-              <Button variant="secondary" disabled={managedBusy} onclick={() => (managedConfirmRemoveId = managedReviewModel!.id)}>Remove model…</Button>
+              <Button variant="secondary" disabled={managedBusy} onclick={() => (managedConfirmRemoveId = managedReviewModel!.id)}>{t("managed.removeModelBtn")}</Button>
             </div>
           {/if}
         </section>
       {/if}
       <div class="managed__actions">
-        <Button variant="secondary" onclick={() => { managedDetailsOpen = false; managedConfirmRemoveId = null; }}>Close</Button>
+        <Button variant="secondary" onclick={() => { managedDetailsOpen = false; managedConfirmRemoveId = null; }}>{t("common.close")}</Button>
         {#if managedReviewModel && installInFlight && managedInstall.modelId === managedReviewModel.id}
-          <Button variant="secondary" onclick={cancelManagedInstall}>Cancel install</Button>
+          <Button variant="secondary" onclick={cancelManagedInstall}>{t("managed.cancelInstall")}</Button>
         {:else if !managedBusy && !installInFlight && managedInstall.status === "error" && !installGuardHit && managedInstall.modelId === managedReviewModel?.id}
-          <Button variant="secondary" onclick={retryManagedInstall}>Retry install</Button>
+          <Button variant="secondary" onclick={retryManagedInstall}>{t("managed.retryInstall")}</Button>
         {:else if !managedBusy && !installInFlight && managedReviewModel?.installable && !managedReviewModel.installed}
-          <Button onclick={() => void installManaged(managedReviewModel!.id)}>Install model and runtime</Button>
+          <Button onclick={() => void installManaged(managedReviewModel!.id)}>{t("managed.installModelRuntime")}</Button>
         {/if}
       </div>
     </div>
@@ -3198,13 +3360,13 @@
 
 <ConfirmDialog
   open={installConfirmOpen}
-  title="Update available"
-  confirmLabel={updateState.installing ? "Installing…" : "Install and restart"}
+  title={t("update.available")}
+  confirmLabel={updateState.installing ? t("common.busy.installing") : t("update.installRestart")}
   onconfirm={applyInstall}
   oncancel={() => (installConfirmOpen = false)}
 >
-  <p>Install Sprout {updateState.available?.version} now?</p>
-  <p>Sprout restarts when the installer finishes.</p>
+  <p>{t("update.confirmBody").replace("{version}", updateState.available?.version ?? "")}</p>
+  <p>{t("update.confirmNote")}</p>
   {#if installError}
     <Notice tone="error">{installError}</Notice>
   {/if}
@@ -3212,8 +3374,8 @@
 
 <ConfirmDialog
   open={restoreCounts !== null}
-  title="Restore backup?"
-  confirmLabel="Restore"
+  title={t("settings.restoreTitle")}
+  confirmLabel={t("chrome.restore")}
   onconfirm={() => {
     const file = restoreFile;
     restoreCounts = null;
@@ -3227,19 +3389,18 @@
 >
   {#if restoreCounts && describeCounts(restoreCounts)}
     <p>
-      <strong>{restoreFile.split(/[\\/]/).pop()}</strong> contains
-      {describeCounts(restoreCounts)}.
+      <strong>{restoreFile.split(/[\\/]/).pop()}</strong>{t("settings.restoreContains").replace("{counts}", describeCounts(restoreCounts))}
     </p>
-    <p>Items that already exist here are kept — nothing is overwritten.</p>
+    <p>{t("settings.restoreKept")}</p>
   {:else}
-    <p>This file contains no items to restore.</p>
+    <p>{t("settings.restoreEmpty")}</p>
   {/if}
 </ConfirmDialog>
 
 <ConfirmDialog
   open={exportOpen}
-  title="Export backup"
-  confirmLabel="Export selected…"
+  title={t("settings.exportTitle")}
+  confirmLabel={t("settings.exportConfirm")}
   confirmDisabled={!anyIncluded}
   onconfirm={() => {
     exportOpen = false;
@@ -3247,11 +3408,21 @@
   }}
   oncancel={() => (exportOpen = false)}
 >
-  <p>Everything is included by default — untick what should stay out of the file.</p>
-  <div class="export-picker" role="group" aria-label="Collections to include">
+  <p>{t("settings.exportHint")}</p>
+  <div class="export-picker" role="group" aria-label={t("settings.exportGroup")}>
     {#each EXPORT_ORDER as key (key)}
       <Checkbox
-        title={COLLECTIONS[key].label}
+        title={t(
+          key === "launch_entries"
+            ? "nav.launch"
+            : key === "quick_actions"
+              ? "nav.actions"
+              : key === "clips"
+                ? "nav.clips"
+                : key === "products"
+                  ? "nav.products"
+                  : "nav.presets",
+        )}
         checked={include[key]}
         onchange={(v) => (include[key] = v)}
       />
@@ -3758,6 +3929,25 @@
   }
 
   .knob__range:focus-visible {
+    outline: 2px solid var(--ring);
+    outline-offset: 2px;
+  }
+
+  .knob__range:disabled {
+    opacity: 0.55;
+    cursor: not-allowed;
+  }
+
+  /* The disabled-width hint's jump link to the per-monitor widths below:
+     accent text with an underline, glowing on focus like the shared
+     select — tokens only, no ad-hoc color. */
+  .knob__hint a {
+    color: var(--accent);
+    text-decoration: underline;
+    text-underline-offset: 2px;
+  }
+
+  .knob__hint a:focus-visible {
     outline: 2px solid var(--ring);
     outline-offset: 2px;
   }

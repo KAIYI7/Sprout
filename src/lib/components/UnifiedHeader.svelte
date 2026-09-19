@@ -6,6 +6,7 @@
 <script lang="ts">
   import IconButton from "./IconButton.svelte";
   import SproutMark from "./SproutMark.svelte";
+  import { t } from "$lib/copy";
 
   let {
     section,
@@ -32,7 +33,7 @@
 
 <header
   role="banner"
-  aria-label="Sprout window bar"
+  aria-label={t("chrome.barLabel")}
   class="win-header"
   class:win-header--maximized={maximized}
   data-tauri-drag-region="deep"
@@ -45,14 +46,14 @@
     <span class="win-header__section">{section}</span>
   </div>
   <div class="win-header__controls" data-tauri-drag-region="false">
-    <IconButton icon="minus" label="Minimize" onclick={onMinimize} />
+    <IconButton icon="minus" label={t("chrome.minimize")} onclick={onMinimize} />
     <IconButton
       icon={maximized ? "restore" : "square"}
-      label={maximized ? "Restore" : "Maximize"}
+      label={maximized ? t("chrome.restore") : t("chrome.maximize")}
       onclick={onToggleMaximize}
     />
     <span class="win-header__close">
-      <IconButton icon="x" label="Close" onclick={onClose} />
+      <IconButton icon="x" label={t("common.close")} onclick={onClose} />
     </span>
   </div>
 </header>

@@ -166,17 +166,17 @@ describe("QuickActionFormDialog two-view dialog", () => {
   });
 
   it("announces the applied draft for manual review", () => {
-    expect(DIALOG_SOURCE).toContain("Applied — review and save.");
+    expect(DIALOG_SOURCE).toContain('t("actionform.appliedManual")');
     expect(DIALOG_SOURCE).toContain('role="status"');
   });
 
   it("chains clarification answers with aspect keys and offers drafting anyway", () => {
-    expect(DIALOG_SOURCE).toMatch(/>\s*Continue\s*</);
+    expect(DIALOG_SOURCE).toContain('t("actionform.continue")');
     expect(DIALOG_SOURCE).toContain("clarified choice [");
     expect(DIALOG_SOURCE).toContain("clarified choice:");
     expect(DIALOG_SOURCE).toContain("draft-anyway:");
-    expect(DIALOG_SOURCE).toMatch(/>\s*Draft anyway\s*</);
-    expect(DIALOG_SOURCE).toContain("Question {clarifyRound + 1}");
+    expect(DIALOG_SOURCE).toContain('t("actionform.draftAnyway")');
+    expect(DIALOG_SOURCE).toContain('t("actionform.clarifyRound")');
     expect(DIALOG_SOURCE).not.toContain("Regenerate with selection");
   });
 });

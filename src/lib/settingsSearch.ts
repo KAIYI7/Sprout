@@ -4,6 +4,12 @@
 /// page outgrows scanning, a local filter narrows groups to matches instead of
 /// adding navigation depth. Entries are data — a future knob joins by adding
 /// one entry here, never by special-casing the matcher.
+///
+/// Display labels and descriptions resolve through the copy dictionary so the
+/// filter surface follows the active locale live; synonyms and value texts
+/// stay matching data and are never rendered alone.
+
+import { t, tCount } from "./copy";
 
 export type SettingsGroupKey = "general" | "dock" | "companion" | "backup" | "ai";
 
@@ -17,8 +23,8 @@ export const SETTINGS_GROUPS: { key: SettingsGroupKey; label: string }[] = [
 
 /// Knob ids per group, backing the section count badges and the resolver.
 export const SETTINGS_GROUP_KNOBS: Record<SettingsGroupKey, string[]> = {
-  general: ["theme", "animation", "native-frame", "install-dir", "autostart", "default-timeout", "log-retention", "launch-concurrency"],
-  dock: ["dock-state", "dock-mode", "dock-edge", "dock-width", "dock-density", "per-monitor", "reveal-dwell", "reveal-sensitivity"],
+  general: ["theme", "language", "animation", "native-frame", "install-dir", "autostart", "default-timeout", "log-retention", "launch-concurrency"],
+  dock: ["dock-state", "dock-mode", "dock-edge", "bezel-y", "dock-width", "dock-density", "per-monitor", "reveal-dwell", "reveal-sensitivity"],
   companion: ["companion-active", "companion-height", "companion-sites"],
   backup: ["backup", "updates"],
   ai: ["ai-provider", "ai-endpoint", "ai-model"],
@@ -41,6 +47,8 @@ export interface SettingsSearchEntry {
 export interface SettingsSearchSnapshot {
   themeMode: string;
   themeLabel: string;
+  language: string;
+  languageLabel: string;
   animation: string;
   animationLabel: string;
   nativeFrame: string;
@@ -53,6 +61,10 @@ export interface SettingsSearchSnapshot {
   dockMode: string;
   dockEdge: string;
   dockState: string;
+  /** The bezel tab's parking height as a whole percent of its travel (0–100)
+   *  — the single-display knob's value, and the searchable value for the
+   *  per-display sliders. Plain data so tests can build an index. */
+  bezelYRatioPct: number;
   dockWidthPct: number;
   dockDensity: string;
   revealDwellMs: number;
@@ -69,241 +81,262 @@ export interface SettingsSearchSnapshot {
 }
 
 /// Builds the full knob + group index for one snapshot of current values.
+/// Labels and descriptions resolve through the dictionary at build time, so
+/// rebuilding the index (the page derives it) follows a language switch.
 export function buildSettingsSearchIndex(snap: SettingsSearchSnapshot): SettingsSearchEntry[] {
-  const installValue = snap.installDir.trim() || "(winget default)";
-  const companionValue = snap.companionActiveName ?? "Off";
+  const installValue = snap.installDir.trim() || t("settings.wingetDefault");
+  const companionValue = snap.companionActiveName ?? t("common.off");
   return [
     {
       group: "general",
       id: "group:general",
-      label: "General",
+      label: t("settings.group.general"),
       synonyms: ["settings", "defaults"],
       values: [],
-      description: "Theme, animation, window frame, install directory, auto-start, and run defaults.",
+      description: t("search.group.general.desc"),
+    },
+    {
+      group: "general",
+      id: "language",
+      label: t("settings.language.label"),
+      synonyms: ["language", "locale", "chinese", "english", "translation", "简体中文", "中文"],
+      values: [snap.language, snap.languageLabel],
+      description: t("search.language.desc"),
     },
     {
       group: "general",
       id: "theme",
-      label: "Theme",
+      label: t("settings.theme.label"),
       synonyms: ["appearance", "look", "mode", "system", "light", "dark"],
       values: [snap.themeMode, snap.themeLabel],
-      description: "Follows Windows or pins the app light or dark. Applies immediately.",
+      description: t("search.theme.desc"),
     },
     {
       group: "general",
       id: "animation",
-      label: "Animation",
+      label: t("settings.animation.label"),
       synonyms: ["motion", "movement", "transitions", "effects", "fade", "pulses", "still"],
       values: [snap.animation, snap.animationLabel],
-      description: "Plays every menu, dialog, and pulse transition, or renders each end state at once. Applies immediately.",
+      description: t("search.animation.desc"),
     },
     {
       group: "general",
       id: "native-frame",
-      label: "Window frame",
+      label: t("settings.native-frame.label"),
       synonyms: ["titlebar", "title bar", "frame", "frameless", "native", "unified header", "window buttons", "minimize", "maximize", "close"],
       values: [snap.nativeFrame, snap.nativeFrameLabel],
-      description: "Modern header over a frameless window, or the native OS titlebar. Applies immediately.",
+      description: t("search.native-frame.desc"),
     },
     {
       group: "general",
       id: "install-dir",
-      label: "Install directory",
+      label: t("settings.install-dir.label"),
       synonyms: ["location", "folder", "path", "directory", "winget default"],
       values: [installValue],
-      description: "Where installs and upgrades land. Empty means the installer's default.",
+      description: t("search.install-dir.desc"),
     },
     {
       group: "general",
       id: "autostart",
-      label: "Start with Windows",
+      label: t("search.autostart.label"),
       synonyms: ["autostart", "login", "boot", "tray", "startup", "on", "off"],
       values: [snap.autostart],
-      description: "Starts Sprout with Windows, resident in the tray.",
+      description: t("search.autostart.desc"),
     },
     {
       group: "general",
       id: "default-timeout",
-      label: "Default timeout",
+      label: t("settings.default-timeout.label"),
       synonyms: ["minutes", "kill", "long", "min"],
       values: [`${snap.timeoutMinutes} min`, `${snap.timeoutMinutes} minutes`],
-      description: "Minutes a requirement may take before its installer is killed.",
+      description: t("search.default-timeout.desc"),
     },
     {
       group: "general",
       id: "log-retention",
-      label: "Log retention",
+      label: t("settings.log-retention.label"),
       synonyms: ["logs", "prune", "days", "archive", "history"],
       values: [`${snap.retentionDays} days`],
-      description: "How long a finished run's raw log folder is kept.",
+      description: t("search.log-retention.desc"),
     },
     {
       group: "general",
       id: "launch-concurrency",
-      label: "Launch concurrency",
+      label: t("settings.launch-concurrency.label"),
       synonyms: ["parallel", "queue", "apps", "at once", "gentle", "snappy"],
       values: [`${snap.launchConcurrency} apps`],
-      description: "How many Quick Launch apps may start at once before the rest queue.",
+      description: t("search.launch-concurrency.desc"),
     },
     {
       group: "dock",
       id: "group:dock",
-      label: "Dock",
+      label: t("settings.group.dock"),
       synonyms: ["quick launch", "window", "bar", "strip", "palette"],
       values: [],
-      description: "How the Quick Launch window floats, docks, and reveals.",
+      description: t("search.group.dock.desc"),
     },
     {
       group: "dock",
       id: "dock-state",
-      label: "Quick Launch window",
+      label: t("settings.dock-state.label"),
       synonyms: ["floating", "docked", "dock", "palette", "bar"],
       values: [snap.dockState],
-      description: "Whether the Quick Launch window floats or docks to a screen edge.",
+      description: t("search.dock-state.desc"),
     },
     {
       group: "dock",
       id: "dock-mode",
-      label: "Dock mode",
-      synonyms: ["auto-hide", "autohide", "fixed", "pinned", "taskbar", "hide", "reveal"],
+      label: t("settings.dock-mode.label"),
+      synonyms: ["auto-hide", "autohide", "fixed", "pinned", "taskbar", "hide", "reveal", "bezel", "tab"],
       values: [snap.dockMode],
-      description: "Auto-hide slides the dock away when not hovered; fixed reserves the strip.",
+      description: t("search.dock-mode.desc"),
+    },
+    {
+      group: "dock",
+      id: "bezel-y",
+      label: t("quickwindow.bezelPosition"),
+      synonyms: ["bezel", "tab", "position", "height", "vertical", "drag", "park"],
+      values: [`${snap.bezelYRatioPct}%`],
+      description: t("search.bezel-y.desc"),
     },
     {
       group: "dock",
       id: "dock-edge",
-      label: "Default dock edge",
+      label: t("search.dock-edge.label"),
       synonyms: ["left", "right", "side", "screen edge"],
       values: [snap.dockEdge],
-      description: "Which screen edge the dock attaches to when first docked.",
+      description: t("search.dock-edge.desc"),
     },
     {
       group: "dock",
       id: "dock-width",
-      label: "Dock width",
+      label: t("settings.dock-width.label"),
       synonyms: ["wide", "narrow", "size", "percent", "pixels", "px", "slider"],
       values: [`${snap.dockWidthPct}%`],
-      description: "How wide the dock is, as a share of the monitor.",
+      description: t("search.dock-width.desc"),
     },
     {
       group: "dock",
       id: "dock-density",
-      label: "List density",
+      label: t("settings.dock-density.label"),
       synonyms: ["compact", "default", "large", "text size", "rows", "readable"],
       values: [snap.dockDensity],
-      description: "List text size in the Quick Launch window and dock.",
+      description: t("search.dock-density.desc"),
     },
     {
       group: "dock",
       id: "per-monitor",
-      label: "Per-monitor dock",
-      synonyms: ["monitor", "monitors", "display", "displays", "screen", "screens", "multi"],
+      label: t("settings.per-monitor.label"),
+      synonyms: ["monitor", "monitors", "display", "displays", "screen", "screens", "multi", "bezel", "tab position"],
       values: [],
-      description: "Each display remembers its own edge, mode, and width.",
+      description: t("search.per-monitor.desc"),
     },
     {
       group: "dock",
       id: "reveal-dwell",
-      label: "Reveal delay",
+      label: t("settings.reveal-dwell.label"),
       synonyms: ["dwell", "hold", "hover", "slide out", "milliseconds", "ms", "sensitivity", "snappy", "graze"],
       values: [`${snap.revealDwellMs} ms`],
-      description: "Hold time at the screen edge before the hidden dock slides out.",
+      description: t("search.reveal-dwell.desc"),
     },
     {
       group: "dock",
       id: "reveal-sensitivity",
-      label: "Reveal sensitivity",
+      label: t("settings.reveal-sensitivity.label"),
       synonyms: ["push", "nudge", "pixels", "px", "brushes"],
       values: [`${snap.revealSensitivityPx} px`],
-      description: "Distance the cursor must push into the edge before the hold timer starts.",
+      description: t("search.reveal-sensitivity.desc"),
     },
     {
       group: "companion",
       id: "group:companion",
-      label: "Companion",
+      label: t("nav.companion"),
       synonyms: ["sound", "audio", "mute", "muted", "unmute", "volume", "music", "browser", "web", "site", "pane"],
       values: [companionValue],
-      description: "The docked web pane: active site, height, saved sites, and audio.",
+      description: t("search.group.companion.desc"),
     },
     {
       group: "companion",
       id: "companion-active",
-      label: "Active site",
+      label: t("settings.companion-active.label"),
       synonyms: ["url", "off", "pane", "website", "page"],
       values: [companionValue],
-      description: "What appears while Quick Launch is docked. Off removes the pane.",
+      description: t("search.companion-active.desc"),
     },
     {
       group: "companion",
       id: "companion-height",
-      label: "Pane height",
+      label: t("settings.companion-height.label"),
       synonyms: ["tall", "short", "ratio", "divider", "drag", "splitter", "percent"],
       values: [`${snap.companionRatioPct}%`],
-      description: "The pane's starting height. Dragging the divider also saves.",
+      description: t("search.companion-height.desc"),
     },
     {
       group: "companion",
       id: "companion-sites",
-      label: "Saved sites",
+      label: t("settings.companion-sites.label"),
       synonyms: ["manage", "add", "rename", "delete", "names", "urls", "list"],
       values: snap.companionSiteNames,
-      description: `${snap.companionSiteCount} site${snap.companionSiteCount === 1 ? "" : "s"} saved on this PC.`,
+      description:
+        snap.companionSiteCount === 1
+          ? tCount("search.companion-sites.descOne", snap.companionSiteCount)
+          : tCount("search.companion-sites.descMany", snap.companionSiteCount),
     },
     {
       group: "backup",
       id: "group:backup",
-      label: "Backup & housekeeping",
+      label: t("settings.group.backup"),
       synonyms: ["export", "restore", "update", "updates"],
       values: [],
-      description: "Whole-app backup and Sprout updates.",
+      description: t("search.group.backup.desc"),
     },
     {
       group: "backup",
       id: "backup",
-      label: "Backup",
+      label: t("settings.backup.label"),
       synonyms: ["export", "restore", "json", "collections", "file"],
       values: [],
-      description: "Writes collections into one JSON file; restoring adds what's missing.",
+      description: t("search.backup.desc"),
     },
     {
       group: "backup",
       id: "updates",
-      label: "Sprout updates",
+      label: t("settings.updates.label"),
       synonyms: ["update", "upgrade", "version", "release", "github", "new build", "install"],
       values: [snap.updateSummary],
-      description: "Checks GitHub releases for a newer build.",
+      description: t("search.updates.desc"),
     },
     {
       group: "ai",
       id: "group:ai",
-      label: "AI assistance",
+      label: t("settings.group.ai"),
       synonyms: ["ai", "model", "draft", "generate", "assistant", "llm", "ollama"],
       values: [],
-      description: "Optional help drafting Quick Action commands. Off until configured.",
+      description: t("search.group.ai.desc"),
     },
     {
       group: "ai",
       id: "ai-provider",
-      label: "AI provider",
+      label: t("settings.ai-provider.label"),
       synonyms: ["off", "existing local", "managed", "cloud", "service", "setup", "enable"],
       values: [snap.aiProvider, snap.aiProviderLabel],
-      description: "Off until configured. Existing-local connects to your own loopback service.",
+      description: t("search.ai-provider.desc"),
     },
     {
       group: "ai",
       id: "ai-endpoint",
-      label: "Local service address",
+      label: t("settings.ai-endpoint.label"),
       synonyms: ["endpoint", "url", "address", "localhost", "port", "connection", "connect"],
       values: [],
-      description: "Your service's loopback address, for example http://127.0.0.1:11434.",
+      description: t("search.ai-endpoint.desc"),
     },
     {
       group: "ai",
       id: "ai-model",
-      label: "Local model",
+      label: t("settings.ai-model.label"),
       synonyms: ["model name", "exposes", "pick"],
       values: snap.aiModel ? [snap.aiModel] : [],
-      description: "The exact model name your local service exposes. Never substituted.",
+      description: t("search.ai-model.desc"),
     },
   ];
 }

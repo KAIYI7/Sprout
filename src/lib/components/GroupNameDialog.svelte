@@ -4,6 +4,7 @@
   import Dialog from "./Dialog.svelte";
   import Notice from "./Notice.svelte";
   import TextInput from "./TextInput.svelte";
+  import { t } from "$lib/copy";
 
   /** The create/rename group dialog (ticket 95): one markup for every
    *  collection page — title flips with the mode, the input id stays unique
@@ -34,7 +35,7 @@
 
 <Dialog
   open={naming !== null}
-  title={naming?.mode === "rename" ? "Rename group" : "New group"}
+  title={naming?.mode === "rename" ? t("groups.renameTitle") : t("groups.createTitle")}
   {onclose}
   width={380}
 >
@@ -46,7 +47,7 @@
     }}
   >
     <TextInput
-      label="Name"
+      label={t("common.name")}
       id={inputId}
       value={draft}
       {placeholder}
@@ -58,10 +59,10 @@
     {/if}
     <div class="name-form__buttons">
       <Button variant="secondary" onclick={onclose}>
-        Cancel
+        {t("common.cancel")}
       </Button>
       <Button kind="submit" disabled={saving}>
-        {naming?.mode === "rename" ? "Rename" : "Create"}
+        {naming?.mode === "rename" ? t("common.rename") : t("common.create")}
       </Button>
     </div>
   </form>

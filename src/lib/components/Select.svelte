@@ -1,6 +1,7 @@
 <script lang="ts">
   import ContextMenu, { type ContextMenuState } from "./ContextMenu.svelte";
   import Icon from "./Icon.svelte";
+  import { t } from "$lib/copy";
 
   /** One row in the dropdown popout (ticket 204): label-first like the old
    *  <option> text; title keeps the old option title tooltips (e.g. version
@@ -67,7 +68,7 @@
       menuLabel ??
       (typeof rest["aria-label"] === "string" && rest["aria-label"]
         ? (rest["aria-label"] as string)
-        : "Choose an option");
+        : t("select.chooseOption"));
     menu = {
       open: true,
       label: triggerLabel,

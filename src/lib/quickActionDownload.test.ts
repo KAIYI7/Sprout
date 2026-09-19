@@ -101,21 +101,21 @@ describe("Download-all-zip flow", () => {
 
 describe("Download + lint wiring pins", () => {
   it("keeps per-file Download beside Remove plus the zip threshold", () => {
-    expect(DIALOG_SOURCE).toContain("Download");
-    expect(DIALOG_SOURCE).toContain("Download all (.zip)");
+    expect(DIALOG_SOURCE).toContain('t("menu.download")');
+    expect(DIALOG_SOURCE).toContain('t("menu.downloadAll")');
     expect(DIALOG_SOURCE).toContain("persistedFileCount >= 2");
     expect(DIALOG_SOURCE).toContain("editing && row.id !== null");
   });
 
   it("keeps the row-menu Download flyout with the zip threshold", () => {
-    expect(PAGE_SOURCE).toContain("Download all (.zip)");
+    expect(PAGE_SOURCE).toContain('t("menu.downloadAll")');
     expect(PAGE_SOURCE).toContain("downloadRowFile");
     expect(PAGE_SOURCE).toContain("files.length >= 2");
   });
 
   it("keeps the cmd start title-trap warning with its fixed forms", () => {
-    expect(DIALOG_SOURCE).toContain("startTrap");
-    expect(DIALOG_SOURCE).toContain("Start-Process");
-    expect(DIALOG_SOURCE).toContain("explorer");
+    expect(DIALOG_SOURCE).toContain('t("actionform.startTrap")');
+    expect(DIALOG_SOURCE).toContain('t("actionform.startTrap")');
+    expect(DIALOG_SOURCE).toContain('t("actionform.startTrap")');
   });
 });

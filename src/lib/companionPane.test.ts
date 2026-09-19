@@ -170,7 +170,7 @@ describe("Companion native WebView contract", () => {
     expect(ROUTE_SOURCE).not.toContain(
       "The strip stays pinned until that edge frees up",
     );
-    expect(ROUTE_SOURCE).toContain("Hiding still works");
+    expect(ROUTE_SOURCE).toContain('t("quickwindow.blockedNote")');
   });
 
   it("stacks the blocked banner so it stays usable at the dock's real width", () => {
@@ -231,10 +231,10 @@ describe("Companion audio: toolbar mute + playing indicator", () => {
 
   it("keeps the toggle keyboard-accessible with pressed state and the indicator tooltip-only", () => {
     expect(ROUTE_SOURCE).toContain("aria-pressed={companionMuted}");
-    expect(ROUTE_SOURCE).toContain("Mute companion audio");
-    expect(ROUTE_SOURCE).toContain("Unmute companion audio");
+    expect(ROUTE_SOURCE).toContain('t("quickwindow.muteBtn")');
+    expect(ROUTE_SOURCE).toContain('t("quickwindow.unmuteBtn")');
     expect(ROUTE_SOURCE).toContain("qlw__companion-playing");
-    expect(ROUTE_SOURCE).toContain("Playing audio");
+    expect(ROUTE_SOURCE).toContain('t("quickwindow.playing")');
     expect(ROUTE_SOURCE).toContain('role="img"');
   });
 
@@ -259,7 +259,7 @@ describe("Companion audio: toolbar mute + playing indicator", () => {
     expect(LIB_SOURCE).toContain("ms-settings:apps-volume");
     expect(API_SOURCE).toContain("open_volume_mixer");
     expect(ROUTE_SOURCE).toContain("onclick={openMixer}");
-    expect(ROUTE_SOURCE).toContain("Open volume mixer");
+    expect(ROUTE_SOURCE).toContain('t("quickwindow.mixerBtn")');
     expect(ROUTE_SOURCE).toContain('icon="sliders"');
     // The shortcut lives inside the docked pane's own toolbar, like the rest
     // of the audio chrome — floating and no-URL states gain nothing.
@@ -279,13 +279,12 @@ describe("Companion height resolve never fails silently (ticket 143)", () => {
   });
 
   it("says so when it genuinely cannot resolve the screen", () => {
-    expect(ROUTE_SOURCE).toContain(
-      "Couldn't read the Companion height for this screen",
-    );
+    expect(ROUTE_SOURCE).toContain('t("quickwindow.heightResolveFail")');
+    expect(ROUTE_SOURCE).toContain('t("quickwindow.heightReadFail")');
   });
 
   it("says so when a drag persist fails instead of looking applied", () => {
-    expect(ROUTE_SOURCE).toContain("Couldn't save the Companion height");
+    expect(ROUTE_SOURCE).toContain('t("quickwindow.heightFail")');
   });
 });
 
@@ -329,8 +328,8 @@ describe("Companion user zoom per site (ticket 162)", () => {
     expect(zoomAt).toBeGreaterThan(reloadAt);
     expect(urlAt).toBeGreaterThan(zoomAt);
     expect(ROUTE_SOURCE).toContain("qlw__companion-zoom-pct");
-    expect(ROUTE_SOURCE).toContain("Zoom out companion");
-    expect(ROUTE_SOURCE).toContain("Zoom in companion");
+    expect(ROUTE_SOURCE).toContain('t("quickwindow.zoomOut")');
+    expect(ROUTE_SOURCE).toContain('t("quickwindow.zoomIn")');
   });
 
   it("keeps the single-row bar intact at the 340px floor (ticket 170 follow-on)", () => {
@@ -363,7 +362,7 @@ describe("Companion user zoom per site (ticket 162)", () => {
     // Open externally never hide. The overflow menu reuses the same handlers,
     // never duplicates behavior.
     expect(ROUTE_SOURCE).toContain('icon="dots"');
-    expect(ROUTE_SOURCE).toContain("More Companion actions");
+    expect(ROUTE_SOURCE).toContain('t("quickwindow.moreMenuLabel")');
     expect(ROUTE_SOURCE).toContain("data-ctx-more");
     expect(ROUTE_SOURCE).toContain("companionOverflowStage < 1");
     expect(ROUTE_SOURCE).toContain("companionOverflowStage < 2");
@@ -386,11 +385,11 @@ describe("Companion user zoom per site (ticket 162)", () => {
   it("keeps ⋯ labels short with a reset icon", () => {
     const menuAt = ROUTE_SOURCE.indexOf("const companionMoreMenu");
     const menuBody = ROUTE_SOURCE.slice(menuAt, menuAt + 2400);
-    expect(menuBody).toContain('label: "Zoom out"');
-    expect(menuBody).toContain('label: "Zoom in"');
-    expect(menuBody).toContain('label: "Reset zoom"');
+    expect(menuBody).toContain('t("quickwindow.menuZoomOut")');
+    expect(menuBody).toContain('t("quickwindow.menuZoomIn")');
+    expect(menuBody).toContain('t("quickwindow.menuZoomReset")');
     expect(menuBody).toContain('icon: "refresh"');
-    expect(menuBody).not.toContain("Zoom out companion");
+    expect(menuBody).not.toContain('t("quickwindow.zoomOut")');
   });
 
   it("keeps only one companion menu open at a time", () => {
@@ -438,7 +437,7 @@ describe("Companion unborn window stays quiet", () => {
     // completes must expire loudly instead of hanging forever with no pane
     // and no word anywhere.
     expect(ROUTE_SOURCE).toContain("COMPANION_BORN_TIMEOUT_MS");
-    expect(ROUTE_SOURCE).toContain("never finished loading");
+    expect(ROUTE_SOURCE).toContain('t("quickwindow.paneBornFail")');
   });
 });
 
@@ -489,8 +488,8 @@ describe("Companion session trail behind Back/Forward", () => {
     // The learned affordance keeps its icons, labels and browser order —
     // Back, Forward, then Reload.
     const barAt = ROUTE_SOURCE.indexOf('<div class="qlw__companion-bar"');
-    const backAt = ROUTE_SOURCE.indexOf('label="Back"');
-    const forwardAt = ROUTE_SOURCE.indexOf('label="Forward"');
+    const backAt = ROUTE_SOURCE.indexOf('t("quickwindow.back")');
+    const forwardAt = ROUTE_SOURCE.indexOf('t("quickwindow.forward")');
     const reloadAt = ROUTE_SOURCE.indexOf("onclick={() => void companionReload()}");
     expect(barAt).toBeGreaterThan(-1);
     expect(backAt).toBeGreaterThan(barAt);

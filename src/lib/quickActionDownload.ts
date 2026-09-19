@@ -10,6 +10,7 @@
 
 import { save as saveDialog } from "@tauri-apps/plugin-dialog";
 import { writeFile } from "@tauri-apps/plugin-fs";
+import { t } from "./copy";
 import { getQuickActionFile, listQuickActionFiles } from "./api";
 import { base64ToBytes, buildStoredZip, downloadFilters } from "./quickActionFiles";
 
@@ -21,7 +22,7 @@ export async function downloadSingleFile(
   filename: string,
 ): Promise<DownloadResult> {
   const path = await saveDialog({
-    title: `Download ${filename}`,
+    title: t("files.downloadOne").replace("{name}", filename),
     defaultPath: filename,
     filters: downloadFilters(filename),
   });
@@ -44,9 +45,9 @@ export async function downloadFilesZip(
   const listed = await listQuickActionFiles(actionId);
   if (listed.length < 2) return "empty";
   const path = await saveDialog({
-    title: `Download all files from ${actionName}`,
+    title: t("files.downloadAll").replace("{name}", actionName),
     defaultPath: `${actionName}-files.zip`,
-    filters: [{ name: "Zip archive", extensions: ["zip"] }],
+    filters: [{ name: t("files.zipArchive"), extensions: ["zip"] }],
   });
   if (!path) return "cancelled";
   const blobs = await Promise.all(
